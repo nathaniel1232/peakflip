@@ -744,6 +744,7 @@ addEventListener('keydown', e => {
   if (JUMP_KEYS.includes(e.code) && state === 'play' && (p.grounded || p.grinding)) { p.charging = true; p.chargeT = 0; }
   if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
+  if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
   if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy) startRun();
 });
 addEventListener('keyup', e => {
@@ -1116,26 +1117,58 @@ function updateSkierVisual(dt) {
 }
 
 let orbit = 0;
+// Camera views: chase (default), high, first person, side. Cycle with C or the camera button.
+const VIEWS = [{ id: 'chase', name: 'Chase cam' }, { id: 'high', name: 'High cam' }, { id: 'first', name: 'First person' }, { id: 'side', name: 'Side cam' }];
+let viewIdx = Math.max(0, VIEWS.findIndex(v => v.id === save.view));
+function cycleView() {
+  viewIdx = (viewIdx + 1) % VIEWS.length;
+  save.view = VIEWS[viewIdx].id; persist();
+  if (state === 'play' || state === 'crash') showTrick(VIEWS[viewIdx].name, '', false);
+  snapCam = true;
+}
+let snapCam = false;
+const eyeV = new THREE.Vector3(), lookV = new THREE.Vector3(), upV = new THREE.Vector3();
 function updateCamera(dt) {
+  let view = VIEWS[viewIdx].id;
+  if (view === 'first' && (p.crashed || state === 'menu')) view = 'chase';   // tumbling in first person is unreadable
+  skier.upper.visible = view !== 'first';
+  camera.up.set(0, 1, 0);
+  const k = snapCam ? 60 : 1;
   if (state === 'menu') {
     orbit += dt * 0.25;
     camPos.set(Math.sin(orbit) * 6.5, 2.6, Math.cos(orbit) * 6.5 - 1);
     camLook.set(0, 1.1, 0);
     world.localToWorld(camPos); world.localToWorld(camLook);
     camera.position.copy(camPos); camera.lookAt(camLook);
-  } else {
-    tmpV.set(p.x * 0.75, Math.max(0, p.y) * 0.55 + 4.4, p.z + 10);
-    world.localToWorld(tmpV);
-    camera.position.x = damp(camera.position.x, tmpV.x, 6, dt);
-    camera.position.y = damp(camera.position.y, tmpV.y, 5, dt);
-    camera.position.z = damp(camera.position.z, tmpV.z, 12, dt);
-    tmpV.set(p.x * 0.85, Math.max(0, p.y) * 0.75 + 1.2, p.z - 9);
-    world.localToWorld(tmpV);
-    camLook.lerp(tmpV, 1 - Math.exp(-10 * dt));
+  } else if (view === 'first') {
+    // eyes sit in the helmet and turn with the body, so flips and spins are felt from the inside
+    skier.body.updateMatrixWorld(true);
+    eyeV.set(0, 0.62, -0.25).applyMatrix4(skier.body.matrixWorld);
+    lookV.set(0, 0.25, -10).applyMatrix4(skier.body.matrixWorld);
+    upV.set(0, 1, 0).transformDirection(skier.body.matrixWorld);
+    camera.position.copy(eyeV);
+    camera.up.copy(upV);
+    camLook.copy(lookV);
     camera.lookAt(camLook);
-    const fov = 64 + clamp((p.speed - 20) * 0.5, 0, 14);
+  } else {
+    let off, ahead;
+    if (view === 'high') { off = [p.x * 0.6, Math.max(0, p.y) * 0.45 + 10, p.z + 15]; ahead = [p.x * 0.8, Math.max(0, p.y) * 0.6, p.z - 14]; }
+    else if (view === 'side') { off = [p.x + 9, Math.max(0, p.y) * 0.7 + 2.4, p.z - 1]; ahead = [p.x, p.y + 1, p.z - 3]; }
+    else { off = [p.x * 0.75, Math.max(0, p.y) * 0.55 + 4.4, p.z + 10]; ahead = [p.x * 0.85, Math.max(0, p.y) * 0.75 + 1.2, p.z - 9]; }
+    tmpV.set(...off); world.localToWorld(tmpV);
+    camera.position.x = damp(camera.position.x, tmpV.x, 6 * k, dt);
+    camera.position.y = damp(camera.position.y, tmpV.y, 5 * k, dt);
+    camera.position.z = damp(camera.position.z, tmpV.z, 12 * k, dt);
+    tmpV.set(...ahead); world.localToWorld(tmpV);
+    camLook.lerp(tmpV, 1 - Math.exp(-10 * k * dt));
+    camera.lookAt(camLook);
+  }
+  snapCam = false;
+  if (state !== 'menu') {
+    const fov = (view === 'first' ? 78 : 64) + clamp((p.speed - 20) * 0.5, 0, 14);
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
   }
+  if (view === 'first') shake *= 0.5;
   if (shake > 0) {
     camera.position.x += rand(-1, 1) * shake * 0.4; camera.position.y += rand(-1, 1) * shake * 0.4;
     shake = Math.max(0, shake - dt * 1.8);
@@ -1225,8 +1258,8 @@ function updateHUD(dt) {
   }
   if (hintT > 0) { hintT -= dt; if (hintT <= 0) hud.hint.style.opacity = 0; }
 }
-const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> carve &nbsp; <kbd>W</kbd> tuck &nbsp; <kbd>S</kbd> brake &nbsp; hold <kbd>Space</kbd> to charge a jump<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; <kbd>Space</kbd> grab';
-const HINT_TOUCH = 'Drag to carve, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab';
+const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> carve &nbsp; <kbd>W</kbd> tuck &nbsp; <kbd>S</kbd> brake &nbsp; hold <kbd>Space</kbd> to charge a jump<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; <kbd>Space</kbd> grab<br><kbd>C</kbd> change camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
+const HINT_TOUCH = 'Drag to carve, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab<br>Camera button switches views';
 
 // ---------- game flow ----------
 let state = 'menu', paused = false, overlayBusy = false, mode = 'endless';
@@ -1341,6 +1374,8 @@ function updateMuteBtn() { $('muteBtn').innerHTML = icon(Sfx.muted ? 'soundOff' 
 $('resumeBtn').onclick = () => togglePause(false);
 $('quitBtn').onclick = () => { Platform.gameplayStop(); toMenu(); };
 $('pauseBtn').onclick = () => togglePause(true);
+$('camBtn').innerHTML = icon('camera');
+$('camBtn').onclick = () => cycleView();
 $('muteBtn').onclick = () => { Sfx.init(); Sfx.toggle(); };
 addEventListener('keydown', e => {
   if ((e.code === 'Enter') && state === 'over' && !e.repeat && !typing(e)) restartWithAd();
