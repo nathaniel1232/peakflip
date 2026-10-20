@@ -981,13 +981,59 @@ function addBall(z) {
   const o = { kind: 'ball', x: wr(-10, 10), z, r: 1.15, h: 2.3, vx: (crng() < 0.5 ? -1 : 1) * wr(5, 8), mesh: m };
   obstacles.push(o); movers.push(o);
 }
+// ---------- crevasse: an icy chasm with jagged edges, snow lips and warning tape ----------
+const crevTex = (() => {
+  // looking down into it: pale ice at the lips fading to a dark blue depth, with cracks running down
+  const c = document.createElement('canvas'); c.width = 128; c.height = 256; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#bfeaff'); gr.addColorStop(0.12, '#4aa3d8'); gr.addColorStop(0.3, '#123a66'); gr.addColorStop(0.5, '#050f22');
+  gr.addColorStop(0.7, '#123a66'); gr.addColorStop(0.88, '#4aa3d8'); gr.addColorStop(1, '#bfeaff');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 256);
+  g.strokeStyle = 'rgba(190,235,255,.35)'; g.lineWidth = 1.5;
+  for (let i = 0; i < 14; i++) {
+    let x = Math.random() * 128, y = Math.random() < 0.5 ? 0 : 256; const dir = y ? -1 : 1;
+    g.beginPath(); g.moveTo(x, y);
+    for (let k = 0; k < 6; k++) { x += (Math.random() - 0.5) * 14; y += dir * (8 + Math.random() * 12); g.lineTo(x, y); }
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const crevHoleMat = new THREE.MeshBasicMaterial({ map: crevTex });
+const crevMist = new THREE.MeshBasicMaterial({ map: glowTex, color: 0x7fd8ff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
+const iceTooth = [lam(0xbfeaff, { emissive: 0x16384f }), lam(0x8fd0f0, { emissive: 0x0e2a3d }), lam(0xeaf8ff)];
+const toothGeo = new THREE.ConeGeometry(0.32, 1, 4);
+const tapeTex = (() => {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 16; const g = c.getContext('2d');
+  for (let i = -16; i < 128; i += 16) { g.fillStyle = (i / 16) % 2 ? '#ffffff' : '#e63946'; g.beginPath(); g.moveTo(i, 16); g.lineTo(i + 8, 0); g.lineTo(i + 16, 0); g.lineTo(i + 8, 16); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = THREE.RepeatWrapping; t.repeat.set(3, 1); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const tapeMat = new THREE.MeshBasicMaterial({ map: tapeTex, side: THREE.DoubleSide });
+const warnTex = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64; const g = c.getContext('2d');
+  g.fillStyle = '#ffd60a'; g.beginPath(); g.moveTo(32, 4); g.lineTo(62, 58); g.lineTo(2, 58); g.fill();
+  g.strokeStyle = '#111'; g.lineWidth = 4; g.stroke(); g.fillStyle = '#111'; g.fillRect(29, 20, 6, 22); g.fillRect(29, 46, 6, 6);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const warnMat = new THREE.MeshBasicMaterial({ map: warnTex, transparent: true, side: THREE.DoubleSide });
 function addCrevasse(z0, L) {
   const g = new THREE.Group(); g.position.set(0, 0, z0);
-  const hole = new THREE.Mesh(box(31, 0.05, L), crevMat); hole.position.set(0, 0.03, -L / 2); g.add(hole);
-  for (const ez of [0, -L]) for (let x = -15; x < 15.5; x += 1.5) {
-    const ice = new THREE.Mesh(box(1.4, 0.3, 0.5), iceMat); ice.position.set(x + rand(-0.2, 0.2), 0.1, ez + (ez ? 0.15 : -0.15)); ice.rotation.y = rand(-0.3, 0.3); g.add(ice);
+  const hole = new THREE.Mesh(box(31, 0.05, L), [crevMat, crevMat, crevHoleMat, crevMat, crevMat, crevMat]); hole.position.set(0, 0.03, -L / 2); g.add(hole);
+  const mist = new THREE.Mesh(new THREE.PlaneGeometry(31, L).rotateX(-Math.PI / 2), crevMist); mist.position.set(0, 0.25, -L / 2); g.add(mist);
+  for (const [ez, toward] of [[0, -1], [-L, 1]]) {
+    // a snow lip overhanging each edge, with jagged ice teeth leaning out over the drop
+    const lip = new THREE.Mesh(box(31, 0.28, 0.9), capMat); lip.position.set(0, 0.12, ez + toward * 0.15); g.add(lip);
+    for (let x = -15.2; x < 15.5; x += rand(0.6, 1.1)) {
+      const t = new THREE.Mesh(toothGeo, iceTooth[(Math.random() * 3) | 0]), h = rand(0.4, 1.4);
+      t.scale.set(rand(0.7, 1.3), h, rand(0.7, 1.3)); t.position.set(x, h / 2 + 0.1, ez + toward * rand(0.2, 0.55));
+      t.rotation.set(toward * rand(0.25, 0.6), rand(0, 3), rand(-0.25, 0.25)); g.add(t);
+    }
   }
-  for (const sx of [-1, 1]) { const f = new THREE.Mesh(box(0.08, 1.6, 0.08), gateMats[1]); f.position.set(sx * 13.5, 0.8, 6); g.add(f); const fl = new THREE.Mesh(box(0.6, 0.35, 0.04), mat.rail); fl.position.set(sx * 13.5 + 0.3 * -sx, 1.45, 6); g.add(fl); }
+  // warning poles with striped tape along the edge, just outside the run
+  for (const sx of [-1, 1]) {
+    for (const pz of [7, 0.6]) { const pole = new THREE.Mesh(box(0.12, 1.4, 0.12), gateMats[0]); pole.position.set(sx * 14.2, 0.7, pz); g.add(pole); }
+    const tape = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 0.22), tapeMat); tape.rotation.y = Math.PI / 2; tape.position.set(sx * 14.2, 1.2, 3.8); g.add(tape);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), warnMat); sign.position.set(sx * 14.2, 1.95, 7.06); g.add(sign);
+  }
   world.add(g);
   crevasses.push({ z0, L, mesh: g, passed: false });
 }
@@ -2072,10 +2118,10 @@ function fadeScreen(color) {
   const f = $('fade'); f.style.transition = 'none'; f.style.background = color; f.style.opacity = 1;
   void f.offsetWidth; f.style.transition = 'opacity 1.2s ease-out'; f.style.opacity = 0;
 }
-function switchZone(z) {
+function switchZone(z, clear = 40) {
   zone = z;
   clearWorld(); portal = null;
-  spawnZ = p.z - 40; decorZ = p.z + 30; wallZ = Math.round(p.z) + 40; p.lastRail = null;
+  spawnZ = p.z - clear; decorZ = p.z + 30; wallZ = Math.round(p.z) + 40; p.lastRail = null;
 }
 function enterWorld(w) {
   const W = WORLDS[w];
@@ -2088,7 +2134,10 @@ function enterWorld(w) {
   W.tune.forEach((f, i) => Sfx.tone(f, w === 'xmas' ? 0.5 : 1.8, w === 'xmas' ? 'triangle' : 'sine', 0.16, null, i * (w === 'xmas' ? 0.16 : 0.14))); Sfx.perfect();
 }
 function exitWorld() {
-  switchZone('normal'); nextCaveD = -p.z + rand(1400, 2200);
+  // ~3 s of open snow (with a coin trail down the middle) so you're not thrown straight into a hazard while the screen flashes
+  switchZone('normal', 130); nextCaveD = -p.z + rand(1400, 2200);
+  p.heading = 0; p.vx = 0;
+  for (let i = 0; i < 14; i++) addCoin(p.x * (1 - i / 14), 1.2, p.z - 25 - i * 6);
   setTheme(prevTheme); setSlope(SLOPES.endless);
   scene.fog.near = 70; scene.fog.far = 230;
   fadeScreen('#fff'); showTrick('Back on the mountain', '', false); Sfx.perfect();
@@ -2716,4 +2765,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, enterWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
