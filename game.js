@@ -518,9 +518,17 @@ function buildAccessory(kind, it) {
       for (let k = 0; k < 3; k++) { const m = accMesh(new THREE.ConeGeometry(0.12, 0.42, 3), c2); m.position.set(sx * (0.18 + k * 0.17), -0.12 + k * 0.05, 0); m.rotation.z = Math.PI + sx * 0.2; m.scale.z = 0.15; w.add(m); }
       accAnim.wings.push({ g: w, sx });
     } break;
-    case 'scythe': { const sc = new THREE.Group(); sc.position.set(0, 0.05, 0.12); sc.rotation.z = -0.5; g.add(sc);
-      sc.add(accMesh(C(0.025, 0.025, 1.5, 6), c2, 0, 0, 0));
-      const blade = accMesh(new THREE.TorusGeometry(0.32, 0.03, 4, 12, Math.PI * 0.75), c, 0, 0.72, 0, { emissive: 0x223344 }); blade.scale.z = 0.4; blade.rotation.z = Math.PI * 0.3; blade.position.x = -0.3; sc.add(blade); } break;
+    case 'scythe': { const sc = new THREE.Group(); sc.position.set(0, 0.05, 0.14); sc.rotation.z = -0.5; g.add(sc);
+      sc.add(accMesh(C(0.025, 0.025, 1.5, 6), c2, 0, 0, 0));                 // handle, top end at y = 0.75
+      sc.add(accMesh(C(0.04, 0.04, 0.08, 6), '#555f6a', 0, 0.72, 0));        // metal collar
+      // curved blade: short tapering segments that hook out and down from the top of the handle
+      const pts = [[0, 0.74], [-0.16, 0.8], [-0.32, 0.8], [-0.46, 0.74], [-0.57, 0.63], [-0.63, 0.5]];
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], len = Math.hypot(x1 - x0, y1 - y0);
+        const seg = accMesh(B(len + 0.02, 0.11 * (1 - i / pts.length) + 0.025, 0.018), c, (x0 + x1) / 2, (y0 + y1) / 2 - 0.035, 0, { emissive: 0x223344 });
+        seg.rotation.z = Math.atan2(y1 - y0, x1 - x0); sc.add(seg);
+      }
+    } break;
     // ---- Shabbat / traditional ----
     case 'kippah': { const k = add(new THREE.SphereGeometry(0.15, 12, 4, 0, TAU, 0, Math.PI / 2), c, 0, -0.035); k.scale.y = 0.45;
       const r = add(new THREE.TorusGeometry(0.11, 0.008, 4, 16), c2, 0, 0.0); r.rotation.x = Math.PI / 2; } break;
@@ -1953,6 +1961,7 @@ function frame(now) {
     // the closet turntable spins slowly unless you're dragging it
     if (closet.on && !(ptr.down || performance.now() - (closet.dragT || 0) < 1500)) closet.yaw += dt * 0.45;
     p.yaw = closet.on ? closet.yaw : 0;
+    p.y = closet.on ? 0.08 : 0;   // stand on the turntable, not inside it
   }
   updateCoins();
   updateCosmetics();
