@@ -996,20 +996,64 @@ const bump = H => t => [H * Math.sin(Math.PI * t) ** 2, H * Math.PI * Math.sin(2
 const table = (H, a = 0.24, b = 0.5) => t => t < a ? [H * (t / a) ** 2, 2 * H * (t / a) / a]
   : t < b ? [H, 0] : [H * (1 - (t - b) / (1 - b)), -H / (1 - b)];
 
-const padMats = { bounce: lam(0xff4d8d), bounceTop: lam(0xffffff), boost: lam(0x22d3ee), chevron: lam(0xffffff) };
+// ---------- pads: boost strips and trampolines ----------
+const padMats = {
+  boostBase: lam(0x1b2333), boostEdge: lam(0x22d3ee, { emissive: 0x22d3ee, emissiveIntensity: 0.9 }),
+  // one material per chevron row: they light up back-to-front in turn, so the strip looks like it's flowing downhill
+  chev: [0, 1, 2].map(() => lam(0x9bf6ff, { emissive: 0x22d3ee, emissiveIntensity: 0.3 })),
+  frame: lam(0xffc93c), spring: lam(0xc9d3dc), leg: lam(0x3b4a5a),
+};
+const trampTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#1b1f3b'; g.fillRect(0, 0, 128, 128);
+  for (const [r, col] of [[60, '#ff2d78'], [46, '#1b1f3b'], [36, '#ffc93c'], [24, '#1b1f3b']]) { g.fillStyle = col; g.beginPath(); g.arc(64, 64, r, 0, TAU); g.fill(); }
+  g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(64, 34); g.lineTo(88, 62); g.lineTo(74, 62); g.lineTo(74, 92); g.lineTo(54, 92); g.lineTo(54, 62); g.lineTo(40, 62); g.fill();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const trampTop = new THREE.MeshLambertMaterial({ map: trampTex });
+// an upward chevron "^" in the plane facing the camera
+function chevron(material, w = 0.9, t = 0.14) {
+  const g = new THREE.Group();
+  for (const sx of [-1, 1]) { const arm = new THREE.Mesh(box(w, t, 0.03), material); arm.position.set(sx * w * 0.38, 0, 0); arm.rotation.z = -sx * 0.62; g.add(arm); }
+  return g;
+}
 function addPad(kind, x, z) {
   const g = new THREE.Group(); g.position.set(x, 0, z);
+  const pad = { kind, x, z, r: kind === 'bounce' ? 2 : 1.6, len: kind === 'bounce' ? 2 : 2.5, mesh: g, used: false, squash: 0 };
   if (kind === 'bounce') {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(1.7, 2, 0.4, 10), padMats.bounce); m.position.y = 0.2; g.add(m);
-    const t = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.06, 10), padMats.bounceTop); t.position.y = 0.42; g.add(t);
+    // trampoline: legs, yellow frame, springs and a target mat with an up arrow
+    const H = 0.32;
+    for (let i = 0; i < 6; i++) { const a = i / 6 * TAU, l = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, H, 5), padMats.leg); l.position.set(Math.cos(a) * 1.8, H / 2, Math.sin(a) * 1.8); g.add(l); }
+    const fr = new THREE.Mesh(new THREE.TorusGeometry(1.85, 0.13, 6, 18), padMats.frame); fr.rotation.x = Math.PI / 2; fr.position.y = H; g.add(fr);
+    for (let i = 0; i < 18; i++) { const a = i / 18 * TAU, sp = new THREE.Mesh(box(0.38, 0.04, 0.05), padMats.spring); sp.position.set(Math.cos(a) * 1.55, H, Math.sin(a) * 1.55); sp.rotation.y = -a; g.add(sp); }
+    const mat = new THREE.Mesh(new THREE.CylinderGeometry(1.38, 1.38, 0.05, 20), [padMats.leg, trampTop, padMats.leg]); mat.position.y = H - 0.02; mat.rotation.y = Math.PI / 2; g.add(mat);
+    // floating arrows that rise and fade above it
+    pad.holo = [0, 1, 2].map(k => {
+      const m = new THREE.MeshBasicMaterial({ color: 0xff4d8d, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+      const c = chevron(m, 1.1, 0.16); g.add(c); return { c, m, k };
+    });
+    pad.mat = mat;
   } else {
-    const m = new THREE.Mesh(box(3, 0.06, 4.5), padMats.boost); m.position.y = 0.03; g.add(m);
-    for (const cz of [1.2, -0.3]) for (const sx of [-1, 1]) {
-      const c = new THREE.Mesh(box(1.3, 0.08, 0.35), padMats.chevron); c.position.set(sx * 0.48, 0.07, cz); c.rotation.y = sx * 0.6; g.add(c);
-    }
+    // boost strip: dark base, glowing edges, three chevrons pointing downhill
+    const base = new THREE.Mesh(box(3.2, 0.07, 5), padMats.boostBase); base.position.y = 0.035; g.add(base);
+    for (const sx of [-1, 1]) { const e = new THREE.Mesh(box(0.16, 0.1, 5), padMats.boostEdge); e.position.set(sx * 1.6, 0.05, 0); g.add(e); }
+    [1.6, 0, -1.6].forEach((cz, row) => {
+      for (const sx of [-1, 1]) {
+        // the arms meet at the front (downhill, -z), so the arrow points the way you're going
+        const c = new THREE.Mesh(box(1.25, 0.06, 0.34), padMats.chev[row]); c.position.set(sx * 0.46, 0.09, cz); c.rotation.y = -sx * 0.6; g.add(c);
+      }
+    });
   }
   world.add(g);
-  pads.push({ kind, x, z, r: kind === 'bounce' ? 1.9 : 1.6, len: kind === 'bounce' ? 1.9 : 2.3, mesh: g, used: false });
+  pads.push(pad);
+}
+function updatePads(dt) {
+  padMats.chev.forEach((m, row) => { m.emissiveIntensity = 0.25 + 1.4 * Math.max(0, Math.sin(time * 9 - row * 1.3)); });
+  for (const q of pads) {
+    if (q.kind !== 'bounce') continue;
+    for (const h of q.holo) { const u = (time * 0.7 + h.k / 3) % 1; h.c.position.y = 0.8 + u * 2.6; h.m.opacity = Math.sin(u * Math.PI) * 0.7; }
+    if (q.squash > 0) { q.squash = Math.max(0, q.squash - dt * 3); const k = Math.sin(q.squash * Math.PI * 3) * q.squash; q.mat.position.y = 0.3 - k * 0.25; q.mat.scale.set(1 + k * 0.08, 1, 1 + k * 0.08); }
+  }
 }
 const archMat = lam(0x6b4a2f), archBanner = lam(0xff6b2c);
 function cpTexture(n) {
@@ -1320,10 +1364,11 @@ function padAt(x, z, kind) {
   return null;
 }
 function bounce() {
+  const q = padAt(p.x, p.z, 'bounce'); if (q) q.squash = 1;
   p.vy = Math.max(17, Math.abs(p.vy) * 0.5 + 15);
   startAir(); p.fromRamp = true;
-  Sfx.tone(220, 0.25, 'sine', 0.25, 660); shake = 0.2;
-  Particles.emit(p.x, 0.4, p.z, 14, 3, 5, 0xff4d8d, 0);
+  Sfx.tone(180, 0.3, 'sine', 0.3, 720); Sfx.tone(90, 0.15, 'square', 0.12, 60); shake = 0.25;
+  Particles.emit(p.x, 0.5, p.z, 18, 3, 6, 0xff2d78, 0); Particles.emit(p.x, 0.5, p.z, 10, 2, 5, 0xffc93c, 0);
 }
 function railAt(x, z) {
   for (const r of rails) if (z <= r.z0 && z >= r.z0 - r.L && Math.abs(x - r.x) < 0.8) return r;
@@ -1585,9 +1630,9 @@ function updatePlayer(dt) {
       if (bp) bounce();
       const sp = padAt(p.x, p.z, 'boost');
       if (sp && !sp.used) {
-        sp.used = true; p.speed = Math.min(p.speed + 10, baseSpeed(-p.z) * 1.45);
-        showTrick('Boost!', '', false); Sfx.tone(440, 0.3, 'sawtooth', 0.12, 1320);
-        Particles.emit(p.x, 0.2, p.z, 12, 1.5, 2, 0x22d3ee, 8);
+        sp.used = true; p.speed = Math.min(p.speed + 13, baseSpeed(-p.z) * 1.55); p.boostT = 1;
+        showTrick('Boost!', '', false); Sfx.tone(440, 0.35, 'sawtooth', 0.12, 1320); Sfx.noise(0.5, 0.6, 1500, 'bandpass');
+        Particles.emit(p.x, 0.2, p.z, 24, 1.5, 2, 0x22d3ee, 10);
       }
     }
     if (p.grounded) {
@@ -1813,7 +1858,7 @@ function updateCamera(dt) {
   }
   snapCam = false;
   if (state !== 'menu') {
-    const fov = (view === 'first' ? 78 : 64) + clamp((p.speed - 20) * 0.5, 0, 14);
+    const fov = (view === 'first' ? 78 : 64) + clamp((p.speed - 20) * 0.5, 0, 14) + (p.boostT || 0) * 12;
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
   }
   if (view === 'first') shake *= 0.5;
@@ -2083,6 +2128,11 @@ function frame(now) {
   animateAccessories(dt);
   Particles.update(dt);
   Debris.update(dt);
+  updatePads(dt);
+  if (p.boostT > 0) {
+    p.boostT = Math.max(0, p.boostT - dt * 0.9);
+    if (state === 'play') Particles.emit(p.x + rand(-0.4, 0.4), p.y + rand(0.2, 1.4), p.z + 0.8, 2, 0.3, 0.2, Math.random() < 0.5 ? 0x22d3ee : 0x9bf6ff, 14);
+  }
   Snowfall.update(dt, camera);
   aurora.update(time); if (clouds.group.visible) clouds.update(dt);
   updateSkierVisual(dt);
@@ -2110,4 +2160,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash };
+window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad };
