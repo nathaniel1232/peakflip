@@ -451,8 +451,12 @@ function overlay() {
   document.getElementById('lbReveal')?.remove();
   const el = document.createElement('div');
   el.id = 'lbReveal';
-  el.innerHTML = '<canvas id="confetti"></canvas><div class="card rv" id="rvCard"></div>';
+  el.innerHTML = `<canvas id="confetti"></canvas><div class="card rv" id="rvCard"></div><button class="rvClose" id="rvClose" aria-label="Close">${icon('close')}</button>`;
   document.body.appendChild(el);
+  // there's always a way out: the corner X, a tap outside the card, or Esc
+  const close = () => (el._done || (() => el.remove()))();
+  el.querySelector('#rvClose').onclick = close;
+  el.onclick = e => { if (e.target === el) close(); };
   return el;
 }
 
@@ -460,6 +464,7 @@ function overlay() {
 function recordMoment(r, done) {
   const el = overlay(), card = el.querySelector('#rvCard');
   const finish = () => { el.remove(); done(); };
+  el._done = finish;
   const big = r.mode === 'race' ? fmtTime(r.time) : r.score.toLocaleString();
   card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
     <div class="rv-score">${big}</div><div id="rvStep"></div>`;
@@ -469,7 +474,7 @@ function recordMoment(r, done) {
     step.innerHTML = '<div class="note">Checking the leaderboard…</div>';
     const { board, day, value, ghost } = lbArgs(r);
     r.submitted = !!(await LB.submit(board, value, day, ghost));
-    const data = r.submitted ? await LB.get(board, day, 10) : null;
+    const data = r.submitted ? await LB.get(board, day, 7) : null;
     if (!data?.me) {
       step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now.</div><button class="btn primary" id="rvOk">Continue</button>`;
       $('rvOk').onclick = finish; return;
@@ -485,6 +490,7 @@ function recordMoment(r, done) {
 }
 
 function revealBoard(el, data, board, done) {
+  el._done = done;
   const card = el.querySelector('#rvCard');
   const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
   const me = data.me, inTop = me.rank <= data.top.length;
@@ -563,6 +569,10 @@ export function initUI(c) {
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };
-  addEventListener('keydown', e => { if (e.key === 'Escape' && !$('panel').classList.contains('hidden')) closePanel(); });
+  addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    if ($('lbReveal')) $('rvClose').click();
+    else if (!$('panel').classList.contains('hidden')) closePanel();
+  });
   setInterval(() => { if (!$('menu').classList.contains('hidden')) showMenuUI(); }, 30000);
 }
