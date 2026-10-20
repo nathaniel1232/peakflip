@@ -115,9 +115,25 @@ const Sfx = {
 };
 
 // ---------- renderer / scene ----------
-const renderer = new THREE.WebGLRenderer({ antialias: window.devicePixelRatio < 2, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-renderer.setSize(innerWidth, innerHeight);
+// weaker phones/laptops (few cores or little memory) start in a lighter mode
+const LITE = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+const renderer = new THREE.WebGLRenderer({ antialias: !LITE && window.devicePixelRatio < 2, powerPreference: 'high-performance' });
+// Adaptive resolution: if frames get slow, render fewer pixels (the biggest cost on phones); raise it again when there's headroom
+const Quality = {
+  max: Math.min(window.devicePixelRatio, isTouch ? 1.5 : 1.75), min: 0.6,
+  ratio: Math.min(window.devicePixelRatio, LITE ? 1 : 1.5),
+  t: 0, frames: 0, good: 0,
+  apply() { renderer.setPixelRatio(this.ratio); renderer.setSize(innerWidth, innerHeight); },
+  sample(ms) {
+    if (ms > 250) return;   // tab was in the background
+    this.t += ms; this.frames++;
+    if (this.t < 1500) return;
+    const fps = this.frames * 1000 / this.t; this.t = this.frames = 0;
+    if (fps < 48 && this.ratio > this.min) { this.ratio = Math.max(this.min, +(this.ratio - 0.15).toFixed(2)); this.good = 0; this.apply(); }
+    else if (fps > 57 && this.ratio < this.max && ++this.good >= 3) { this.ratio = Math.min(this.max, +(this.ratio + 0.1).toFixed(2)); this.good = 0; this.apply(); }
+  },
+};
+Quality.apply();
 $('game').appendChild(renderer.domElement);
 const canvas = renderer.domElement;
 
@@ -197,12 +213,15 @@ const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const dummy = new THREE.Object3D();
 const allPools = [];
 class Pool {
+  // Hands out the lowest free slot and only draws up to the highest slot in use, so a pool of 520 trees with
+  // 80 on screen costs 80 trees on the GPU, not 520 (empty slots still cost vertex work if they're drawn).
   constructor(geo, material, cap) {
     allPools.push(this);
     this.mesh = new THREE.InstancedMesh(geo, material, cap);
     this.mesh.frustumCulled = false;
-    this.free = [];
-    for (let i = cap - 1; i >= 0; i--) { this.free.push(i); this.mesh.setMatrixAt(i, ZERO); }
+    this.used = new Uint8Array(cap); this.lo = 0; this.hi = 0;
+    for (let i = 0; i < cap; i++) this.mesh.setMatrixAt(i, ZERO);
+    this.mesh.count = 0; this.mesh.visible = false;
     world.add(this.mesh);
     this.dirty = true;
   }
@@ -210,9 +229,23 @@ class Pool {
     dummy.position.set(x, y, z); dummy.rotation.set(0, ry, 0); dummy.scale.set(s, sy, s);
     dummy.updateMatrix(); this.mesh.setMatrixAt(i, dummy.matrix); this.dirty = true;
   }
-  add(x, y, z, s, ry, sy) { const i = this.free.pop(); if (i === undefined) return -1; this.set(i, x, y, z, s, ry, sy); return i; }
-  remove(i) { if (i < 0) return; this.mesh.setMatrixAt(i, ZERO); this.free.push(i); this.dirty = true; }
-  flush() { if (this.dirty) { this.mesh.instanceMatrix.needsUpdate = true; this.dirty = false; } }
+  add(x, y, z, s, ry, sy) {
+    const cap = this.used.length;
+    let i = this.lo; while (i < cap && this.used[i]) i++;
+    if (i >= cap) return -1;
+    this.used[i] = 1; this.lo = i + 1; if (i >= this.hi) this.hi = i + 1;
+    this.set(i, x, y, z, s, ry, sy); return i;
+  }
+  remove(i) {
+    if (i < 0 || !this.used[i]) return;
+    this.used[i] = 0; this.mesh.setMatrixAt(i, ZERO); this.dirty = true;
+    if (i < this.lo) this.lo = i;
+    while (this.hi > 0 && !this.used[this.hi - 1]) this.hi--;
+  }
+  flush() {
+    this.mesh.count = this.hi; this.mesh.visible = this.hi > 0;
+    if (this.dirty) { this.mesh.instanceMatrix.needsUpdate = true; this.dirty = false; }
+  }
 }
 const trees = new Pool(treeGeo, vcol, 520);
 const rocks = new Pool(rockGeo, vcol, 90);
@@ -747,7 +780,7 @@ const Particles = (() => {
 
 // falling snow around the camera
 const Snowfall = (() => {
-  const N = 500, R = 30;
+  const N = LITE ? 220 : 500, R = 30;
   const geo = new THREE.BufferGeometry(), pos = new Float32Array(N * 3);
   for (let i = 0; i < N; i++) { pos[i * 3] = rand(-R, R); pos[i * 3 + 1] = rand(-15, 15); pos[i * 3 + 2] = rand(-R, R); }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1000,8 +1033,8 @@ const crevTex = (() => {
 })();
 const crevHoleMat = new THREE.MeshBasicMaterial({ map: crevTex });
 const crevMist = new THREE.MeshBasicMaterial({ map: glowTex, color: 0x7fd8ff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending });
-const iceTooth = [lam(0xbfeaff, { emissive: 0x16384f }), lam(0x8fd0f0, { emissive: 0x0e2a3d }), lam(0xeaf8ff)];
-const toothGeo = new THREE.ConeGeometry(0.32, 1, 4);
+const toothColors = [0xbfeaff, 0x8fd0f0, 0xeaf8ff], toothGeo = new THREE.ConeGeometry(0.32, 1, 4);
+const toothMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0x0e2a3d });
 const tapeTex = (() => {
   const c = document.createElement('canvas'); c.width = 128; c.height = 16; const g = c.getContext('2d');
   for (let i = -16; i < 128; i += 16) { g.fillStyle = (i / 16) % 2 ? '#ffffff' : '#e63946'; g.beginPath(); g.moveTo(i, 16); g.lineTo(i + 8, 0); g.lineTo(i + 16, 0); g.lineTo(i + 8, 16); g.fill(); }
@@ -1019,15 +1052,17 @@ function addCrevasse(z0, L) {
   const g = new THREE.Group(); g.position.set(0, 0, z0);
   const hole = new THREE.Mesh(box(31, 0.05, L), [crevMat, crevMat, crevHoleMat, crevMat, crevMat, crevMat]); hole.position.set(0, 0.03, -L / 2); g.add(hole);
   const mist = new THREE.Mesh(new THREE.PlaneGeometry(31, L).rotateX(-Math.PI / 2), crevMist); mist.position.set(0, 0.25, -L / 2); g.add(mist);
+  // a snow lip overhanging each edge, with jagged ice teeth leaning out over the drop (all teeth in one mesh)
+  const teeth = [], q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
   for (const [ez, toward] of [[0, -1], [-L, 1]]) {
-    // a snow lip overhanging each edge, with jagged ice teeth leaning out over the drop
     const lip = new THREE.Mesh(box(31, 0.28, 0.9), capMat); lip.position.set(0, 0.12, ez + toward * 0.15); g.add(lip);
     for (let x = -15.2; x < 15.5; x += rand(0.6, 1.1)) {
-      const t = new THREE.Mesh(toothGeo, iceTooth[(Math.random() * 3) | 0]), h = rand(0.4, 1.4);
-      t.scale.set(rand(0.7, 1.3), h, rand(0.7, 1.3)); t.position.set(x, h / 2 + 0.1, ez + toward * rand(0.2, 0.55));
-      t.rotation.set(toward * rand(0.25, 0.6), rand(0, 3), rand(-0.25, 0.25)); g.add(t);
+      const h = rand(0.4, 1.4);
+      q.setFromEuler(e.set(toward * rand(0.25, 0.6), rand(0, 3), rand(-0.25, 0.25)));
+      teeth.push({ geo: toothGeo, color: toothColors[(Math.random() * 3) | 0], m: new THREE.Matrix4().compose(v.set(x, h / 2 + 0.1, ez + toward * rand(0.2, 0.55)), q, sc.set(rand(0.7, 1.3), h, rand(0.7, 1.3))) });
     }
   }
+  const teethGeo = merged(teeth); g.add(new THREE.Mesh(teethGeo, toothMat));
   // warning poles with striped tape along the edge, just outside the run
   for (const sx of [-1, 1]) {
     for (const pz of [7, 0.6]) { const pole = new THREE.Mesh(box(0.12, 1.4, 0.12), gateMats[0]); pole.position.set(sx * 14.2, 0.7, pz); g.add(pole); }
@@ -1035,7 +1070,7 @@ function addCrevasse(z0, L) {
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.1, 1.1), warnMat); sign.position.set(sx * 14.2, 1.95, 7.06); g.add(sign);
   }
   world.add(g);
-  crevasses.push({ z0, L, mesh: g, passed: false });
+  crevasses.push({ z0, L, mesh: g, passed: false, dispose: teethGeo });
 }
 function addCoin(x, y, z) {
   const idx = coinPool.add(x, y, z);
@@ -1419,7 +1454,7 @@ const xmasTrees = new Pool(merged([
   { geo: new THREE.ConeGeometry(1.05, 1.6, 7), color: 0x377a5a, m: T(0, 2.55, 0) },
   { geo: new THREE.ConeGeometry(0.7, 1.3, 7), color: 0x2f6b4f, m: T(0, 3.35, 0) },
   ...[[0.9, 1.2, 0.5, 0xe63946], [-0.8, 1.4, 0.6, 0xffd23f], [0.2, 1.1, -1, 0x4cc3ff], [0.6, 2.3, -0.5, 0xffd23f], [-0.5, 2.2, 0.6, 0xe63946], [0.3, 3.0, 0.45, 0x4cc3ff], [-0.4, 2.9, -0.3, 0xff4fd8]]
-    .map(([x, y, z, c]) => ({ geo: new THREE.SphereGeometry(0.16, 6, 4), color: c, m: T(x, y, z) })),
+    .map(([x, y, z, c]) => ({ geo: new THREE.OctahedronGeometry(0.17, 0), color: c, m: T(x, y, z) })),
   { geo: new THREE.OctahedronGeometry(0.32, 0), color: 0xffd23f, m: T(0, 4.15, 0) },
 ]), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0x1a1406 }), 520);
 const giftGeo = (c, rib) => merged([
@@ -1440,9 +1475,13 @@ const bulbGeo = new THREE.SphereGeometry(0.18, 6, 4);
 function addLightString(z) {
   const g = new THREE.Group(); g.position.set(0, 0, z);
   for (const sx of [-1, 1]) { const post = new THREE.Mesh(box(0.3, 9, 0.3), candyPost); post.position.set(sx * 14.5, 4.5, 0); g.add(post); }
+  const bulbs = bulbMats.map(m => new THREE.InstancedMesh(bulbGeo, m, 16)), count = [0, 0, 0, 0];
   for (const [y0, sag] of [[8.6, 2.4], [7.4, 1.6]]) for (let i = 0; i <= 28; i++) {
-    const u = i / 28, x = -14.5 + u * 29, b = new THREE.Mesh(bulbGeo, bulbMats[i % 4]); b.position.set(x, y0 - sag * Math.sin(Math.PI * u), 0); g.add(b);
+    const u = i / 28, k = i % 4;
+    dummy.position.set(-14.5 + u * 29, y0 - sag * Math.sin(Math.PI * u), 0); dummy.rotation.set(0, 0, 0); dummy.scale.setScalar(1); dummy.updateMatrix();
+    bulbs[k].setMatrixAt(count[k]++, dummy.matrix);
   }
+  bulbs.forEach((b, k) => { b.count = count[k]; b.frustumCulled = false; g.add(b); });
   world.add(g); decor.push({ z: z - 1, mesh: g });
 }
 const candyPost = lam(0xe63946);
@@ -1698,22 +1737,27 @@ function spawnFeature() {
   }
   spawnZ -= len;
 }
-const liftMat = lam(0x5b6573), chairMat = lam(0xe63946), cabinWall = lam(0x8a5a35), cabinRoof = lam(0x3b4a5a);
-function addLiftTower(z) {
-  const g = new THREE.Group(); g.position.set(-21, wallH(-21, z), z);
-  const pole = new THREE.Mesh(box(0.45, 11, 0.45), liftMat); pole.position.y = 5.5; g.add(pole);
-  const bar = new THREE.Mesh(box(5, 0.3, 0.3), liftMat); bar.position.y = 11; g.add(bar);
+const cabinWall = lam(0x8a5a35), cabinRoof = lam(0x3b4a5a);
+// one merged mesh per tower (pole, bar, cables, four chairs) instead of ~20 separate draw calls
+const liftGeo = (() => {
+  const parts = [
+    { geo: new THREE.BoxGeometry(0.45, 11, 0.45), color: 0x5b6573, m: T(0, 5.5, 0) },
+    { geo: new THREE.BoxGeometry(5, 0.3, 0.3), color: 0x5b6573, m: T(0, 11, 0) },
+  ];
   for (const sx of [-2.2, 2.2]) {
-    const cable = new THREE.Mesh(box(0.05, 0.05, 48), liftMat); cable.position.set(sx, 10.8, -24); g.add(cable);
+    parts.push({ geo: new THREE.BoxGeometry(0.05, 0.05, 48), color: 0x5b6573, m: T(sx, 10.8, -24) });
     for (const cz of [-12, -36]) {
-      const ch = new THREE.Group(); ch.position.set(sx, 10.8, cz + (sx > 0 ? 6 : 0));
-      const hang = new THREE.Mesh(box(0.06, 1.6, 0.06), liftMat); hang.position.y = -0.8; ch.add(hang);
-      const seat = new THREE.Mesh(box(1.2, 0.12, 0.5), chairMat); seat.position.y = -1.6; ch.add(seat);
-      const back = new THREE.Mesh(box(1.2, 0.5, 0.1), chairMat); back.position.set(0, -1.35, 0.22); ch.add(back);
-      g.add(ch);
+      const z = cz + (sx > 0 ? 6 : 0);
+      parts.push({ geo: new THREE.BoxGeometry(0.06, 1.6, 0.06), color: 0x5b6573, m: T(sx, 10.0, z) });
+      parts.push({ geo: new THREE.BoxGeometry(1.2, 0.12, 0.5), color: 0xe63946, m: T(sx, 9.2, z) });
+      parts.push({ geo: new THREE.BoxGeometry(1.2, 0.5, 0.1), color: 0xe63946, m: T(sx, 9.45, z + 0.22) });
     }
   }
-  world.add(g); decor.push({ z: z - 50, mesh: g });
+  return merged(parts);
+})();
+function addLiftTower(z) {
+  const m = new THREE.Mesh(liftGeo, vcol); m.position.set(-21, wallH(-21, z), z);
+  world.add(m); decor.push({ z: z - 50, mesh: m });
 }
 function addCabin(x, z) {
   const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = rand(-0.4, 0.4);
@@ -1723,6 +1767,8 @@ function addCabin(x, z) {
   const win = new THREE.Mesh(box(0.9, 0.7, 0.05), lam(0xffd166, { emissive: 0x7a5a00 })); win.position.set(0, 1.5, 1.72); g.add(win);
   world.add(g); decor.push({ z: z - 4, mesh: g });
 }
+const lanternGlow = new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 });
+const floatGlows = [0x7cf7d4, 0xc264ff].map(c => new THREE.SpriteMaterial({ map: glowTex, color: c, transparent: true, depthWrite: false, opacity: 0.8 }));
 const lanternMat = lam(0xffd27a, { emissive: 0xffb347, emissiveIntensity: 0.15 }), postMat = lam(0x3b4a5a);
 const snowmanParts = { body: lam(0xf8fbff), coal: lam(0x222222), carrot: lam(0xff7b00), scarf: lam(0xe63946) };
 function addSnowman(x, z, santa) {
@@ -1756,7 +1802,7 @@ function addLantern(x, z) {
   const post = new THREE.Mesh(box(0.14, 2.6, 0.14), postMat); post.position.y = 1.3; g.add(post);
   const lamp = new THREE.Mesh(box(0.42, 0.5, 0.42), lanternMat); lamp.position.y = 2.75; g.add(lamp);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.3, 4), postMat); roof.position.y = 3.15; roof.rotation.y = Math.PI / 4; g.add(roof);
-  if (theme.lamp) { const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 })); gl.scale.set(3.2, 3.2, 1); gl.position.y = 2.75; g.add(gl); }
+  if (theme.lamp) { const gl = new THREE.Sprite(lanternGlow); gl.scale.set(3.2, 3.2, 1); gl.position.y = 2.75; g.add(gl); }
   world.add(g); decor.push({ z, mesh: g });
 }
 let decorN = 0;   // counts decor rows (4 m apart) for things that repeat every so often
@@ -1772,7 +1818,7 @@ function spawnDecor(z) {
       }
     }
     if (Math.random() < 0.12) {
-      const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: Math.random() < 0.5 ? 0x7cf7d4 : 0xc264ff, transparent: true, depthWrite: false, opacity: 0.8 }));
+      const gl = new THREE.Sprite(floatGlows[Math.random() < 0.5 ? 0 : 1]);
       gl.scale.setScalar(rand(1.5, 3)); gl.position.set(rand(-30, 30), rand(4, 14), z); world.add(gl); decor.push({ z, mesh: gl });
     }
     for (const side of [-1, 1]) if (Math.random() < 0.35) {   // glowing mushrooms along the edge of the run
@@ -1826,7 +1872,7 @@ function cleanup(pz) {
   keep(rails, r => r.z0 - r.L, r => world.remove(r.mesh));
   keep(obstacles, o => o.z, o => o.pool ? o.pool.remove(o.idx) : world.remove(o.mesh));
   keep(movers, o => o.z, () => {});
-  keep(crevasses, c => c.z0 - c.L, c => world.remove(c.mesh));
+  keep(crevasses, c => c.z0 - c.L, c => { world.remove(c.mesh); c.dispose?.dispose(); });
   keep(gates, g => g.z, g => world.remove(g.mesh));
   keep(pads, q => q.z - 3, q => world.remove(q.mesh));
   keep(coins, c => c.z, c => { if (!c.taken) coinPool.remove(c.idx); });
@@ -2644,8 +2690,8 @@ function finishRace() {
 async function restartWithAd() {
   if (overlayBusy) return;
   overlayBusy = true;
-  await Platform.midgameAd();
-  overlayBusy = false;
+  try { await Platform.midgameAd(); } catch {}   // an ad problem must never block the next run
+  finally { overlayBusy = false; }
   startRun(mode);
 }
 
@@ -2684,7 +2730,9 @@ addEventListener('keydown', e => {
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
-  let dt = Math.min(0.033, (now - last) / 1000); last = now;
+  const rawMs = now - last;
+  let dt = Math.min(0.033, rawMs / 1000); last = now;
+  if (!paused && (state === 'play' || state === 'crash')) Quality.sample(rawMs);
   if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
   if (paused) return;
   time += dt;
@@ -2765,4 +2813,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, camera, renderer, get quality() { return Quality.ratio; }, LITE, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

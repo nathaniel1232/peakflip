@@ -438,7 +438,7 @@ function resultsCard(r) {
     </div>
   </div>`;
   el.classList.remove('hidden');
-  $('againBtn').onclick = () => cfg.onAgain();
+  $('againBtn').onclick = () => { const b = $('againBtn'); b.disabled = true; b.innerHTML = `${icon('retry')}Loading…`; cfg.onAgain(); };
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };

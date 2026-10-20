@@ -40,18 +40,18 @@ export const Ads = {
   rewarded() {
     Ads.noFill = false;
     return new Promise(resolve => {
-      let done = false;
+      let done = false, started = false;
       const finish = ok => { if (done) return; done = true; onMute(false); resolve(ok); };
       if (provider === 'crazygames') {
         try {
-          sdk.ad.requestAd('rewarded', { adStarted: () => onMute(true), adFinished: () => finish(true), adError: () => finish(false) });
+          sdk.ad.requestAd('rewarded', { adStarted: () => { started = true; onMute(true); }, adFinished: () => finish(true), adError: () => { Ads.noFill = true; finish(false); } });
         } catch { Ads.noFill = true; finish(false); }
       } else if (provider === 'google') {
         let viewed = false, offered = false;
         window.adBreak({
           type: 'reward', name: 'reward_unlock',
           beforeAd: () => onMute(true), afterAd: () => onMute(false),
-          beforeReward: showAdFn => { offered = true; showAdFn(); },
+          beforeReward: showAdFn => { offered = started = true; showAdFn(); },
           adViewed: () => { viewed = true; },
           adDismissed: () => { viewed = false; },
           adBreakDone: () => { if (!offered) Ads.noFill = true; finish(viewed); },   // no ad was available
@@ -59,6 +59,8 @@ export const Ads = {
       } else if (provider === 'dev') {
         devAd(3, () => finish(true), () => finish(false));
       } else finish(false);
+      // if no ad has even started after a few seconds (none available, or an ad blocker ate the request), give up
+      setTimeout(() => { if (!started && provider !== 'dev') { Ads.noFill = true; finish(false); } }, 4000);
       setTimeout(() => finish(false), 60000);
     });
   },
@@ -66,14 +68,17 @@ export const Ads = {
   // between runs; never blocks for long
   interstitial() {
     return new Promise(resolve => {
-      let done = false;
+      let done = false, started = false;
       const finish = () => { if (done) return; done = true; onMute(false); resolve(); };
+      const begin = () => { started = true; onMute(true); };
       if (provider === 'crazygames') {
-        try { sdk.ad.requestAd('midgame', { adStarted: () => onMute(true), adFinished: finish, adError: finish }); } catch { finish(); }
+        try { sdk.ad.requestAd('midgame', { adStarted: begin, adFinished: finish, adError: finish }); } catch { finish(); }
       } else if (provider === 'google') {
-        window.adBreak({ type: 'next', name: 'between_runs', beforeAd: () => onMute(true), afterAd: () => onMute(false), adBreakDone: finish });
+        try { window.adBreak({ type: 'next', name: 'between_runs', beforeAd: begin, afterAd: () => onMute(false), adBreakDone: finish }); } catch { finish(); }
       } else finish();
-      setTimeout(finish, 45000);
+      // never hold up the next run: if no ad has started within 1.5 s (none available, not approved yet, ad blocker), carry on
+      setTimeout(() => { if (!started) finish(); }, 1500);
+      setTimeout(finish, 40000);
     });
   },
 };
