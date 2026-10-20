@@ -1,6 +1,7 @@
 // ============================================================
-//  Cloud saves: every change is copied to Supabase (keyed by the browser's player id) so progress
-//  survives cleared browsers, new devices and a move to a new domain. A short save code restores it anywhere.
+//  Cloud saves: every change (coins, items, missions, name) is copied to Supabase, keyed by the browser's
+//  player id, so it's backed up automatically. The save code is internal: it only carries progress across
+//  when the game moves to a new domain (see canonicalHost in config.js). Players never see it.
 // ============================================================
 import { save, persist, onPersist, normalizeSave, ensureMissions } from './meta.js';
 import { rpc } from './net.js';
@@ -8,7 +9,6 @@ import { rpc } from './net.js';
 const cfg = window.PEAKFLIP_CONFIG || {};
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no 0/O or 1/I mix-ups
 const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(10)), b => CODE_CHARS[b % 32]).join('');
-export const fmtCode = c => c ? `${c.slice(0, 5)}-${c.slice(5)}` : '';
 const cleanCode = c => String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
@@ -45,19 +45,7 @@ export const Cloud = {
     }
     this.setStatus('offline'); return false;
   },
-  schedule() { clearTimeout(timer); timer = setTimeout(() => this.push(), 4000); },
-
-  // Replace this device's progress with the save behind a code. Returns 'ok' | 'not_found' | 'offline'.
-  async restore(code) {
-    code = cleanCode(code);
-    if (code.length !== 10) return 'not_found';
-    try {
-      const r = await rpc('restore_progress', { p_code: code });
-      if (!r?.found) return 'not_found';
-      adopt(r.data, r.saved_at); save.code = code; persist(false);
-      return 'ok';
-    } catch { return 'offline'; }
-  },
+  schedule() { clearTimeout(timer); timer = setTimeout(() => this.push(), 1500); },
 
   // onReplaced: called when newer progress from the cloud replaced what this device had
   async init(onReplaced) {

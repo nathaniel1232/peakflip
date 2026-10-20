@@ -7,7 +7,7 @@ import {
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
-import { Cloud, fmtCode } from './cloud.js';
+import { Cloud } from './cloud.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -19,17 +19,14 @@ let cfg = null;
 if (!save.pid) { save.pid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); persist(); }
 
 // ---------- leaderboard / ghost client (Supabase RPC over plain fetch) ----------
-// The Daily Race is scored in points since the winding-track update; it lives on its own board ('racepts')
-// so it never mixes with the old time-based 'race' rows.
-const DB = board => board === 'race' ? 'racepts' : board;
 const LB = {
   async get(board, day, limit = 20) {
-    try { return await rpc('get_leaderboard', { p_board: DB(board), p_day: day || '', p_pid: save.pid, p_limit: limit }); }
+    try { return await rpc('get_leaderboard', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit }); }
     catch { return null; }
   },
   async submit(board, value, day, ghost) {
     if (!save.name) return null;
-    try { return await rpc('submit_score', { p_board: DB(board), p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
+    try { return await rpc('submit_score', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
     catch { return null; }
   },
 };
@@ -88,17 +85,17 @@ const fmtCooldown = ms => { const m = Math.ceil(ms / 60000); return m >= 60 ? `$
 export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
-  const rb = save.racePts?.[today()];
-  $('raceSub').textContent = rb != null ? `Winding track · your best ${rb.toLocaleString()} pts` : 'Gates, turns & jumps · score the most points';
+  const rb = save.raceBest?.[today()];
+  $('raceSub').textContent = rb ? `Forest course · your best ${fmtTime(rb)}` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
   pb.innerHTML = save.name ? `${icon('user')}<b>${esc(save.name)}</b>` : `${icon('user')}<b>Claim your name</b>`;
   miniBoard();
   const ready = freeChestReady();
   $('chestBadge').classList.toggle('hidden', !ready);
-  $('chestSub').textContent = ready ? 'Free chest!' : fmtCooldown(save.freeChestAt - Date.now());
-  const { have, total } = collectionCount();
-  $('lockerSub').textContent = `${have}/${total}`;
+  $('shopSub').textContent = ready ? 'Free chest!' : 'Chests & items';
+  const { have } = collectionCount();
+  $('lockerSub').textContent = `${have} owned`;
   $('missionSub').textContent = `${save.missions.length} active`;
 }
 
@@ -117,41 +114,17 @@ async function miniBoard(force) {
   if (miniTab === key) el.innerHTML = html;
 }
 
-// ---------- profile & cloud save ----------
+// ---------- profile ----------
 const statusText = () => ({
-  synced: `${icon('check')} Saved to the cloud`, syncing: 'Saving…', offline: 'Offline · saved on this device for now', off: 'Connecting…',
+  synced: `${icon('check')} Your coins and items are saved automatically`, syncing: 'Saving…', offline: 'Saved on this device · will back up when online', off: 'Connecting…',
 })[Cloud.status];
 function renderProfile() {
-  openPanel('Profile & save', `
+  openPanel('Profile', `
     <div id="nameSlot"></div>
-    <div class="saveBox">
-      <div class="secHead">Your save code</div>
-      <div class="codeRow"><code id="saveCode">${fmtCode(Cloud.code) || '…'}</code><button class="btn" id="copyCode">Copy</button></div>
-      <div class="syncLine ${Cloud.status}" id="syncLine">${statusText()}</div>
-      <div class="note">Your coins, items, missions and name are backed up automatically. Write this code down:
-        it gets your progress back on another phone, browser or computer, or if this browser's data is cleared.</div>
-    </div>
-    <div class="saveBox">
-      <div class="secHead">Load progress from a code</div>
-      <div class="nameRow"><input id="restoreIn" maxlength="11" placeholder="XXXXX-XXXXX" autocomplete="off" style="text-transform:uppercase"><button class="btn" id="restoreBtn">Load</button></div>
-      <div class="note" id="restoreMsg">This replaces the progress on this device with the saved one.</div>
-    </div>
+    <div class="saveBox"><div class="syncLine ${Cloud.status}" id="syncLine">${statusText()}</div></div>
     <button class="btn" id="profLb">${icon('trophy')} Leaderboard</button>`);
   nameForm($('nameSlot'), () => renderProfile());
-  if (!Cloud.code) Cloud.push().then(() => { const c = $('saveCode'); if (c) c.textContent = fmtCode(Cloud.code) || '—'; });
-  $('copyCode').onclick = async () => { try { await navigator.clipboard.writeText(fmtCode(Cloud.code)); $('copyCode').textContent = 'Copied'; } catch {} };
   $('profLb').onclick = () => renderLeaderboard();
-  let armed = false;
-  $('restoreBtn').onclick = async () => {
-    const msg = $('restoreMsg'), btn = $('restoreBtn'), code = $('restoreIn').value;
-    if (code.replace(/[^A-Za-z0-9]/g, '').toUpperCase() === Cloud.code) { msg.textContent = "That's this device's own code."; return; }
-    if (!armed) { armed = true; btn.textContent = 'Replace?'; btn.classList.add('primary'); msg.innerHTML = '<b>Tap again</b> to replace this device\'s progress.'; return; }
-    btn.disabled = true; btn.textContent = '…';
-    const r = await Cloud.restore(code);
-    if (r === 'ok') { msg.textContent = 'Loaded! Restarting…'; setTimeout(() => location.reload(), 600); return; }
-    btn.disabled = false; btn.textContent = 'Load'; btn.classList.remove('primary'); armed = false;
-    msg.textContent = r === 'not_found' ? 'No save found for that code. Check it and try again.' : "Couldn't reach the server. Try again in a moment.";
-  };
 }
 Cloud.onStatus(() => { const l = $('syncLine'); if (l) { l.className = `syncLine ${Cloud.status}`; l.innerHTML = statusText(); } });
 
@@ -160,9 +133,8 @@ function renderHelp() {
   openPanel('How to play', `<div class="help">
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
     <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, coins buy chests. Landing upside down or hitting trees and rocks ends the run.</div>
-    <h4>Daily Race</h4><div class="item">A new winding track every day, the same for everyone. You race for <b>points</b>:
-      ride through the flag gates (each gate in a row is worth more), land tricks off the jumps, grab coins, and reach the finish fast for a time bonus.
-      Hitting the fence slows you down and breaks your combo, so brake (<kbd>S</kbd>) into the tight turns.</div>
+    <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Ride through all 11 checkpoints and reach the finish as fast as you can.
+      Missing a checkpoint costs 3 seconds. Race against other players' ghosts.</div>
     <h4>Leaderboards</h4><div class="item">Claim a name once and your best Endless score and today's race score go on the world boards automatically.</div>
   </div>`);
 }
@@ -183,10 +155,18 @@ function chestCard(key) {
   return `<div class="chestCard ${c.set ? 'themed' : ''}" style="--c:${c.color}">${tag}<div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
     <div class="cname">${c.name}</div><div class="odds">${odds}</div>${btn}</div>`;
 }
-function renderChests() {
+// ---------- shop: every item, previewed on your avatar, unlocked from chests ----------
+let shopTab = 'chests', shopSel = null;   // shopSel: { kind, id } the item shown in the detail bar
+const KINDS = Object.keys(CATALOG);
+const chestFor = it => it.set ? Object.keys(CHESTS).find(k => CHESTS[k].set === it.set) : it.rarity === 'common' ? 'basic' : 'epic';
+function sourceText(it) {
+  if (it.ad) return `Watch ${it.ad} ad${it.ad > 1 ? 's' : ''} to unlock`;
+  if (it.set) return `${CHESTS[chestFor(it)].name}, or any chest`;
+  return it.rarity === 'common' ? 'Free & Snow Chests' : 'Snow & Epic Chests';
+}
+function chestsHtml() {
   const pityLeft = Math.max(1, PITY - (save.pity || 0));
-  openPanel('Chests', `
-    <div class="chips"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>
+  return `
     <div class="chestRow">${chestCard('free')}${chestCard('basic')}${chestCard('epic')}</div>
     <div class="secHead">Themed chests <small>only drop items from their set</small></div>
     <div class="chestRow">${chestCard('spooky')}${chestCard('agartha')}${chestCard('tradition')}</div>
@@ -194,11 +174,70 @@ function renderChests() {
       <button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>
       <button class="btn" id="adChest" ${adUsesLeft('chest') > 0 ? '' : 'disabled'}>${icon('play')} Free Snow Chest <small style="opacity:.7">(${adUsesLeft('chest')})</small></button>
     </div>` : ''}
-    <div class="note">Epic or better guaranteed within <b>${pityLeft}</b> Free/Snow chest${pityLeft > 1 ? 's' : ''}. Duplicates turn into coins.<br>Coins are earned only by playing. No real money involved.</div>`, true);
-  $('panelBody').querySelectorAll('[data-chest]').forEach(b => b.onclick = () => doOpen(b.dataset.chest));
+    <div class="note">Epic or better guaranteed within <b>${pityLeft}</b> Free/Snow chest${pityLeft > 1 ? 's' : ''}. Duplicates turn into coins.<br>Coins are earned only by playing. No real money involved.</div>`;
+}
+function shopItemsHtml(kind) {
+  return `<div class="grid">${CATALOG[kind].filter(it => it.id !== 'none').map(it => {
+    const owned = save.inv[kind].includes(it.id), on = tryOn?.[kind] === it.id || (shopSel?.kind === kind && shopSel.id === it.id);
+    return `<button class="skin ${on ? 'trying' : ''}" data-shop="${kind}:${it.id}">
+      <div class="swWrap">${swatch(kind, it)}${owned ? `<span class="lockBadge own">${icon('check')}</span>` : ''}</div>
+      <div class="nm">${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
+  }).join('')}</div>`;
+}
+function shopFitsHtml() {
+  return `<div class="fits">${FITS.map(f => {
+    const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length, ck = Object.keys(CHESTS).find(k => CHESTS[k].set === f.set);
+    const pieces = Object.entries(f.pieces).filter(([, id]) => id !== 'none').map(([k, id]) => {
+      const it = CATALOG[k].find(i => i.id === id);
+      return `<div class="fp" title="${esc(it.name)}">${swatch(k, it)}</div>`;
+    }).join('');
+    return `<div class="fit" style="--c:${set.color}">
+      <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name} · ${have}/${total} owned</span></div>
+      <div class="fitPieces">${pieces}</div>
+      <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
+      <button class="btn go" data-chest="${ck}" ${save.coins >= CHESTS[ck].price ? '' : 'disabled'}>${coin} ${CHESTS[ck].price}</button></div>
+    </div>`;
+  }).join('')}</div><div class="note">The coin button opens that set's themed chest.</div>`;
+}
+function detailBar() {
+  if (!shopSel) return tryOn ? `<div class="tryBar"><span>Trying on a fit</span><button class="btn" id="tryReset">Take off</button></div>` : '';
+  const { kind, id } = shopSel, it = CATALOG[kind].find(i => i.id === id), owned = save.inv[kind].includes(id);
+  let action;
+  if (owned) action = save.eq[kind] === id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="shopEquip">Wear</button>`;
+  else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`;
+  else { const ck = chestFor(it), c = CHESTS[ck]; action = `<button class="btn go" data-chest="${ck}" ${save.coins >= c.price ? '' : 'disabled'}>${c.name.replace(' Chest', '')} ${coin} ${c.price}</button>`; }
+  return `<div class="tryBar"><span><b>${esc(it.name)}</b> <small style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small><br>
+    <small>${owned ? 'In your locker' : `Get it: ${sourceText(it)}`}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
+}
+function renderShop(tab) {
+  if (tab) shopTab = tab;
+  const tabs = `<button class="tab ${shopTab === 'chests' ? 'on' : ''}" data-stab="chests">${icon('chest')} Chests</button>
+    <button class="tab ${shopTab === 'fits' ? 'on' : ''}" data-stab="fits">${icon('gift')} Fits</button>` +
+    KINDS.map(k => `<button class="tab ${shopTab === k ? 'on' : ''}" data-stab="${k}">${KIND_NAME[k]}</button>`).join('');
+  const body = shopTab === 'chests' ? chestsHtml() : shopTab === 'fits' ? shopFitsHtml()
+    : `${shopItemsHtml(shopTab)}<div class="note">Tap anything to see it on your rider. Items unlock from chests; ${icon('check')} = you own it.</div>`;
+  openPanel('Shop', `<div class="chips"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>
+    ${detailBar()}<div class="tabs">${tabs}</div>${body}`, true, true);
+  const B = $('panelBody');
+  B.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => renderShop(b.dataset.stab));
+  B.querySelectorAll('[data-chest]').forEach(b => b.onclick = () => doOpen(b.dataset.chest));
+  B.querySelectorAll('[data-shop]').forEach(b => b.onclick = () => {
+    const [kind, id] = b.dataset.shop.split(':'), t = { ...(tryOn || {}) };
+    if (t[kind] === id) { delete t[kind]; shopSel = null; } else { t[kind] = id; shopSel = { kind, id }; }   // tap again to take it off
+    preview(t); renderShop();
+  });
+  B.querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { shopSel = null; preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderShop(); });
+  if ($('tryReset')) $('tryReset').onclick = () => { shopSel = null; preview(null); renderShop(); };
+  if ($('shopEquip')) $('shopEquip').onclick = () => { save.eq[shopSel.kind] = shopSel.id; persist(); preview(tryOn); cfg.sfx.perfect(); renderShop(); };
+  if ($('shopAd')) $('shopAd').onclick = async () => {
+    $('shopAd').disabled = true;
+    const { kind, id } = shopSel;
+    if (await cfg.ads.rewarded() && adProgress(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); }
+    preview(tryOn); renderShop();
+  };
   const adC = $('adCoins'), adX = $('adChest');
-  if (adC) adC.onclick = async () => { adC.disabled = true; if (await cfg.ads.rewarded()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderChests(); };
-  if (adX) adX.onclick = async () => { adX.disabled = true; if (await cfg.ads.rewarded()) { useAd('chest'); doOpen('basic', true); } else renderChests(); };
+  if (adC) adC.onclick = async () => { adC.disabled = true; if (await cfg.ads.rewarded()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderShop(); };
+  if (adX) adX.onclick = async () => { adX.disabled = true; if (await cfg.ads.rewarded()) { useAd('chest'); doOpen('basic', true); } else renderShop(); };
 }
 function doOpen(key, paidByAd) {
   const res = openChest(key, paidByAd);
@@ -229,82 +268,55 @@ function doOpen(key, paidByAd) {
         </div>
       </div>`;
     const eq = $('equipNow');
-    if (eq) eq.onclick = () => { save.eq[res.kind] = it.id; persist(); cfg.onCosmetics(); ov.classList.add('hidden'); renderChests(); };
-    $('openMore').onclick = () => { ov.classList.add('hidden'); renderChests(); };
+    if (eq) eq.onclick = () => { save.eq[res.kind] = it.id; persist(); ov.classList.add('hidden'); preview(tryOn); renderShop(); };
+    $('openMore').onclick = () => { ov.classList.add('hidden'); renderShop(); };
   }, 1300);
 }
 
 // ---------- locker ----------
-let lockerTab = 'fits', tryOn = null;   // tryOn: { kind: id } previewed on the avatar, not equipped
-const setChest = set => Object.values(CHESTS).find(c => c.set === set);
-const howToGet = (kind, it) => it.ad ? `watch ${it.ad} ads in the ${KIND_NAME[kind]} tab` : it.set ? `the ${setChest(it.set).name}` : 'chests';
+// ---------- locker: only what you own; tap to wear ----------
+let lockerTab = 'outfit', tryOn = null;   // tryOn: { kind: id } previewed on the avatar in the Shop, not equipped
 function preview(t) { tryOn = t && Object.keys(t).length ? t : null; cfg.preview(tryOn); }
-function fitsGrid() {
-  return `<div class="fits">${FITS.map(f => {
-    const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length;
-    const worn = Object.entries(f.pieces).every(([k, id]) => save.eq[k] === id);
-    const pieces = Object.entries(f.pieces).filter(([, id]) => id !== 'none').map(([k, id]) => {
-      const it = CATALOG[k].find(i => i.id === id), own = save.inv[k].includes(id);
-      return `<div class="fp ${own ? '' : 'miss'}" title="${esc(it.name)}${own ? '' : ' (locked)'}">${swatch(k, it)}</div>`;
-    }).join('');
+function lockerFitsHtml() {
+  // a fit shows up once you own at least one of its pieces, listing just the pieces you have
+  const mine = FITS.filter(f => Object.entries(f.pieces).some(([k, id]) => id !== 'none' && save.inv[k].includes(id)));
+  if (!mine.length) return emptyLocker('No fits yet. Themed chests in the Shop drop Agartha, Halloween and Shabbat pieces.');
+  return `<div class="fits">${mine.map(f => {
+    const set = SETS[f.set], owned = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && save.inv[k].includes(id));
+    const worn = owned.every(([k, id]) => save.eq[k] === id);
     return `<div class="fit" style="--c:${set.color}">
       <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name}</span></div>
-      <div class="fitPieces">${pieces}</div>
-      <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
-      <button class="btn ${worn ? '' : have > 0 ? 'go' : ''}" data-fit="${f.id}" ${have > 0 && !worn ? '' : 'disabled'}>${worn ? `${icon('check')} Wearing` : `Wear · ${have}/${total}`}</button></div>
+      <div class="fitPieces">${owned.map(([k, id]) => `<div class="fp">${swatch(k, CATALOG[k].find(i => i.id === id))}</div>`).join('')}</div>
+      <button class="btn ${worn ? '' : 'go'}" data-fit="${f.id}" ${worn ? 'disabled' : ''}>${worn ? `${icon('check')} Wearing` : 'Wear fit'}</button>
     </div>`;
   }).join('')}</div>`;
 }
+const emptyLocker = text => `<div class="note" style="padding:18px 0">${text}</div><button class="btn primary" id="toShop">${icon('chest')} Go to the Shop</button>`;
 function renderLocker() {
-  const tabs = `<button class="tab ${lockerTab === 'fits' ? 'on' : ''}" data-tab="fits">${icon('gift')} Fits</button>` +
-    Object.keys(CATALOG).map(k => `<button class="tab ${k === lockerTab ? 'on' : ''}" data-tab="${k}">${KIND_NAME[k]} ${save.inv[k].length}/${CATALOG[k].length}</button>`).join('');
-  const grid = lockerTab === 'fits' ? '' : CATALOG[lockerTab].map(it => {
-    const owned = save.inv[lockerTab].includes(it.id), on = save.eq[lockerTab] === it.id;
-    const rc = RARITY[it.rarity].color;
-    if (it.ad && !owned) {
-      // ad exclusives are visible (so people want them) and unlock by watching ads
-      return `<div class="skin adItem">${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div>
-        <button class="btn go adBtn" data-ad="${it.id}" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(lockerTab, it.id)}/${it.ad}</button></div>`;
-    }
-    // locked items can still be tried on in the closet
-    const trying = tryOn?.[lockerTab] === it.id;
-    return `<button class="skin ${on ? 'sel' : ''} ${owned ? '' : 'locked'} ${trying ? 'trying' : ''}" ${owned ? `data-id="${it.id}"` : `data-try="${it.id}"`}>
-      <div class="swWrap">${swatch(lockerTab, it)}${owned ? '' : `<span class="lockBadge">${icon('lock')}</span>`}</div>
-      <div class="nm">${esc(it.name)}</div><div class="rr" style="color:${rc}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
-  }).join('');
+  if (tryOn) preview(null);
+  const tabs = KINDS.map(k => `<button class="tab ${k === lockerTab ? 'on' : ''}" data-tab="${k}">${KIND_NAME[k]} <small>${save.inv[k].filter(id => id !== 'none').length}</small></button>`).join('')
+    + `<button class="tab ${lockerTab === 'fits' ? 'on' : ''}" data-tab="fits">${icon('gift')} Fits</button>`;
+  let body;
+  if (lockerTab === 'fits') body = lockerFitsHtml();
+  else {
+    const mine = CATALOG[lockerTab].filter(it => save.inv[lockerTab].includes(it.id));
+    body = mine.length > 1 || lockerTab === 'outfit' || lockerTab === 'ski'
+      ? `<div class="grid">${mine.map(it => `<button class="skin ${save.eq[lockerTab] === it.id ? 'sel' : ''}" data-id="${it.id}">
+          ${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name}</div></button>`).join('')}</div>`
+      : emptyLocker(`You don't have any ${KIND_NAME[lockerTab].toLowerCase()} items yet.`);
+  }
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
-  const body = lockerTab === 'fits'
-    ? `${fitsGrid()}<div class="note">A fit puts on every piece you own from a themed set. Get the missing pieces from the <b>themed chests</b>.</div>`
-    : `<div class="grid">${grid}</div><div class="note">Unlock more from chests. Items with a ${icon('play')} button are exclusives: watch ads to unlock them.${cfg.ads.available ? '' : ' (Ads are not set up on this site yet.)'}</div>`;
-  const tryBar = tryOn ? `<div class="tryBar"><span>Trying on <b>${Object.entries(tryOn).filter(([, id]) => id !== 'none').map(([k, id]) => {
-      const it = CATALOG[k].find(i => i.id === id); return esc(it.name) + (save.inv[k].includes(id) ? '' : ` <small>(get it from ${howToGet(k, it)})</small>`);
-    }).join(', ') || 'nothing'}</b></span><button class="btn" id="tryReset">Take off</button></div>` : '';
-  openPanel('Locker', `${tryBar}${gear}<div class="tabs">${tabs}</div>${body}<div class="note closetTip">Drag the avatar to spin it.</div>`, true, true);
-  if ($('tryReset')) $('tryReset').onclick = () => { preview(null); renderLocker(); };
-  $('panelBody').querySelectorAll('[data-try]').forEach(b => b.onclick = () => {
-    const id = b.dataset.try, t = { ...(tryOn || {}) };
-    if (t[lockerTab] === id) delete t[lockerTab]; else t[lockerTab] = id;   // tap again to take it off
-    preview(t); renderLocker();
-  });
-  $('panelBody').querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderLocker(); });
-  $('panelBody').querySelectorAll('[data-fit]').forEach(b => b.onclick = () => {
+  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div>${body}<div class="note closetTip">Drag your rider to spin it. Want more? Everything is in the Shop.</div>`, true, true);
+  const B = $('panelBody');
+  B.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
+  B.querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
+  B.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
+  B.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => {
     const f = FITS.find(x => x.id === b.dataset.fit);
     for (const [k, id] of Object.entries(f.pieces)) if (save.inv[k].includes(id)) save.eq[k] = id;
-    persist(); preview(null); cfg.sfx.perfect(); renderLocker();
+    persist(); cfg.onCosmetics(); cfg.sfx.perfect(); renderLocker();
   });
-  $('panelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
-  $('panelBody').querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
-  $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => {
-    save.eq[lockerTab] = b.dataset.id; persist();
-    if (tryOn) { delete tryOn[lockerTab]; preview(tryOn); } else cfg.onCosmetics();
-    renderLocker();
-  });
-  $('panelBody').querySelectorAll('[data-ad]').forEach(b => b.onclick = async () => {
-    b.disabled = true;
-    const ok = await cfg.ads.rewarded();
-    if (ok && adProgress(lockerTab, b.dataset.ad)) { save.eq[lockerTab] = b.dataset.ad; persist(); cfg.onCosmetics(); cfg.sfx.perfect(); }
-    renderLocker();
-  });
+  if ($('toShop')) $('toShop').onclick = () => renderShop(lockerTab === 'fits' ? 'fits' : lockerTab);
 }
 
 // ---------- missions ----------
@@ -363,9 +375,9 @@ function nameForm(slot, after, compact) {
 }
 
 function lbRows(data, board, limit) {
-  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.racePts?.[today()] ?? '—').toLocaleString() : save.best.toLocaleString()}</b></div>`;
+  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
-  const fmt = v => Math.round(v).toLocaleString();
+  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
   const rows = data.top.slice(0, limit).map((r, i) => rowHtml(i + 1, r.name, fmt(r.value), r.isMe)).join('');
   const me = data.me && data.me.rank > limit ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true) : '';
   return rows + me;
@@ -386,18 +398,11 @@ function resultsCard(r) {
   let body;
   if (r.mode === 'race') {
     const field = r.field.length > 1
-      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, f.s.toLocaleString(), f.me)).join('')}</div>` : '';
-    const line = (k, v) => `<div class="item"><span class="grow">${k}</span><span class="val">${v}</span></div>`;
+      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, fmtTime(f.t), f.me)).join('')}</div>` : '';
     body = `
       ${r.newBest ? '<div class="tag">PERSONAL BEST</div>' : ''}
-      <div class="big-num"><small>RACE POINTS</small>${r.score.toLocaleString()}</div>
-      <div class="sub">${fmtTime(r.time)} · best today ${r.best.toLocaleString()} pts</div>
-      <div class="list">
-        ${line('Tricks, coins & close calls', r.tricks.toLocaleString())}
-        ${line(`Gates (${r.gates}/${r.gateTotal})`, r.gatePts.toLocaleString())}
-        ${line(`Time bonus (${fmtTime(r.time)})`, r.timeBonus.toLocaleString())}
-        ${r.walls ? line('Wall hits', r.walls) : ''}
-      </div>
+      <div class="big-num"><small>FINISH TIME</small>${fmtTime(r.time)}</div>
+      <div class="sub">${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · best today ${fmtTime(r.best)}</div>
       ${field}`;
   } else {
     body = `
@@ -424,7 +429,7 @@ function resultsCard(r) {
   el.classList.remove('hidden');
   $('againBtn').onclick = () => cfg.onAgain();
   $('menuBtn').onclick = () => cfg.onMenu();
-  if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderChests(); };
+  if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
   if (save.name) rankRow(r);
@@ -440,7 +445,7 @@ async function rankRow(r) {
   lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
   $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
 }
-const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, s: r.ghost.s, f: r.ghost.f } : undefined });
+const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, f: r.ghost.f } : undefined });
 
 function overlay() {
   document.getElementById('lbReveal')?.remove();
@@ -455,7 +460,7 @@ function overlay() {
 function recordMoment(r, done) {
   const el = overlay(), card = el.querySelector('#rvCard');
   const finish = () => { el.remove(); done(); };
-  const big = r.score.toLocaleString();
+  const big = r.mode === 'race' ? fmtTime(r.time) : r.score.toLocaleString();
   card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
     <div class="rv-score">${big}</div><div id="rvStep"></div>`;
   cfg.sfx.perfect();
@@ -481,7 +486,7 @@ function recordMoment(r, done) {
 
 function revealBoard(el, data, board, done) {
   const card = el.querySelector('#rvCard');
-  const fmt = v => Math.round(v).toLocaleString();
+  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
   const me = data.me, inTop = me.rank <= data.top.length;
   let rows = data.top.map((r, i) => ({ rank: i + 1, ...r }));
   if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, isMe: true }]);
@@ -530,7 +535,7 @@ function confetti(n) {
 async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
-    ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race. Can you beat my ghost?`
+    ? `I did today's Peak Flip race in ${fmtTime(r.time)}. Can you beat my ghost?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -544,12 +549,12 @@ export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
   put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
-  put('icChest', 'chest'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help');
+  put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
-  $('chestsBtn').onclick = () => { c.sfx.init(); renderChests(); };
+  $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(freeChestReady() ? 'chests' : shopTab); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; renderLeaderboard(); };

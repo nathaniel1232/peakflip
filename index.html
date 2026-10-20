@@ -30,7 +30,6 @@
   #score { position: absolute; top: 14px; left: 0; right: 0; text-align: center; font-size: 40px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
   #raceInfo { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); font-size: 14px; background: rgba(13,25,42,.55); padding: 5px 12px; border-radius: 99px; white-space: nowrap; text-shadow: none; font-variant-numeric: tabular-nums; }
   #coins { position: absolute; top: 16px; right: 16px; font-size: 20px; background: rgba(13,25,42,.45); padding: 6px 12px; border-radius: 99px; text-shadow: none; display: flex; gap: 6px; align-items: center; }
-  #minimap { position: absolute; inset: auto auto 14px 12px; width: 84px; height: 180px; border-radius: 12px; background: rgba(13,25,42,.35); }
   #speedo { position: absolute; bottom: 16px; right: 16px; font-size: 15px; font-variant-numeric: tabular-nums; opacity: .9; }
   #combo { position: absolute; top: 68px; left: 0; right: 0; text-align: center; font-size: 18px; color: var(--gold); }
   #raceInfo:not(.hidden) ~ #combo { top: 98px; }
@@ -111,9 +110,6 @@
   #miniLb { flex: 1; min-height: 150px; }
   #miniLb .item { padding: 8px 10px; }
   .saveBox { display: flex; flex-direction: column; gap: 8px; background: var(--ink-2); border-radius: var(--r); padding: 12px; }
-  .codeRow { display: flex; gap: 8px; align-items: center; }
-  .codeRow code { flex: 1; font: 800 22px ui-monospace, Menlo, monospace; letter-spacing: .12em; text-align: center; background: rgba(0,0,0,.25); border-radius: 10px; padding: 10px; user-select: all; -webkit-user-select: all; }
-  .codeRow .btn { padding: 12px 14px; }
   .syncLine { font-size: 12px; font-weight: 700; color: var(--muted); display: flex; gap: 6px; align-items: center; justify-content: center; }
   .syncLine.synced { color: var(--good); }
   .syncLine .ic { width: 15px; height: 15px; }
@@ -209,6 +205,10 @@
   .skin.locked .sw { opacity: .45; filter: saturate(.6); }
   .lockBadge { position: absolute; right: -6px; bottom: -6px; width: 20px; height: 20px; border-radius: 50%; background: #13253b; display: grid; place-items: center; color: var(--muted); }
   .lockBadge .ic { width: 12px; height: 12px; }
+  .lockBadge.own { background: var(--good); color: #062a14; }
+  .tryBar .btn .ic { width: 16px; height: 16px; }
+  .tabs .tab small { opacity: .7; }
+  .tabs .tab .ic { width: 15px; height: 15px; vertical-align: -3px; }
   .skin.locked .nm { color: var(--muted); }
   .skin.trying { box-shadow: inset 0 0 0 2px var(--ice); background: rgba(76,195,255,.14); }
   .fit .row .btn { padding: 9px 6px; }
@@ -296,7 +296,6 @@
   <div id="toast"></div>
   <div id="hint"></div>
   <div id="speedo"></div>
-  <canvas id="minimap" width="84" height="180" class="hidden"></canvas>
   <button id="pauseBtn" class="iconBtn" aria-label="Pause"></button>
   <button id="camBtn" class="iconBtn" aria-label="Change camera"></button>
 </div>
@@ -314,11 +313,11 @@
       </div>
       <div class="secHead">Play</div>
       <button id="playBtn" class="mode primary"><span id="icPlay"></span><span><span class="t">Endless</span><span class="s">Tricks, speed, how far can you go</span></span><span id="icGo1"></span></button>
-      <button id="raceBtn" class="mode race"><span id="icFlag"></span><span><span class="t">Daily Race <em class="newPill">NEW TRACK</em></span><span class="s" id="raceSub"></span></span><span id="icGo2"></span></button>
+      <button id="raceBtn" class="mode race"><span id="icFlag"></span><span><span class="t">Daily Race</span><span class="s" id="raceSub"></span></span><span id="icGo2"></span></button>
       <div class="secHead">Your stuff</div>
       <div class="nav">
+        <button id="shopBtn"><span id="icShop"></span>Shop<small id="shopSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
         <button id="lockerBtn"><span id="icSkis"></span>Locker<small id="lockerSub"></small></button>
-        <button id="chestsBtn"><span id="icChest"></span>Chests<small id="chestSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
         <button id="missionsBtn"><span id="icTarget"></span>Missions<small id="missionSub"></small></button>
         <button id="helpBtn"><span id="icHelp"></span>How to play<small>Controls</small></button>
       </div>
