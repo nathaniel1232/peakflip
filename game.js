@@ -37,7 +37,7 @@ import { Ads } from './ads.js';
 import { Cloud } from './cloud.js';
 
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
-const ADS_ENABLED = false;   // TEMP: midgame ads switched off — set to true before publishing
+const ADS_ENABLED = true;   // an ad between runs (when you press Ride again); the ad network decides how often
 const Platform = {
   sdk: null,
   async init() {

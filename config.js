@@ -9,13 +9,14 @@ window.PEAKFLIP_CONFIG = {
   // uploaded and are sent here with it, so nobody loses anything. peakflip.io itself redirects to www in Vercel.
   canonicalHost: 'www.peakflip.io',
 
-  // Google H5 Games Ads (rewarded + between-run ads on your own site). Needs an approved AdSense account.
-  h5GamesAds: false,
-  adsTestMode: true,   // shows Google's test ads; set false once approved and live
+  // Google AdSense account. Loading its script on every page is also how AdSense verifies the site.
+  adsenseClient: 'ca-pub-5606045487621821',
+  // Google H5 Games Ads (the ad after a run + "watch an ad" rewards). Ads only appear once Google has approved
+  // the site for H5 Games Ads; until then the game simply shows no ad.
+  h5GamesAds: true,
+  adsTestMode: false,   // true shows Google's test ads instead of real ones
 
-  // Google AdSense side banners — only shown on screens ≥1280px wide and never on CrazyGames.
-  // Fill these in after AdSense approves your site, e.g. adsenseClient: 'ca-pub-1234567890123456'
-  adsenseClient: '',
+  // Optional AdSense side banners — only on screens ≥1280px wide, never on CrazyGames. Slot ids come from AdSense → Ads → By ad unit.
   adsenseSlotLeft: '',
   adsenseSlotRight: '',
 };

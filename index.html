@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>Peak Flip</title>
+<!-- Google AdSense (kept on one line: the CrazyGames build removes it, since CrazyGames doesn't allow other ad networks) -->
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-5606045487621821" crossorigin="anonymous"></script>
 <meta name="description" content="Low-poly ski trick game. Flip, spin, grind rails, race the daily forest course against other players' ghosts.">
 <meta property="og:title" content="Peak Flip">
 <meta property="og:description" content="Flip, spin and grind down an endless mountain. Race your friends on today's course.">
@@ -286,6 +288,7 @@
   @keyframes meIn { 0% { opacity: 0; transform: translateY(140px) scale(.9); } 100% { opacity: 1; transform: none; } }
   @keyframes glow { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 24px rgba(255,107,44,.55); } }
 
+  .flashNote { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 9; background: rgba(13,25,42,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font: 700 14px system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.3); animation: toast 2.6s ease-out forwards; }
   /* ---------- optional side ad rails (web hosting only) ---------- */
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
   .adrail.left { left: 8px; } .adrail.right { right: 8px; }
@@ -382,11 +385,13 @@
   (function () {
     var c = window.PEAKFLIP_CONFIG || {};
     if (!c.adsenseClient || /crazygames/.test(location.hostname)) return;
-    document.body.classList.add('ads-on');
-    var s = document.createElement('script');
-    s.async = true; s.crossOrigin = 'anonymous';
-    s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' + c.adsenseClient;
-    document.head.appendChild(s);
+    if (c.adsenseSlotLeft || c.adsenseSlotRight) document.body.classList.add('ads-on');
+    if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
+      var s = document.createElement('script');
+      s.async = true; s.crossOrigin = 'anonymous';
+      s.src = 'https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=' + c.adsenseClient;
+      document.head.appendChild(s);
+    }
     [['adLeft', c.adsenseSlotLeft], ['adRight', c.adsenseSlotRight]].forEach(function (a) {
       if (!a[1]) return;
       document.getElementById(a[0]).innerHTML = '<ins class="adsbygoogle" style="display:block;width:160px;height:600px" data-ad-client="' + c.adsenseClient + '" data-ad-slot="' + a[1] + '"></ins>';

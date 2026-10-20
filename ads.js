@@ -16,6 +16,8 @@ export const Ads = {
     onMute = muteFn || onMute;
     // the CrazyGames SDK also loads elsewhere but only serves ads on crazygames.com
     if (crazySdk && crazySdk.environment === 'crazygames') { sdk = crazySdk; provider = 'crazygames'; return; }
+    // localhost always gets the fake test ad, so the reward flow can be tried while developing
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) { provider = 'dev'; return; }
     if (cfg.adsenseClient && cfg.h5GamesAds && !/crazygames/.test(location.hostname)) {
       // Google's H5 games ad loader (adBreak / adConfig)
       if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
@@ -30,27 +32,29 @@ export const Ads = {
       window.adConfig({ preloadAdBreaks: 'on', sound: 'on' });
       provider = 'google'; return;
     }
-    if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) provider = 'dev';
   },
+
+  noFill: false,   // set when the last rewarded request had no ad to show
 
   // resolves true only if the player watched the whole ad
   rewarded() {
+    Ads.noFill = false;
     return new Promise(resolve => {
       let done = false;
       const finish = ok => { if (done) return; done = true; onMute(false); resolve(ok); };
       if (provider === 'crazygames') {
         try {
           sdk.ad.requestAd('rewarded', { adStarted: () => onMute(true), adFinished: () => finish(true), adError: () => finish(false) });
-        } catch { finish(false); }
+        } catch { Ads.noFill = true; finish(false); }
       } else if (provider === 'google') {
-        let viewed = false;
+        let viewed = false, offered = false;
         window.adBreak({
           type: 'reward', name: 'reward_unlock',
           beforeAd: () => onMute(true), afterAd: () => onMute(false),
-          beforeReward: showAdFn => showAdFn(),
+          beforeReward: showAdFn => { offered = true; showAdFn(); },
           adViewed: () => { viewed = true; },
           adDismissed: () => { viewed = false; },
-          adBreakDone: () => finish(viewed),
+          adBreakDone: () => { if (!offered) Ads.noFill = true; finish(viewed); },   // no ad was available
         });
       } else if (provider === 'dev') {
         devAd(3, () => finish(true), () => finish(false));

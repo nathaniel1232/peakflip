@@ -155,6 +155,17 @@ function chestCard(key) {
   return `<div class="chestCard ${c.set ? 'themed' : ''}" style="--c:${c.color}">${tag}<div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
     <div class="cname">${c.name}</div><div class="odds">${odds}</div>${btn}</div>`;
 }
+// rewarded ad with a friendly message when there's no ad to show right now
+async function watchAd() {
+  const ok = await cfg.ads.rewarded();
+  if (!ok && cfg.ads.noFill) note('No ad available right now. Try again in a bit.');
+  return ok;
+}
+function note(text) {
+  const el = document.createElement('div'); el.className = 'flashNote'; el.textContent = text;
+  document.body.appendChild(el); setTimeout(() => el.remove(), 2600);
+}
+
 // ---------- shop: every item, previewed on your avatar, unlocked from chests ----------
 let shopTab = 'chests', shopSel = null;   // shopSel: { kind, id } the item shown in the detail bar
 const KINDS = Object.keys(CATALOG);
@@ -232,12 +243,12 @@ function renderShop(tab) {
   if ($('shopAd')) $('shopAd').onclick = async () => {
     $('shopAd').disabled = true;
     const { kind, id } = shopSel;
-    if (await cfg.ads.rewarded() && adProgress(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); }
+    if (await watchAd() && adProgress(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); }
     preview(tryOn); renderShop();
   };
   const adC = $('adCoins'), adX = $('adChest');
-  if (adC) adC.onclick = async () => { adC.disabled = true; if (await cfg.ads.rewarded()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderShop(); };
-  if (adX) adX.onclick = async () => { adX.disabled = true; if (await cfg.ads.rewarded()) { useAd('chest'); doOpen('basic', true); } else renderShop(); };
+  if (adC) adC.onclick = async () => { adC.disabled = true; if (await watchAd()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderShop(); };
+  if (adX) adX.onclick = async () => { adX.disabled = true; if (await watchAd()) { useAd('chest'); doOpen('basic', true); } else renderShop(); };
 }
 function doOpen(key, paidByAd) {
   const res = openChest(key, paidByAd);

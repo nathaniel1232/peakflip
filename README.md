@@ -48,18 +48,14 @@ Nothing to configure: their SDK serves rewarded and midgame ads automatically. S
 run `npm run zip:crazygames`, upload. (CrazyGames forbids other ad networks; the game already disables them there.)
 
 ### On your own site (Vercel)
-1. Get a custom domain (AdSense rarely approves `*.vercel.app`) and add it in Vercel → Settings → Domains.
-2. Apply at **adsense.google.com** with that domain. Approval takes days to weeks and needs real content/traffic.
-3. In AdSense, also apply for **H5 Games Ads** (the games ad format: rewarded + interstitial).
-4. Once approved, edit `config.js`:
-   ```js
-   adsenseClient: 'ca-pub-XXXXXXXXXXXXXXXX',
-   h5GamesAds: true,
-   adsTestMode: false,          // true shows Google test ads while you check it works
-   adsenseSlotLeft: '1234567890',  // optional 160×600 side banners
-   adsenseSlotRight: '0987654321',
-   ```
-5. Also add an `ads.txt` file in the project root with the line AdSense gives you, then push.
+AdSense is set up with publisher id `ca-pub-5606045487621821`:
+- the AdSense snippet is in `<head>` of `index.html` (Google uses it to verify the site),
+- `ads.txt` in the project root authorizes Google to sell the ad space,
+- `config.js` has `adsenseClient`, `h5GamesAds: true` and `adsTestMode: false`, and `ADS_ENABLED = true` in `game.js`.
+
+Still to do in the AdSense dashboard: add the site (www.peakflip.io) under **Sites** and request review, apply for
+**H5 Games Ads**, and turn on a consent message under **Privacy & messaging → GDPR** (required for players in Europe).
+Ads appear only once Google approves; until then players just see no ad and rewarded buttons say none is available.
 
 Alternatives if AdSense says no: **GameMonetize**, **GameDistribution**, or **AdinPlay** (made for web games, easier approval),
 or simply publish on CrazyGames/Poki and let them handle ads.
