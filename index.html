@@ -25,6 +25,9 @@
   .ic { width: 22px; height: 22px; flex: none; }
   .coin { display: inline-block; width: .85em; height: .85em; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff3bf, var(--gold) 50%, #d99a00); vertical-align: -0.1em; box-shadow: inset 0 -1px 0 rgba(0,0,0,.2); }
 
+  #hurt { position: fixed; inset: 0; pointer-events: none; z-index: 2; opacity: 0; background: radial-gradient(ellipse at center, transparent 35%, rgba(170,0,20,.75)); }
+  #hurt.on { animation: hurt 1.4s ease-out; }
+  @keyframes hurt { 0% { opacity: 0; } 8% { opacity: 1; } 100% { opacity: 0; } }
   /* ---------- HUD (sits on bright snow, so it keeps a soft shadow) ---------- */
   #hud { position: fixed; inset: 0; pointer-events: none; text-shadow: 0 1px 2px rgba(10,30,60,.45); font-weight: 800; }
   #score { position: absolute; top: 14px; left: 0; right: 0; text-align: center; font-size: 40px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
@@ -287,6 +290,7 @@
 <body>
 <div id="game"></div>
 
+<div id="hurt"></div>
 <div id="hud" class="hidden">
   <div id="score">0</div>
   <div id="raceInfo" class="hidden"></div>
