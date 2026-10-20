@@ -5,7 +5,7 @@
 // ---------- save ----------
 const SAVE_KEY = 'peakflip_v1';
 export const save = Object.assign({
-  best: 0, coins: 0, muted: false, runs: 0,
+  best: 0, coins: 0, muted: false, runs: 0, gear: 'ski',
   inv: { outfit: ['rookie'], ski: ['navy'], trail: ['none'] },
   eq: { outfit: 'rookie', ski: 'navy', trail: 'none' },
   freeChestAt: 0, pity: 0, chestsOpened: 0, missions: [], missionsDone: 0,
@@ -74,7 +74,7 @@ export const CATALOG = {
     Tr('gold', 'Gold Rush', 'legendary', ['#ffd23f', '#fff3b0', '#ffb627']),
   ],
 };
-export const KIND_NAME = { outfit: 'Outfit', ski: 'Skis', trail: 'Trail' };
+export const KIND_NAME = { outfit: 'Outfit', ski: 'Skis/Board', trail: 'Trail' };
 export const item = (kind, id) => CATALOG[kind].find(i => i.id === id) || CATALOG[kind][0];
 export const equipped = kind => item(kind, save.eq[kind]);
 

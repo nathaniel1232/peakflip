@@ -9,12 +9,13 @@ python3 -m http.server 8123
 Open http://localhost:8123
 
 ## Deploy to Vercel (free)
-1. Push this folder to a GitHub repo.
-2. On vercel.com → **Add New → Project** → import the repo → **Deploy** (no settings needed; it's a static site + 2 API functions).
-3. Leaderboards: in the Vercel project → **Storage → Create / Connect → Upstash for Redis** (free tier) → connect it to the project → **Redeploy**.
-   Vercel adds the `KV_REST_API_URL` / `KV_REST_API_TOKEN` env vars automatically. Without a database the game still works; the leaderboard just says it's offline.
+1. Import the GitHub repo on vercel.com → **Add New → Project** → **Deploy** (static site, no settings needed).
+2. Every push to `main` redeploys automatically.
 
-Or from the terminal: `npx vercel` (logs you in through the browser), then `npx vercel --prod`.
+## Global leaderboards (Supabase)
+1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run** (once).
+2. The project URL and publishable key live in `config.js`. The browser can only call the validated
+   `submit_score`, `get_leaderboard` and `get_ghosts` functions — it has no direct table access.
 
 ## Side ads on your own site
 Apply for Google AdSense with your Vercel domain. Once approved, put your publisher ID and two 160×600 slot IDs in `config.js`.
@@ -29,4 +30,4 @@ Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). 
 - `meta.js` — save data, cosmetics catalog, chests & odds, missions
 - `ui.js` — menus, chest opening, locker, leaderboards, results
 - `icons.js` — the hand-made SVG icon set
-- `api/` — Vercel serverless functions for leaderboards (Upstash Redis REST)
+- `supabase/schema.sql` — leaderboard table + functions

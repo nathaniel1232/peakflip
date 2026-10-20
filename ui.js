@@ -16,31 +16,32 @@ let cfg = null;
 
 if (!save.pid) { save.pid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); persist(); }
 
-// ---------- leaderboard / ghost client ----------
-// Works when hosted on Vercel with the /api functions + a Redis store. Anywhere else it reports "offline".
+// ---------- leaderboard / ghost client (Supabase RPC over plain fetch) ----------
+const SB = window.PEAKFLIP_CONFIG || {};
+async function rpc(fn, args) {
+  if (!SB.supabaseUrl || !SB.supabaseKey) throw new Error('no backend');
+  const r = await fetch(`${SB.supabaseUrl}/rest/v1/rpc/${fn}`, {
+    method: 'POST',
+    headers: { apikey: SB.supabaseKey, 'content-type': 'application/json' },
+    body: JSON.stringify(args),
+  });
+  if (!r.ok) throw new Error(`${fn} ${r.status}`);
+  return r.json();
+}
 const LB = {
-  async get(board, day) {
-    try {
-      const r = await fetch(`/api/leaderboard?board=${board}${day ? `&day=${day}` : ''}&pid=${encodeURIComponent(save.pid)}`);
-      if (!r.ok) throw 0;
-      return await r.json();
-    } catch { return null; }
+  async get(board, day, limit = 20) {
+    try { return await rpc('get_leaderboard', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit }); }
+    catch { return null; }
   },
   async submit(board, value, day, ghost) {
     if (!save.name) return null;
-    try {
-      const r = await fetch('/api/submit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ board, day, value, pid: save.pid, name: save.name, ghost }) });
-      if (!r.ok) throw 0;
-      return await r.json();
-    } catch { return null; }
+    try { return await rpc('submit_score', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
+    catch { return null; }
   },
 };
 export async function fetchGhosts(day) {
-  try {
-    const r = await fetch(`/api/ghosts?day=${day}&pid=${encodeURIComponent(save.pid)}`);
-    if (!r.ok) return [];
-    return (await r.json()).ghosts || [];
-  } catch { return []; }
+  try { return (await rpc('get_ghosts', { p_day: day, p_pid: save.pid })) || []; }
+  catch { return []; }
 }
 
 // ---------- swatches ----------
@@ -149,8 +150,10 @@ function renderLocker() {
       ${owned ? swatch(lockerTab, it) : `<div class="sw q">${icon('lock')}</div>`}
       <div class="nm">${owned ? esc(it.name) : 'Locked'}</div><div class="rr" style="color:${rc}">${RARITY[it.rarity].name}</div></button>`;
   }).join('');
-  openPanel('Locker', `<div class="tabs">${tabs}</div><div class="grid">${grid}</div><div class="note">Unlock more from chests.</div>`, true);
+  const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
+  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div><div class="grid">${grid}</div><div class="note">Unlock more from chests.</div>`, true);
   $('panelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
+  $('panelBody').querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
   $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
 }
 
@@ -201,7 +204,7 @@ function wireName(after) {
   };
 }
 function lbRows(data, board, limit) {
-  if (!data) return `<div class="note">Online rankings switch on when the game is hosted on Vercel with a database connected.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
+  if (!data) return `<div class="note">Couldn't reach the leaderboard. Check your connection.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
   const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
   const rows = data.top.slice(0, limit).map((r, i) => `<div class="item ${r.isMe ? 'me' : ''}"><span class="rank">${i + 1}</span><span class="grow">${esc(r.name)}</span><span class="val">${fmt(r.value)}</span></div>`).join('');
@@ -254,15 +257,65 @@ export function showResults(r) {
   const lb = $('resLb');
   if (!save.name) {
     lb.innerHTML = `<div class="note" style="margin-bottom:6px">Add your name to join the ${board === 'race' ? 'Daily Race' : 'Endless'} rankings${board === 'race' ? ' and appear as a ghost for other racers' : ''}</div>${nameRow()}`;
-    wireName(() => resultsRank(board, day, value, ghost));
-  } else resultsRank(board, day, value, ghost);
+    wireName(() => resultsRank(board, day, value, ghost, r.newBest));
+  } else resultsRank(board, day, value, ghost, r.newBest);
 }
-async function resultsRank(board, day, value, ghost) {
+async function resultsRank(board, day, value, ghost, newBest) {
   const lb = $('resLb'); if (!lb) return;
   const sub = await LB.submit(board, value, day, ghost);
   if (!sub) { lb.innerHTML = ''; return; }
-  const data = await LB.get(board, day);
-  if ($('resLb') && data?.me) lb.innerHTML = `<div class="earn"><span>${board === 'race' ? "Today's rank" : 'All-time rank'}</span><b>#${data.me.rank}</b></div>`;
+  const data = await LB.get(board, day, 10);
+  if (!data?.me) return;
+  if ($('resLb')) lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
+  $('rankRow') && ($('rankRow').onclick = () => leaderboardReveal(data, board));
+  if (data.me.rank <= 10 || newBest) leaderboardReveal(data, board);
+}
+
+// ---------- the big "you made the leaderboard" moment ----------
+function leaderboardReveal(data, board) {
+  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
+  const me = data.me, inTop = me.rank <= data.top.length;
+  let rows = data.top.map((r, i) => ({ rank: i + 1, ...r }));
+  if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, isMe: true }]);
+  const el = document.createElement('div');
+  el.id = 'lbReveal';
+  el.innerHTML = `<canvas id="confetti"></canvas><div class="card rv">
+    <div class="rv-kicker">${board === 'race' ? "TODAY'S RACE" : 'GLOBAL LEADERBOARD'}</div>
+    <div class="rv-rank">#<span id="rvRank">${Math.min(data.total, me.rank + 40)}</span></div>
+    <div class="rv-sub">${me.rank === 1 ? 'You are number one!' : `out of ${data.total} player${data.total === 1 ? '' : 's'}`}</div>
+    <div class="list">${rows.map((r, i) => r.gap ? '<div class="rv-gap">···</div>' :
+      `<div class="item rv-row ${r.isMe ? 'me rv-me' : ''}" style="animation-delay:${r.isMe ? 0.9 : 0.15 + i * 0.06}s"><span class="rank">${r.rank}</span><span class="grow">${esc(r.name)}</span><span class="val">${fmt(r.value)}</span></div>`).join('')}</div>
+    <button class="btn primary" id="rvOk">Nice</button></div>`;
+  document.body.appendChild(el);
+  $('rvOk').onclick = () => el.remove();
+  // count the rank down to the real position
+  const from = Math.min(data.total, me.rank + 40), start = performance.now(), D = 1100;
+  const tick = now => {
+    const k = Math.min(1, (now - start) / D), e = 1 - Math.pow(1 - k, 3);
+    const n = Math.round(from - (from - me.rank) * e);
+    const node = $('rvRank'); if (!node) return;
+    if (node.textContent !== String(n)) { node.textContent = n; cfg.sfx.tone(500 + (1 - k) * 300, 0.03, 'square', 0.03); }
+    if (k < 1) requestAnimationFrame(tick);
+    else { node.parentElement.classList.add('landed'); cfg.sfx.perfect(); if (me.rank <= 10) confetti(me.rank === 1 ? 260 : 160); }
+  };
+  requestAnimationFrame(tick);
+}
+function confetti(n) {
+  const c = $('confetti'); if (!c) return;
+  const g = c.getContext('2d'), W = c.width = innerWidth, H = c.height = innerHeight;
+  const cols = ['#ff6b2c', '#ffc93c', '#4cc3ff', '#3ddc84', '#c264ff', '#ffffff'];
+  const ps = Array.from({ length: n }, () => ({ x: W / 2 + (Math.random() - .5) * 120, y: H * .32, vx: (Math.random() - .5) * 16, vy: -Math.random() * 15 - 4, r: Math.random() * 6, vr: (Math.random() - .5) * .4, w: 5 + Math.random() * 6, h: 8 + Math.random() * 8, c: cols[(Math.random() * cols.length) | 0] }));
+  const t0 = performance.now();
+  const step = now => {
+    if (!document.body.contains(c)) return;
+    g.clearRect(0, 0, W, H);
+    for (const p of ps) {
+      p.vy += 0.38; p.vx *= 0.99; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      g.save(); g.translate(p.x, p.y); g.rotate(p.r); g.fillStyle = p.c; g.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.r * 2))); g.restore();
+    }
+    if (now - t0 < 3500) requestAnimationFrame(step); else g.clearRect(0, 0, W, H);
+  };
+  requestAnimationFrame(step);
 }
 
 async function share(r) {

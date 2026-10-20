@@ -273,10 +273,15 @@ const skier = (() => {
   const add = (parent, geo, material, x, y, z) => { const m = new THREE.Mesh(geo, material); m.position.set(x, y, z); parent.add(m); return m; };
   const skiMat = skinMats.ski, bootMat = lam(0x222831), skinMat = lam(0xf1c27d), goggle = lam(0xff9f1c), poleMat = lam(0xbfc7d1);
   // skis (relative to body centre, feet at y=-0.9)
+  const skis = new THREE.Group(); body.add(skis);
   for (const sx of [-0.17, 0.17]) {
-    add(body, box(0.16, 0.05, 1.9), skiMat, sx, -0.875, -0.05);
-    const tip = add(body, box(0.16, 0.05, 0.25), skinMats.tip, sx, -0.83, -1.05); tip.rotation.x = 0.5;
+    add(skis, box(0.16, 0.05, 1.9), skiMat, sx, -0.875, -0.05);
+    const tip = add(skis, box(0.16, 0.05, 0.25), skinMats.tip, sx, -0.83, -1.05); tip.rotation.x = 0.5;
   }
+  // snowboard: one wide deck with kicked nose & tail; the rider stands sideways on it
+  const board = new THREE.Group(); body.add(board); board.visible = false;
+  add(board, box(0.4, 0.06, 1.35), skiMat, 0, -0.875, 0);
+  for (const sz of [-1, 1]) { const k = add(board, box(0.4, 0.06, 0.3), skinMats.tip, 0, -0.84, sz * 0.78); k.rotation.x = sz * -0.45; }
   const legs = new THREE.Group(); legs.position.y = -0.85; body.add(legs);
   for (const sx of [-0.15, 0.15]) {
     add(legs, box(0.2, 0.16, 0.32), bootMat, sx, 0.08, -0.02);
@@ -288,12 +293,12 @@ const skier = (() => {
   add(upper, box(0.28, 0.28, 0.28), skinMat, 0, 0.8, 0);
   add(upper, box(0.32, 0.16, 0.32), skinMats.helmet, 0, 0.94, 0.01);
   add(upper, box(0.3, 0.09, 0.06), goggle, 0, 0.82, -0.15);
-  const arms = [];
+  const arms = [], poles = [];
   for (const sx of [-1, 1]) {
     const arm = new THREE.Group(); arm.position.set(sx * 0.31, 0.56, 0); upper.add(arm);
     add(arm, box(0.13, 0.48, 0.14), skinMats.jacket, 0, -0.22, 0);
     add(arm, box(0.12, 0.1, 0.12), bootMat, 0, -0.49, 0);
-    const pole = add(arm, new THREE.CylinderGeometry(0.018, 0.018, 1.15, 4), poleMat, 0, -0.95, 0.12);
+    const pole = add(arm, new THREE.CylinderGeometry(0.018, 0.018, 1.15, 4), poleMat, 0, -0.95, 0.12); poles.push(pole);
     pole.rotation.x = -0.25;
     arm.rotation.x = 0.35; arm.rotation.z = sx * 0.18;
     arms.push(arm);
@@ -301,10 +306,16 @@ const skier = (() => {
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.85, 14).rotateX(-Math.PI / 2), mat.shadow);
   world.add(shadow);
   world.add(root);
-  return { root, body, legs, upper, arms, shadow };
+  return { root, body, legs, upper, arms, shadow, skis, board, poles };
 })();
 
+const isBoard = () => save.gear === 'board';
 function applyCosmetics() {
+  skier.skis.visible = !isBoard(); skier.board.visible = isBoard();
+  for (const pl of skier.poles) pl.visible = !isBoard();
+  // sideways stance on a board
+  skier.legs.rotation.y = skier.upper.rotation.y = isBoard() ? Math.PI / 2 : 0;
+  skier.legs.scale.x = isBoard() ? 1.6 : 1;
   const o = equipped('outfit'), k = equipped('ski');
   skinMats.jacket.color.set(o.jacket); skinMats.pants.color.set(o.pants); skinMats.helmet.color.set(o.helmet);
   skinMats.helmet.emissive.set(o.rarity === 'legendary' ? o.helmet : '#000000').multiplyScalar(0.35);
@@ -383,6 +394,7 @@ const Snowfall = (() => {
 
 // ---------- world content ----------
 let ramps = [], rails = [], obstacles = [], coins = [], decor = [], crevasses = [], gates = [], movers = [], pads = [];
+let shapes = [];        // smooth terrain: rollers, tabletops (height profile along z)
 let checkpoints = [];   // race only: [{x, z, w}] known up front so hazards can avoid them
 let spawnZ = 0, decorZ = 0, finish = null;
 
@@ -475,6 +487,34 @@ function addFinish(z) {
   world.add(g);
   finish = { z, mesh: g };
 }
+
+// ---------- smooth terrain ----------
+function shapeGeo(L, W, fn, seg = 28) {
+  const pos = [], hw = W / 2;
+  const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+  for (let i = 0; i < seg; i++) {
+    const t0 = i / seg, t1 = (i + 1) / seg, z0 = -t0 * L, z1 = -t1 * L, y0 = fn(t0)[0], y1 = fn(t1)[0];
+    quad([-hw, y0, z0], [hw, y0, z0], [hw, y1, z1], [-hw, y1, z1]);
+    quad([-hw, 0, z0], [-hw, y0, z0], [-hw, y1, z1], [-hw, 0, z1]);
+    quad([hw, 0, z1], [hw, y1, z1], [hw, y0, z0], [hw, 0, z0]);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+const tableMat = lam(0xeaf2f8), tableEdge = lam(0x3a86ff);
+function addShape(x, z0, L, W, fn, material, edges) {
+  const m = new THREE.Mesh(shapeGeo(L, W, fn), material); m.position.set(x, 0, z0);
+  if (edges) for (const sx of [-1, 1]) { const e = new THREE.Mesh(box(0.14, 0.14, L), tableEdge); e.position.set(sx * W / 2, 0.05, -L / 2); m.add(e); }
+  world.add(m);
+  shapes.push({ x, z0, L, W, fn, mesh: m });
+}
+// bump: smooth hill, h = H·sin²(πt)
+const bump = H => t => [H * Math.sin(Math.PI * t) ** 2, H * Math.PI * Math.sin(2 * Math.PI * t)];
+// tabletop: curved take-off → flat deck → long landing slope (landing on the slope keeps your speed)
+const table = (H, a = 0.24, b = 0.5) => t => t < a ? [H * (t / a) ** 2, 2 * H * (t / a) / a]
+  : t < b ? [H, 0] : [H * (1 - (t - b) / (1 - b)), -H / (1 - b)];
 
 const padMats = { bounce: lam(0xff4d8d), bounceTop: lam(0xffffff), boost: lam(0x22d3ee), chevron: lam(0xffffff) };
 function addPad(kind, x, z) {
@@ -621,10 +661,34 @@ function featureBoost(z, d) {
   return [48, x];
 }
 
+function featureRollers(z, d) {
+  const n = 3 + Math.floor(crng() * 3); let zz = z;
+  for (let i = 0; i < n; i++) {
+    const L = wr(13, 18), H = wr(1.2, 1.8 + d);
+    addShape(0, zz, L, 34, bump(H), mat.snow, false);
+    addCoin(wr(-6, 6), H + 2.2, zz - L / 2);
+    zz -= L;
+  }
+  return [z - zz + 16, wr(-5, 5)];
+}
+function featureTabletop(z, sp, d) {
+  const H = wr(2.2, 2.8 + d), L = wr(40, 48), x = wr(-6, 6), W = 9;
+  addShape(x, z, L, W, table(H, 0.36, 0.55), tableMat, true);
+  for (let i = 0; i < 6; i++) addCoin(x, H + 1.6 + Math.sin(i / 5 * Math.PI) * 1.6, z - L * (0.36 + i * 0.07));
+  return [L + 22, x];
+}
+function featureStepDown(z, sp) {
+  // big kicker into a long downhill landing — huge hang time, soft landing
+  const x = wr(-5, 5);
+  addRamp(x, z, 8, 2.6, 7);
+  addShape(x, z - 8 - 6, 46, 14, table(3.2, 0.28, 0.3), tableMat, true);   // rises under your flight, then a long landing slope
+  return [8 + 6 + 46 + 18, x];
+}
+
 const RACE_LEN = 1500;
 function pickFeature(d) {
   const w = [
-    ['ramp', 20], ['big', 11], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 10 + 8 * d], ['slalom', 9 + 4 * d], ['snake', 7 - 4 * d],
+    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 10 + 8 * d], ['slalom', 9 + 4 * d], ['snake', 7 - 4 * d],
     ['crevasse', d > 0.06 ? 6 + 9 * d : 0], ['logs', d > 0.03 ? 5 + 9 * d : 0], ['balls', d > 0.2 ? 10 * d : 0], ['field', d > 0.3 ? 10 * d : 0],
   ];
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
@@ -639,14 +703,40 @@ function spawnFeature() {
     ramp: () => featureRamp(z, false, sp), big: () => featureRamp(z, true, sp), rail: () => featureRail(z, sp, false), railKick: () => featureRail(z, sp, true),
     rocks: () => featureRocks(z, d), slalom: () => featureSlalom(z, d), snake: () => featureCoinSnake(z), crevasse: () => featureCrevasse(z, d),
     logs: () => featureLogs(z, d), balls: () => featureBalls(z, d), field: () => featureField(z, d),
+    rollers: () => featureRollers(z, d), table: () => featureTabletop(z, sp, d), stepdown: () => featureStepDown(z, sp),
     mega: () => featureMega(z, sp), line: () => featureKickerLine(z, sp), bounce: () => featureBounce(z), boost: () => featureBoost(z, d),
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'bounce'].includes(k) && crng() < d * 0.8) {
+  if (!['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'bounce', 'table', 'stepdown', 'rollers'].includes(k) && crng() < d * 0.8) {
     for (let i = 0, n = 1 + Math.floor(d * 3); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
+}
+const liftMat = lam(0x5b6573), chairMat = lam(0xe63946), cabinWall = lam(0x8a5a35), cabinRoof = lam(0x3b4a5a);
+function addLiftTower(z) {
+  const g = new THREE.Group(); g.position.set(-21, 0, z);
+  const pole = new THREE.Mesh(box(0.45, 11, 0.45), liftMat); pole.position.y = 5.5; g.add(pole);
+  const bar = new THREE.Mesh(box(5, 0.3, 0.3), liftMat); bar.position.y = 11; g.add(bar);
+  for (const sx of [-2.2, 2.2]) {
+    const cable = new THREE.Mesh(box(0.05, 0.05, 48), liftMat); cable.position.set(sx, 10.8, -24); g.add(cable);
+    for (const cz of [-12, -36]) {
+      const ch = new THREE.Group(); ch.position.set(sx, 10.8, cz + (sx > 0 ? 6 : 0));
+      const hang = new THREE.Mesh(box(0.06, 1.6, 0.06), liftMat); hang.position.y = -0.8; ch.add(hang);
+      const seat = new THREE.Mesh(box(1.2, 0.12, 0.5), chairMat); seat.position.y = -1.6; ch.add(seat);
+      const back = new THREE.Mesh(box(1.2, 0.5, 0.1), chairMat); back.position.set(0, -1.35, 0.22); ch.add(back);
+      g.add(ch);
+    }
+  }
+  world.add(g); decor.push({ z: z - 50, mesh: g });
+}
+function addCabin(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rand(-0.4, 0.4);
+  const w = new THREE.Mesh(box(4, 2.6, 3.4), cabinWall); w.position.y = 1.3; g.add(w);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.8, 4), cabinRoof); roof.position.y = 3.5; roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.8); g.add(roof);
+  const snow = new THREE.Mesh(new THREE.ConeGeometry(3.1, 0.7, 4), mat.snow); snow.position.y = 4.15; snow.rotation.y = Math.PI / 4; snow.scale.set(1, 1, 0.8); g.add(snow);
+  const win = new THREE.Mesh(box(0.9, 0.7, 0.05), lam(0xffd166, { emissive: 0x7a5a00 })); win.position.set(0, 1.5, 1.72); g.add(win);
+  world.add(g); decor.push({ z: z - 4, mesh: g });
 }
 function spawnDecor(z) {
   const forest = mode === 'race';
@@ -657,6 +747,8 @@ function spawnDecor(z) {
       addTree(x, z - rand(0, 4), forest ? rand(1, 2.1) : rand(0.8, 1.7), false);
     }
   }
+  if (!forest && Math.round(z) % 48 === 0) addLiftTower(z);
+  if (!forest && Math.random() < 0.025) addCabin((Math.random() < 0.5 ? -1 : 1) * rand(19, 34), z);
   if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-40, 40), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
 }
 
@@ -671,7 +763,8 @@ function cleanup(pz) {
   keep(gates, g => g.z, g => world.remove(g.mesh));
   keep(pads, q => q.z - 3, q => world.remove(q.mesh));
   keep(coins, c => c.z, c => { if (!c.taken) coinPool.remove(c.idx); });
-  keep(decor, o => o.z, o => o.pool.remove(o.idx));
+  keep(decor, o => o.z, o => o.pool ? o.pool.remove(o.idx) : world.remove(o.mesh));
+  keep(shapes, q => q.z0 - q.L, q => world.remove(q.mesh));
 }
 function clearWorld() {
   cleanup(-1e9);
@@ -682,7 +775,7 @@ function clearWorld() {
 const p = {};
 function resetPlayer() {
   Object.assign(p, {
-    x: 0, y: 0, z: 0, vx: 0, vy: 0, speed: 16, boost: 0, heading: 0, carve: 0, distScore: 0,
+    x: 0, y: 0, z: 0, vx: 0, vy: 0, speed: 20, boost: 0, heading: 0, carve: 0, distScore: 0,
     charging: false, chargeT: 0, sketchy: false,
     grounded: true, groundTime: 0, airTime: 0,
     pitch: 0, yaw: 0, roll: 0, pitchVel: 0, yawVel: 0, rollVel: 0, tilt: 0, slideYaw: 0, lean: 0, crouch: 0.2,
@@ -695,6 +788,12 @@ function resetPlayer() {
 function groundAt(x, z) {
   for (const c of crevasses) if (z <= c.z0 && z >= c.z0 - c.L && Math.abs(x) < 15.5) return [-30, 0];
   let h = 0, s = 0;
+  for (const sh of shapes) {
+    if (z <= sh.z0 && z >= sh.z0 - sh.L && Math.abs(x - sh.x) <= sh.W / 2) {
+      const [hh, dh] = sh.fn((sh.z0 - z) / sh.L);
+      if (hh > h) { h = hh; s = dh / sh.L; }
+    }
+  }
   for (const r of ramps) {
     if (z <= r.z0 && z >= r.z0 - r.L && Math.abs(x - r.x) <= r.W / 2) {
       const t = (r.z0 - z) / r.L, hh = r.H * t * t;
@@ -732,6 +831,7 @@ const ptr = { down: false, x: 0, y: 0, sx: 0, sy: 0, ax: 0, ay: 0, t0: 0, moved:
 const GAME_KEYS = ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
 const MAX_CHARGE = 0.45;
 const popFromCharge = t => 7.5 + 6 * clamp(t / MAX_CHARGE, 0, 1);
+const JUMP_POP = 11;
 const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
 addEventListener('keydown', e => {
   if (typing(e)) return;
@@ -741,7 +841,7 @@ addEventListener('keydown', e => {
   latched.delete(e.code);
   Sfx.init();
   // hold jump to crouch & charge, release to pop
-  if (JUMP_KEYS.includes(e.code) && state === 'play' && (p.grounded || p.grinding)) { p.charging = true; p.chargeT = 0; }
+  if (JUMP_KEYS.includes(e.code) && state === 'play') { jumpQueued = true; jumpPower = JUMP_POP; }
   if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
   if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
@@ -749,7 +849,6 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => {
   keys[e.code] = false; latched.delete(e.code);
-  if (JUMP_KEYS.includes(e.code) && p.charging) { p.charging = false; jumpQueued = true; jumpPower = popFromCharge(p.chargeT); }
 });
 addEventListener('blur', () => { for (const k in keys) keys[k] = false; p.charging = false; if (state === 'play') togglePause(true); });
 document.addEventListener('visibilitychange', () => { if (document.hidden && state === 'play') togglePause(true); });
@@ -766,7 +865,7 @@ canvas.addEventListener('pointermove', e => {
   ptr.moved = Math.max(ptr.moved, Math.hypot(ptr.x - ptr.sx, ptr.y - ptr.sy));
 });
 const ptrUp = () => {
-  if (ptr.down && performance.now() - ptr.t0 < 260 && ptr.moved < 14) { jumpQueued = true; jumpPower = popFromCharge(MAX_CHARGE * 0.6); }
+  if (ptr.down && performance.now() - ptr.t0 < 260 && ptr.moved < 14) { jumpQueued = true; jumpPower = JUMP_POP; }
   ptr.down = false;
 };
 canvas.addEventListener('pointerup', ptrUp);
@@ -791,7 +890,7 @@ function readInput() {
 }
 
 // ---------- tricks & scoring ----------
-const GRABS = ['Mute', 'Safety', 'Japan', 'Tail', 'Indy'];
+const GRABS = ['Mute', 'Safety', 'Japan', 'Tail', 'Indy'], BOARD_GRABS = ['Indy', 'Melon', 'Method', 'Stalefish', 'Nose'];
 function startAir() {
   p.fromRamp = p.y > 0.3 || !!p.grinding;   // hops from flat snow can never crash
   p.grounded = false; p.airTime = 0; p.maxH = 0;
@@ -799,7 +898,7 @@ function startAir() {
   if (p.charging) {          // held jump off a lip → auto-pop with the stored charge
     p.charging = false; p.vy += popFromCharge(p.chargeT) * 0.8; Sfx.ollie();
   }
-  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: GRABS[(Math.random() * GRABS.length) | 0] };
+  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * 5) | 0] };
   reanchor();
 }
 
@@ -844,7 +943,7 @@ function scoreAirTrick(perfect, sketchy) {
   if (pts === 0) return;
   const parts = [];
   if (t.switch) parts.push('Switch');
-  if (spins) parts.push((rolls ? 'Cork ' : '') + spins);
+  if (spins) parts.push((isBoard() ? (t.yaw < 0 ? 'Frontside ' : 'Backside ') : '') + (rolls ? 'Cork ' : '') + spins);
   if (rolls && !spins) parts.push((['', '', 'Double ', 'Triple ', 'Quad '][rolls] ?? rolls + 'x ') + 'Sideflip');
   if (flips) parts.push((['', '', 'Double ', 'Triple ', 'Quad ', 'Quint '][flips] ?? flips + 'x ') + (t.pitch < 0 ? 'Frontflip' : 'Backflip'));
   if (grabbed) parts.push(t.grabName);
@@ -911,9 +1010,9 @@ function updatePlayer(dt) {
 
   // --- speed: gravity pulls you downhill, drag caps it (cap rises with distance) ---
   if (p.grounded) {
-    const tuck = inp.v > 0.3, brake = inp.v < -0.3;
-    const vt = baseSpeed(-p.z) * (tuck ? 1.12 : 1) * (brake ? 0.55 : 1);
-    let acc = 9 * (1 - (p.speed / vt) ** 2);              // downhill pull vs drag
+    const brake = inp.v < -0.3;   // you're always tucked; S slows you down
+    const vt = baseSpeed(-p.z) * 1.1 * (brake ? 0.55 : 1);
+    let acc = 12 * (1 - (p.speed / vt) ** 2);              // downhill pull vs drag
     acc -= 0.35 * G * gs0 / Math.sqrt(1 + gs0 * gs0);      // climbing a kicker costs a bit of speed
     acc -= 7 * Math.abs(Math.sin(p.heading));               // carving scrubs speed
     if (brake) { acc -= 10; if (p.speed > 10 && Math.random() < 0.7) Particles.emit(p.x, 0.05, p.z - 0.6, 2, 2, 2.5, 0xffffff, -2); }
@@ -940,15 +1039,17 @@ function updatePlayer(dt) {
     const maxHead = 0.62 * clamp(24 / p.speed, 0.55, 1);
     let targetHead = inp.h * maxHead;
     if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading)) targetHead = -Math.sign(p.x) * 0.25;
-    p.heading = damp(p.heading, targetHead, inp.h ? 5 : 7, dt);
+    p.heading = damp(p.heading, targetHead, inp.h ? 7 : 8, dt);
     p.vx = Math.sin(p.heading) * p.speed;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
     if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.heading *= 0.5; }
     const [gh, gs] = groundAt(p.x, p.z);
     if (gh - p.y > 1.3) return crash('Hit the side of a ramp');
-    if (gh < p.y - 0.25) startAir();           // went off a lip — keep last vy
-    else { p.y = gh; p.vy = gs * p.speed; }
+    const groundVy = gs * p.speed;
+    // leave the snow off a lip, or when a crest drops away faster than gravity can pull you down (rollers, knuckles)
+    if (gh < p.y - 0.25 || (p.vy - groundVy) > G * 1.1 * dt + 0.6) startAir();
+    else { p.y = gh; p.vy = groundVy; }
     if (p.grounded && inp.jump) { p.vy = Math.max(p.vy, 0) + jumpPop; startAir(); Sfx.ollie(); }
     if (p.grounded) {
       const bp = padAt(p.x, p.z, 'bounce');
@@ -1098,7 +1199,7 @@ function updateSkierVisual(dt) {
   b.rotation.x = p.pitch + p.tilt;
   b.rotation.z = p.lean + p.roll;
   // pose
-  const targetCrouch = p.crashed ? 0.6 : p.grabbing ? 1 : p.charging ? 0.5 + 0.5 * p.chargeT / MAX_CHARGE : p.grinding ? 0.45 : p.grounded ? (keys.KeyW || keys.ArrowUp ? 0.75 : 0.25 + Math.min(0.2, p.speed / 160)) : 0.45;
+  const targetCrouch = p.crashed ? 0.6 : p.grabbing ? 1 : p.charging ? 0.5 + 0.5 * p.chargeT / MAX_CHARGE : p.grinding ? 0.45 : p.grounded ? (0.3 + Math.min(0.25, p.speed / 140)) : 0.45;
   p.crouch = damp(p.crouch, targetCrouch, 10, dt);
   const c = p.crouch;
   skier.legs.scale.y = 1 - 0.4 * c;
@@ -1106,8 +1207,9 @@ function updateSkierVisual(dt) {
   skier.upper.rotation.x = -0.45 * c;
   skier.arms[1].rotation.x = p.grabbing ? -0.9 : 0.35 + 0.2 * Math.sin(time * 6) * (p.grounded ? 0.3 : 0);
   skier.arms[0].rotation.x = p.grabbing ? 0.9 : 0.35;
-  skier.arms[0].rotation.z = p.grabbing ? -0.8 : -0.18;
-  skier.arms[1].rotation.z = p.grabbing ? 0.3 : 0.18;
+  skier.arms[0].rotation.z = p.grabbing ? -0.8 : isBoard() ? -0.75 : -0.18;
+  skier.arms[1].rotation.z = p.grabbing ? 0.3 : isBoard() ? 0.75 : 0.18;
+  if (isBoard() && !p.grabbing) { skier.arms[0].rotation.x = skier.arms[1].rotation.x = 0.1; }
   // blob shadow
   const sh = gh, height = Math.max(0, p.y - sh);
   skier.shadow.position.set(p.x, sh + 0.03, p.z);
@@ -1258,8 +1360,8 @@ function updateHUD(dt) {
   }
   if (hintT > 0) { hintT -= dt; if (hintT <= 0) hud.hint.style.opacity = 0; }
 }
-const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> carve &nbsp; <kbd>W</kbd> tuck &nbsp; <kbd>S</kbd> brake &nbsp; hold <kbd>Space</kbd> to charge a jump<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; <kbd>Space</kbd> grab<br><kbd>C</kbd> change camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
-const HINT_TOUCH = 'Drag to carve, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab<br>Camera button switches views';
+const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>S</kbd> slow down<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; hold <kbd>Space</kbd> grab<br><kbd>C</kbd> camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
+const HINT_TOUCH = 'Drag to steer, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab';
 
 // ---------- game flow ----------
 let state = 'menu', paused = false, overlayBusy = false, mode = 'endless';
@@ -1436,4 +1538,4 @@ requestAnimationFrame(frame);
 Platform.init().then(() => Platform.loadingStop());
 
 // debug handle for testing
-window.__game = { p, race, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, startRun };
+window.__game = { p, race, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, startRun, applyCosmetics };

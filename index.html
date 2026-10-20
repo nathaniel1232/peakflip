@@ -118,6 +118,9 @@
   .tabs { display: flex; gap: 4px; background: var(--ink-2); border-radius: 12px; padding: 4px; }
   .tab { flex: 1; border-radius: 9px; padding: 8px; font-size: 13px; font-weight: 700; color: var(--muted); }
   .tab.on { background: var(--ink-3); color: var(--text); }
+  .tabs.gear .tab { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; padding: 10px; }
+  .tabs.gear .ic { width: 18px; height: 18px; }
+  .tabs.gear .tab.on { background: var(--accent); }
   .chestRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   @media (max-width: 540px) { .chestRow { grid-template-columns: 1fr; } }
   .chestCard { background: var(--ink-2); border-radius: var(--r); padding: 14px 10px; text-align: center; display: flex; flex-direction: column; gap: 8px; align-items: center; }
@@ -169,6 +172,23 @@
   .newTag { background: var(--accent); border-radius: 99px; padding: 3px 12px; font-size: 12px; font-weight: 800; letter-spacing: .08em; }
   .dupe { font-size: 14px; color: var(--gold); font-weight: 700; }
   .reveal .row { margin-top: 10px; min-width: 260px; }
+
+  /* ---------- leaderboard reveal ---------- */
+  #lbReveal { position: fixed; inset: 0; z-index: 7; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(6,12,24,.7); animation: fadeIn .25s ease-out; }
+  #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 1; }
+  .rv { position: relative; z-index: 2; animation: cardIn .45s cubic-bezier(.2,1.4,.4,1); }
+  .rv-kicker { text-align: center; font-size: 12px; font-weight: 800; letter-spacing: .18em; color: var(--ice); }
+  .rv-rank { text-align: center; font-size: 76px; font-weight: 900; letter-spacing: -.04em; line-height: 1; font-variant-numeric: tabular-nums; transition: color .3s, transform .3s; }
+  .rv-rank.landed { color: var(--gold); transform: scale(1.08); text-shadow: 0 0 30px rgba(255,201,60,.5); }
+  .rv-sub { text-align: center; color: var(--muted); font-size: 14px; margin-top: -8px; }
+  .rv-row { opacity: 0; animation: rowIn .35s ease-out forwards; }
+  .rv-me { animation: meIn .7s cubic-bezier(.2,1.3,.4,1) forwards, glow 1.6s ease-in-out 1.6s infinite; }
+  .rv-gap { text-align: center; color: var(--muted); letter-spacing: .3em; }
+  @keyframes fadeIn { from { opacity: 0; } }
+  @keyframes cardIn { from { transform: translateY(30px) scale(.94); opacity: 0; } }
+  @keyframes rowIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes meIn { 0% { opacity: 0; transform: translateY(140px) scale(.9); } 100% { opacity: 1; transform: none; } }
+  @keyframes glow { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 24px rgba(255,107,44,.55); } }
 
   /* ---------- optional side ad rails (web hosting only) ---------- */
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
