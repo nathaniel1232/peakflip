@@ -823,6 +823,14 @@ const keys = {};
 // so holding "steer right" into a jump doesn't turn into an accidental spin.
 const latched = new Set();
 const latch = codes => { for (const c of codes) if (keys[c]) latched.add(c); };
+const keyTime = {};
+// At takeoff: flip keys (W/S) held from the ground start the flip instantly. A/D only count as a spin if they were
+// pressed right before the jump — if you'd been holding them to steer, they're ignored until pressed again.
+function latchAtTakeoff() {
+  const now = performance.now();
+  for (const c of ['ArrowLeft', 'ArrowRight', 'KeyA', 'KeyD']) if (keys[c] && now - (keyTime[c] || 0) > 350) latched.add(c);
+  for (const c of ['Space', 'KeyJ', 'ShiftLeft', 'ShiftRight', 'KeyK']) if (keys[c]) latched.add(c);
+}
 const AIR_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyA', 'KeyD', 'KeyW', 'KeyS', 'Space', 'KeyJ', 'ShiftLeft', 'ShiftRight', 'KeyK'];
 const LAND_KEYS = ['ArrowUp', 'ArrowDown', 'KeyW', 'KeyS', 'Space', 'KeyJ', 'ShiftLeft', 'ShiftRight', 'KeyK'];
 const JUMP_KEYS = ['Space', 'KeyJ'];
@@ -837,7 +845,7 @@ addEventListener('keydown', e => {
   if (typing(e)) return;
   if (GAME_KEYS.includes(e.code)) e.preventDefault();
   if (e.repeat) return;
-  keys[e.code] = true;
+  keys[e.code] = true; keyTime[e.code] = performance.now();
   latched.delete(e.code);
   Sfx.init();
   // hold jump to crouch & charge, release to pop
@@ -894,12 +902,12 @@ const GRABS = ['Mute', 'Safety', 'Japan', 'Tail', 'Indy'], BOARD_GRABS = ['Indy'
 function startAir() {
   p.fromRamp = p.y > 0.3 || !!p.grinding;   // hops from flat snow can never crash
   p.grounded = false; p.airTime = 0; p.maxH = 0;
-  latch(AIR_KEYS);
+  latchAtTakeoff();
   if (p.charging) {          // held jump off a lip → auto-pop with the stored charge
     p.charging = false; p.vy += popFromCharge(p.chargeT) * 0.8; Sfx.ollie();
   }
   p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * 5) | 0] };
-  reanchor();
+  ptr.ax = ptr.x;   // keep the vertical anchor: a held up/down drag starts a flip right away
 }
 
 function award(name, pts, perfect) {
@@ -1420,7 +1428,7 @@ function gameOver() {
   const bonus = Math.floor(score / 400);
   save.coins += bonus;
   const missions = endCommon();
-  showResults({ mode: 'endless', score, newBest: newBest && save.runs > 1, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z) });
+  showResults({ mode: 'endless', score, newBest: newBest && score > 300, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z) });
 }
 
 function finishRace() {

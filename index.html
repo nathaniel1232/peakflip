@@ -183,6 +183,13 @@
   .rv-sub { text-align: center; color: var(--muted); font-size: 14px; margin-top: -8px; }
   .rv-row { opacity: 0; animation: rowIn .35s ease-out forwards; }
   .rv-me { animation: meIn .7s cubic-bezier(.2,1.3,.4,1) forwards, glow 1.6s ease-in-out 1.6s infinite; }
+  .rv-score { text-align: center; font-size: 58px; font-weight: 900; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; animation: cardIn .5s cubic-bezier(.2,1.4,.4,1); }
+  .rv-crown { display: flex; justify-content: center; color: var(--gold); margin-bottom: -10px; opacity: 0; transform: translateY(-40px) scale(.6); transition: all .5s cubic-bezier(.2,1.6,.4,1); }
+  .rv-crown.on { opacity: 1; transform: none; filter: drop-shadow(0 0 14px rgba(255,201,60,.7)); }
+  .rv-crown .ic { width: 56px; height: 56px; }
+  .item.first .rank { color: var(--gold); }
+  .item.first .rank .ic { width: 18px; height: 18px; color: var(--gold); }
+  .earn b .ic { width: 18px; height: 18px; color: var(--gold); vertical-align: -3px; margin-right: 2px; }
   .rv-gap { text-align: center; color: var(--muted); letter-spacing: .3em; }
   @keyframes fadeIn { from { opacity: 0; } }
   @keyframes cardIn { from { transform: translateY(30px) scale(.94); opacity: 0; } }

@@ -39,6 +39,10 @@ const LB = {
     catch { return null; }
   },
 };
+LB.register = async name => {
+  try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
+  catch { return null; }
+};
 export async function fetchGhosts(day) {
   try { return (await rpc('get_ghosts', { p_day: day, p_pid: save.pid })) || []; }
   catch { return []; }
@@ -183,43 +187,60 @@ function nextToast() {
 let lbTab = 'race';
 async function renderLeaderboard() {
   const tabs = `<div class="tabs"><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button></div>`;
-  openPanel('Leaderboard', `${tabs}${nameRow()}<div id="lbList" class="list"><div class="note">Loading…</div></div>`);
+  openPanel('Leaderboard', `${tabs}<div id="nameSlot"></div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
-  wireName();
+  nameForm($('nameSlot'), () => renderLeaderboard());
   const data = await LB.get(lbTab, lbTab === 'race' ? today() : null);
   const el = $('lbList'); if (el) el.innerHTML = lbRows(data, lbTab, 20);
 }
-const nameRow = () => `<div class="nameRow"><input id="nameIn" maxlength="14" placeholder="Your name" value="${esc(save.name || '')}" onkeydown="if(event.key==='Enter')document.getElementById('nameSave').click()"><button class="btn primary" id="nameSave">Save</button></div>`;
-function wireName(after) {
-  const b = $('nameSave'); if (!b) return;
-  b.onclick = async () => {
-    const v = $('nameIn').value.trim().replace(/\s+/g, ' ').slice(0, 14);
-    if (!v) return;
-    save.name = v; persist();
-    b.textContent = 'Saved';
-    if (save.best) await LB.submit('endless', save.best);
-    const rb = save.raceBest?.[today()];
-    if (rb) await LB.submit('race', rb, today(), save.ghost?.day === today() ? { t: save.ghost.t, f: save.ghost.f } : undefined);
-    after ? after() : renderLeaderboard();
+
+// Names are claimed once per browser and can't be changed afterwards (enforced in the database too).
+function nameForm(slot, after, compact) {
+  if (!slot) return;
+  if (save.name) { slot.innerHTML = compact ? '' : `<div class="chip" style="align-self:center">Playing as <b>${esc(save.name)}</b></div>`; return; }
+  slot.innerHTML = `<div class="note" style="margin-bottom:6px">Pick a name for the leaderboard. You can't change it later.</div>
+    <div class="nameRow"><input id="nameIn" maxlength="14" placeholder="Your name" autocomplete="off" onkeydown="if(event.key==='Enter')document.getElementById('nameSave').click()"><button class="btn primary" id="nameSave">Claim</button></div>
+    <div class="note" id="nameErr" style="color:#ff8a8a"></div>`;
+  const btn = $('nameSave'), input = $('nameIn');
+  setTimeout(() => input?.focus(), 50);
+  btn.onclick = async () => {
+    const v = input.value.trim().replace(/\s+/g, ' ').slice(0, 14);
+    if (v.length < 2) { $('nameErr').textContent = 'At least 2 characters.'; return; }
+    btn.disabled = true; btn.textContent = '…';
+    const res = await LB.register(v);
+    btn.disabled = false; btn.textContent = 'Claim';
+    if (!res) { $('nameErr').textContent = "Couldn't reach the leaderboard. Try again in a moment."; return; }
+    if (!res.ok) { $('nameErr').textContent = res.error === 'taken' ? 'That name is taken. Try another.' : 'Pick a longer name.'; return; }
+    save.name = res.name; persist();
+    after && after();
   };
 }
+
 function lbRows(data, board, limit) {
-  if (!data) return `<div class="note">Couldn't reach the leaderboard. Check your connection.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
+  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
   const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
-  const rows = data.top.slice(0, limit).map((r, i) => `<div class="item ${r.isMe ? 'me' : ''}"><span class="rank">${i + 1}</span><span class="grow">${esc(r.name)}</span><span class="val">${fmt(r.value)}</span></div>`).join('');
-  const me = data.me && data.me.rank > limit ? `<div class="item me"><span class="rank">${data.me.rank}</span><span class="grow">${esc(save.name || 'You')}</span><span class="val">${fmt(data.me.value)}</span></div>` : '';
+  const rows = data.top.slice(0, limit).map((r, i) => rowHtml(i + 1, r.name, fmt(r.value), r.isMe)).join('');
+  const me = data.me && data.me.rank > limit ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true) : '';
   return rows + me;
 }
+const rowHtml = (rank, name, val, me, extra = '') =>
+  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span><span class="val">${val}</span></div>`;
 
 // ---------- results ----------
+// A new record goes straight to the leaderboard moment; everything else shows the results card.
 export function showResults(r) {
+  if (r.newBest) recordMoment(r, () => resultsCard(r));
+  else resultsCard(r);
+}
+
+function resultsCard(r) {
   const el = $('over');
   const earned = r.coins + r.bonus + r.missions.total;
   let body;
   if (r.mode === 'race') {
     const field = r.field.length > 1
-      ? `<div class="list">${r.field.map((f, i) => `<div class="item ${f.me ? 'me' : ''}"><span class="rank">${i + 1}</span><span class="grow">${esc(f.name)}</span><span class="val">${fmtTime(f.t)}</span></div>`).join('')}</div>` : '';
+      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, fmtTime(f.t), f.me)).join('')}</div>` : '';
     body = `
       ${r.newBest ? '<div class="tag">PERSONAL BEST</div>' : ''}
       <div class="big-num"><small>FINISH TIME</small>${fmtTime(r.time)}</div>
@@ -251,52 +272,84 @@ export function showResults(r) {
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderChests(); };
   $('shareBtn').onclick = () => share(r);
-
-  const board = r.mode, day = r.mode === 'race' ? r.day : null, value = r.mode === 'race' ? r.best : save.best;
-  const ghost = r.ghost ? { t: r.ghost.t, f: r.ghost.f } : undefined;
-  const lb = $('resLb');
-  if (!save.name) {
-    lb.innerHTML = `<div class="note" style="margin-bottom:6px">Add your name to join the ${board === 'race' ? 'Daily Race' : 'Endless'} rankings${board === 'race' ? ' and appear as a ghost for other racers' : ''}</div>${nameRow()}`;
-    wireName(() => resultsRank(board, day, value, ghost, r.newBest));
-  } else resultsRank(board, day, value, ghost, r.newBest);
+  if (save.name) rankRow(r);
 }
-async function resultsRank(board, day, value, ghost, newBest) {
-  const lb = $('resLb'); if (!lb) return;
-  const sub = await LB.submit(board, value, day, ghost);
-  if (!sub) { lb.innerHTML = ''; return; }
+// small "World rank #n" row on the results card (submits silently if the record moment didn't already)
+async function rankRow(r) {
+  const { board, day, value, ghost } = lbArgs(r);
+  if (!r.submitted) { r.submitted = !!(await LB.submit(board, value, day, ghost)); if (!r.submitted) return; }
   const data = await LB.get(board, day, 10);
-  if (!data?.me) return;
-  if ($('resLb')) lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
-  $('rankRow') && ($('rankRow').onclick = () => leaderboardReveal(data, board));
-  if (data.me.rank <= 10 || newBest) leaderboardReveal(data, board);
+  const lb = $('resLb');
+  if (!lb || !data?.me) return;
+  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
+  $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
+}
+const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, f: r.ghost.f } : undefined });
+
+function overlay() {
+  document.getElementById('lbReveal')?.remove();
+  const el = document.createElement('div');
+  el.id = 'lbReveal';
+  el.innerHTML = '<canvas id="confetti"></canvas><div class="card rv" id="rvCard"></div>';
+  document.body.appendChild(el);
+  return el;
 }
 
-// ---------- the big "you made the leaderboard" moment ----------
-function leaderboardReveal(data, board) {
+// The new-record moment: big number → (claim a name) → animated leaderboard with your row flying into place.
+function recordMoment(r, done) {
+  const el = overlay(), card = el.querySelector('#rvCard');
+  const finish = () => { el.remove(); done(); };
+  const big = r.mode === 'race' ? fmtTime(r.time) : r.score.toLocaleString();
+  card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
+    <div class="rv-score">${big}</div><div id="rvStep"></div>`;
+  cfg.sfx.perfect();
+  const step = $('rvStep');
+  const go = async () => {
+    step.innerHTML = '<div class="note">Checking the leaderboard…</div>';
+    const { board, day, value, ghost } = lbArgs(r);
+    r.submitted = !!(await LB.submit(board, value, day, ghost));
+    const data = r.submitted ? await LB.get(board, day, 10) : null;
+    if (!data?.me) {
+      step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now.</div><button class="btn primary" id="rvOk">Continue</button>`;
+      $('rvOk').onclick = finish; return;
+    }
+    revealBoard(el, data, board, finish);
+  };
+  if (save.name) go();
+  else {
+    step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Claim your spot on the ${r.mode === 'race' ? "today's race" : 'world'} leaderboard</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
+    nameForm($('rvName'), go);
+    $('rvSkip').onclick = finish;
+  }
+}
+
+function revealBoard(el, data, board, done) {
+  const card = el.querySelector('#rvCard');
   const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
   const me = data.me, inTop = me.rank <= data.top.length;
   let rows = data.top.map((r, i) => ({ rank: i + 1, ...r }));
   if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, isMe: true }]);
-  const el = document.createElement('div');
-  el.id = 'lbReveal';
-  el.innerHTML = `<canvas id="confetti"></canvas><div class="card rv">
-    <div class="rv-kicker">${board === 'race' ? "TODAY'S RACE" : 'GLOBAL LEADERBOARD'}</div>
-    <div class="rv-rank">#<span id="rvRank">${Math.min(data.total, me.rank + 40)}</span></div>
+  const from = Math.min(data.total, me.rank + 40);
+  card.innerHTML = `
+    <div class="rv-kicker">${board === 'race' ? "TODAY'S RACE" : 'WORLD LEADERBOARD'}</div>
+    ${me.rank === 1 ? `<div class="rv-crown">${icon('crown')}</div>` : ''}
+    <div class="rv-rank">#<span id="rvRank">${from}</span></div>
     <div class="rv-sub">${me.rank === 1 ? 'You are number one!' : `out of ${data.total} player${data.total === 1 ? '' : 's'}`}</div>
-    <div class="list">${rows.map((r, i) => r.gap ? '<div class="rv-gap">···</div>' :
-      `<div class="item rv-row ${r.isMe ? 'me rv-me' : ''}" style="animation-delay:${r.isMe ? 0.9 : 0.15 + i * 0.06}s"><span class="rank">${r.rank}</span><span class="grow">${esc(r.name)}</span><span class="val">${fmt(r.value)}</span></div>`).join('')}</div>
-    <button class="btn primary" id="rvOk">Nice</button></div>`;
-  document.body.appendChild(el);
-  $('rvOk').onclick = () => el.remove();
-  // count the rank down to the real position
-  const from = Math.min(data.total, me.rank + 40), start = performance.now(), D = 1100;
+    <div class="list">${rows.map((r, i) => r.gap ? '<div class="rv-gap">···</div>'
+      : rowHtml(r.rank, r.name, fmt(r.value), r.isMe, r.isMe ? 'rv-row rv-me' : 'rv-row').replace('class="item', `style="animation-delay:${r.isMe ? 1.0 : 0.15 + i * 0.06}s" class="item`)).join('')}</div>
+    <button class="btn primary" id="rvOk">Continue</button>`;
+  $('rvOk').onclick = done;
+  const start = performance.now(), D = 1150;
   const tick = now => {
     const k = Math.min(1, (now - start) / D), e = 1 - Math.pow(1 - k, 3);
     const n = Math.round(from - (from - me.rank) * e);
     const node = $('rvRank'); if (!node) return;
     if (node.textContent !== String(n)) { node.textContent = n; cfg.sfx.tone(500 + (1 - k) * 300, 0.03, 'square', 0.03); }
     if (k < 1) requestAnimationFrame(tick);
-    else { node.parentElement.classList.add('landed'); cfg.sfx.perfect(); if (me.rank <= 10) confetti(me.rank === 1 ? 260 : 160); }
+    else {
+      node.parentElement.classList.add('landed'); el.querySelector('.rv-crown')?.classList.add('on');
+      cfg.sfx.perfect(); if (me.rank <= 10) confetti(me.rank === 1 ? 280 : 160);
+    }
   };
   requestAnimationFrame(tick);
 }
@@ -304,7 +357,7 @@ function confetti(n) {
   const c = $('confetti'); if (!c) return;
   const g = c.getContext('2d'), W = c.width = innerWidth, H = c.height = innerHeight;
   const cols = ['#ff6b2c', '#ffc93c', '#4cc3ff', '#3ddc84', '#c264ff', '#ffffff'];
-  const ps = Array.from({ length: n }, () => ({ x: W / 2 + (Math.random() - .5) * 120, y: H * .32, vx: (Math.random() - .5) * 16, vy: -Math.random() * 15 - 4, r: Math.random() * 6, vr: (Math.random() - .5) * .4, w: 5 + Math.random() * 6, h: 8 + Math.random() * 8, c: cols[(Math.random() * cols.length) | 0] }));
+  const ps = Array.from({ length: n }, () => ({ x: W / 2 + (Math.random() - .5) * 120, y: H * .3, vx: (Math.random() - .5) * 16, vy: -Math.random() * 15 - 4, r: Math.random() * 6, vr: (Math.random() - .5) * .4, w: 5 + Math.random() * 6, h: 8 + Math.random() * 8, c: cols[(Math.random() * cols.length) | 0] }));
   const t0 = performance.now();
   const step = now => {
     if (!document.body.contains(c)) return;

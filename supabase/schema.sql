@@ -1,6 +1,16 @@
 -- Peak Flip leaderboards + race ghosts.
 -- Paste this whole file into Supabase → SQL Editor → Run. Safe to run again.
 
+-- One registered name per browser (pid). Names are unique (case-insensitive) and can't be changed.
+create table if not exists public.players (
+  pid        text primary key,
+  name       text not null,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists players_name_unique on public.players (lower(name));
+alter table public.players enable row level security;
+revoke all on public.players from anon, authenticated;
+
 create table if not exists public.scores (
   board      text not null check (board in ('endless', 'race')),
   day        text not null default '',          -- '' for endless, 'YYYY-MM-DD' (UTC) for the daily race
@@ -17,6 +27,22 @@ create index if not exists scores_rank_idx on public.scores (board, day, value);
 alter table public.scores enable row level security;
 revoke all on public.scores from anon, authenticated;
 
+create or replace function public.register_name(p_pid text, p_name text) returns json
+language plpgsql security definer set search_path = public as $$
+declare v_name text; v_existing text;
+begin
+  if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
+  select name into v_existing from players where pid = p_pid;
+  if v_existing is not null then return json_build_object('ok', true, 'name', v_existing, 'locked', true); end if;
+  v_name := btrim(left(regexp_replace(coalesce(p_name, ''), '[^[:alnum:] _.!-]', '', 'g'), 14));
+  if length(v_name) < 2 then return json_build_object('ok', false, 'error', 'too_short'); end if;
+  if exists (select 1 from players where lower(name) = lower(v_name)) then return json_build_object('ok', false, 'error', 'taken'); end if;
+  insert into players (pid, name) values (p_pid, v_name);
+  return json_build_object('ok', true, 'name', v_name);
+exception when unique_violation then
+  return json_build_object('ok', false, 'error', 'taken');
+end $$;
+
 create or replace function public.submit_score(
   p_board text, p_day text, p_pid text, p_name text, p_value double precision, p_ghost jsonb default null
 ) returns json
@@ -27,8 +53,8 @@ declare
 begin
   if p_board not in ('endless', 'race') then raise exception 'bad board'; end if;
   if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
-  v_name := btrim(left(regexp_replace(coalesce(p_name, ''), '[^[:alnum:] _.!-]', '', 'g'), 14));
-  if v_name = '' then raise exception 'bad name'; end if;
+  select name into v_name from players where pid = p_pid;
+  if v_name is null then raise exception 'register a name first'; end if;
 
   if p_board = 'endless' then
     if p_value is null or p_value < 0 or p_value > 3000000 then raise exception 'bad value'; end if;
@@ -47,7 +73,7 @@ begin
   insert into scores as s (board, day, pid, name, value, ghost, updated_at)
   values (p_board, p_day, p_pid, v_name, p_value, p_ghost, now())
   on conflict (board, day, pid) do update set
-    name  = excluded.name,
+    name  = excluded.name,   -- always the player's registered name
     -- keep the ghost that belongs to the best time
     ghost = case when excluded.ghost is not null and (excluded.value < s.value or s.ghost is null) then excluded.ghost else s.ghost end,
     value = case when p_board = 'race' then least(s.value, excluded.value) else greatest(s.value, excluded.value) end,
@@ -84,6 +110,8 @@ language sql stable security definer set search_path = public as $$
   ) t;
 $$;
 
+revoke all on function public.register_name(text, text) from public;
+grant execute on function public.register_name(text, text) to anon, authenticated;
 revoke all on function public.submit_score(text, text, text, text, double precision, jsonb) from public;
 revoke all on function public.get_leaderboard(text, text, text, int) from public;
 revoke all on function public.get_ghosts(text, text) from public;

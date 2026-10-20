@@ -21,6 +21,7 @@ export const ICONS = {
   ghost: svg('<path d="M6 20V11a6 6 0 0 1 12 0v9l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5z"/><circle cx="10" cy="11" r=".8" fill="currentColor"/><circle cx="14" cy="11" r=".8" fill="currentColor"/>'),
   camera: svg('<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>'),
   board: svg('<rect x="9" y="2.5" width="6" height="19" rx="3" transform="rotate(30 12 12)"/><path d="M9.2 9.8l3 1.7M11.8 13.5l3 1.7"/>'),
+  crown: svg('<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z" fill="currentColor" fill-opacity=".25"/><path d="M5 19h14"/>'),
   gift: svg('<rect x="4" y="9" width="16" height="11" rx="1"/><path d="M3 9h18M12 9v11"/><path d="M12 9c-2-4-6-4-6-1.5S10 9 12 9c2 0 6-.5 6-3S14 5 12 9z"/>'),
 };
 export const icon = name => ICONS[name] || '';
