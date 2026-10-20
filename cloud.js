@@ -57,7 +57,9 @@ export const Cloud = {
       history.replaceState(null, '', location.pathname + location.search);
       try {
         const r = await rpc('restore_progress', { p_code: cleanCode(m[1]) });
-        if (r?.found && (r.saved_at || 0) > (save.savedAt || 0)) { adopt(r.data, r.saved_at); save.code = cleanCode(m[1]); persist(false); onReplaced(); }
+        // a brand-new browser here has a fresh (but empty) save, so the incoming progress wins unless this one has real progress
+        const fresh = !save.runs && !save.coins && !save.chestsOpened && (save.inv?.outfit?.length || 0) <= 1;
+        if (r?.found && (fresh || (r.saved_at || 0) > (save.savedAt || 0))) { adopt(r.data, r.saved_at); save.code = cleanCode(m[1]); persist(false); onReplaced(); }
       } catch {}
     }
     // moved to a new domain: hand this browser's progress over before redirecting
