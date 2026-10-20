@@ -23,6 +23,15 @@ function adopt(data, savedAt) {
   persist(false);
 }
 
+// resolves true when https://host answers at all (an opaque no-cors response is fine; DNS or network failure rejects)
+async function reachable(host) {
+  try {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 4000);
+    await fetch(`https://${host}/config.js?probe=${Date.now()}`, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal });
+    clearTimeout(t); return true;
+  } catch { return false; }
+}
+
 let timer = null, listeners = [];
 export const Cloud = {
   status: 'off',   // off · syncing · synced · offline
@@ -64,7 +73,9 @@ export const Cloud = {
     }
     // moved to a new domain: hand this browser's progress over before redirecting
     if (cfg.canonicalHost && location.hostname !== cfg.canonicalHost && !devHost && !/crazygames/.test(location.hostname)) {
-      if (await this.push()) { location.replace(`https://${cfg.canonicalHost}/#restore=${save.code}`); return; }
+      // only move people if their browser can actually reach the new address (fresh domains take a while to
+      // show up in every internet provider's DNS); otherwise they keep playing here
+      if (await reachable(cfg.canonicalHost) && await this.push()) { location.replace(`https://${cfg.canonicalHost}/#restore=${save.code}`); return; }
     }
     try {
       const r = await rpc('load_progress', { p_pid: save.pid });
