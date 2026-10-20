@@ -16,7 +16,7 @@ const VIEW = 260;          // how far ahead we spawn
 const COMBO_WINDOW = 3.0;  // seconds on the ground before a combo banks
 const TAU = Math.PI * 2;
 
-const baseSpeed = d => Math.min(60, 21 + d * 0.0095);   // gets brutal past ~3 km
+const baseSpeed = d => Math.min(62, 22 + d * 0.0105);   // gets brutal past ~3 km
 
 // ---------- helpers ----------
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -31,6 +31,7 @@ const isTouch = matchMedia('(pointer: coarse)').matches;
 import { save, persist, equipped, track, resetRun, run as runStats, settleMissions } from './meta.js';
 import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
 import { icon } from './icons.js';
+import { Ads } from './ads.js';
 
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
 const ADS_ENABLED = false;   // TEMP: midgame ads switched off — set to true before publishing
@@ -54,21 +55,7 @@ const Platform = {
   gameplayStart() { if (this.sdk) this.call(s => s.game.gameplayStart()); },
   gameplayStop() { if (this.sdk) this.call(s => s.game.gameplayStop()); },
   happytime() { if (this.sdk) this.call(s => s.game.happytime()); },
-  midgameAd() {
-    return new Promise(res => {
-      if (!this.sdk || !ADS_ENABLED) return res();
-      let done = false;
-      const finish = () => { if (done) return; done = true; Sfx.adMute(false); res(); };
-      try {
-        this.sdk.ad.requestAd('midgame', {
-          adStarted: () => Sfx.adMute(true),
-          adFinished: finish,
-          adError: finish,
-        });
-      } catch { finish(); }
-      setTimeout(finish, 45000);
-    });
-  },
+  midgameAd() { return ADS_ENABLED ? Ads.interstitial() : Promise.resolve(); },
 };
 
 // ---------- audio (tiny synth, no asset files) ----------
@@ -309,8 +296,93 @@ const skier = (() => {
   return { root, body, legs, upper, arms, shadow, skis, board, poles };
 })();
 
+// ---------- accessories (hats, face, back) ----------
+const slots = {
+  hat: new THREE.Group(), face: new THREE.Group(), back: new THREE.Group(),
+};
+slots.hat.position.set(0, 1.02, 0.01); slots.face.position.set(0, 0.82, -0.15); slots.back.position.set(0, 0.36, 0.17);
+for (const k in slots) skier.upper.add(slots[k]);
+const accAnim = { prop: null, cape: null, wings: [], jet: false, lasers: null };
+function accMesh(geo, color, x = 0, y = 0, z = 0, extra) {
+  const m = new THREE.Mesh(geo, lam(color, extra)); m.position.set(x, y, z); return m;
+}
+const glow = c => ({ emissive: c, emissiveIntensity: 0.8 });
+function buildAccessory(kind, it) {
+  const g = new THREE.Group(), c = it.color, c2 = it.color2;
+  const C = (rt, rb, h, seg = 8) => new THREE.CylinderGeometry(rt, rb, h, seg);
+  const S = (r, w = 8, h = 6) => new THREE.SphereGeometry(r, w, h);
+  const B = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+  const add = (...a) => { const m = accMesh(...a); g.add(m); return m; };
+  switch (it.id) {
+    // ---- hats ----
+    case 'beanie': add(C(0.17, 0.18, 0.15), c, 0, 0.05); add(C(0.185, 0.185, 0.05), c2, 0, -0.01); break;
+    case 'bobble': add(C(0.16, 0.18, 0.16), c, 0, 0.06); add(S(0.075), c2, 0, 0.18); break;
+    case 'cap': add(C(0.17, 0.18, 0.09), c, 0, 0.02); add(B(0.2, 0.025, 0.16), c, 0, -0.01, 0.2); add(S(0.025), c2, 0, 0.075); break;
+    case 'party': add(new THREE.ConeGeometry(0.12, 0.34, 8), c, 0, 0.16); add(S(0.05), c2, 0, 0.34); break;
+    case 'cone': add(new THREE.ConeGeometry(0.16, 0.5, 8), c, 0, 0.25); add(C(0.11, 0.125, 0.07), c2, 0, 0.2); add(B(0.36, 0.04, 0.36), c, 0, 0.0); break;
+    case 'cowboy': add(C(0.34, 0.34, 0.03, 12), c, 0, 0); add(C(0.14, 0.17, 0.2), c, 0, 0.11); add(C(0.172, 0.172, 0.04), c2, 0, 0.04); break;
+    case 'chef': add(C(0.16, 0.16, 0.12), c, 0, 0.05); { const p = add(S(0.2), c, 0, 0.22); p.scale.set(1, 0.7, 1); } break;
+    case 'tophat': add(C(0.25, 0.25, 0.02, 12), c, 0, 0); add(C(0.15, 0.15, 0.34), c, 0, 0.18); add(C(0.153, 0.153, 0.05), c2, 0, 0.05); break;
+    case 'viking': { const d = add(S(0.2, 10, 6), c, 0, -0.02); d.scale.y = 0.7;
+      for (const sx of [-1, 1]) { const h = add(new THREE.ConeGeometry(0.045, 0.26, 6), c2, sx * 0.22, 0.08); h.rotation.z = -sx * 1.0; } } break;
+    case 'pirate': add(C(0.3, 0.3, 0.05, 3), c, 0, 0.02).rotation.y = Math.PI; add(C(0.15, 0.17, 0.14), c, 0, 0.1); add(B(0.07, 0.07, 0.02), c2, 0, 0.1, -0.17); break;
+    case 'crown': add(C(0.15, 0.15, 0.1, 8), c, 0, 0.05, 0, glow(0x3a2a00));
+      for (let i = 0; i < 6; i++) { const a = i / 6 * Math.PI * 2; add(new THREE.ConeGeometry(0.035, 0.1, 4), c, Math.sin(a) * 0.14, 0.14, Math.cos(a) * 0.14, glow(0x3a2a00)); }
+      add(S(0.03), c2, 0, 0.06, -0.15, glow(0x550000)); break;
+    case 'duck': { const b = add(S(0.16), c, 0, 0.1); b.scale.set(1, 0.8, 1.15); add(S(0.1), c, 0, 0.26, -0.1); add(B(0.08, 0.035, 0.08), c2, 0, 0.25, -0.22); add(S(0.02), '#111111', 0.05, 0.29, -0.18); add(S(0.02), '#111111', -0.05, 0.29, -0.18); } break;
+    case 'halo': { const t = add(new THREE.TorusGeometry(0.17, 0.025, 6, 16), c, 0, 0.22, 0, glow(0xfff3b0)); t.rotation.x = Math.PI / 2; } break;
+    case 'propeller': add(C(0.17, 0.18, 0.09), c, 0, 0.02); add(C(0.012, 0.012, 0.1), '#333333', 0, 0.11);
+      { const pr = new THREE.Group(); pr.position.y = 0.16; g.add(pr); for (const r of [0, Math.PI / 2]) { const bl = accMesh(B(0.42, 0.012, 0.06), c2); bl.rotation.y = r; pr.add(bl); } accAnim.prop = pr; } break;
+    case 'banana': { const t = add(new THREE.TorusGeometry(0.24, 0.075, 6, 12, Math.PI * 0.85), c, 0, -0.05); t.rotation.set(0, Math.PI / 2, Math.PI * 0.075);
+      add(C(0.03, 0.02, 0.06), c2, 0, 0.17, 0.21); } break;
+    // ---- face ----
+    case 'aviators': for (const sx of [-1, 1]) add(B(0.11, 0.07, 0.02), c, sx * 0.07, 0, -0.01); add(B(0.06, 0.012, 0.02), c2, 0, 0.025, -0.01); break;
+    case 'mustache': for (const sx of [-1, 1]) { const m = add(B(0.11, 0.035, 0.03), c, sx * 0.05, -0.08, -0.01); m.rotation.z = sx * 0.3; } break;
+    case 'clown': add(S(0.055), c, 0, -0.04, -0.03); break;
+    case 'hearts': for (const sx of [-1, 1]) { const h = add(B(0.075, 0.075, 0.02), c, sx * 0.075, 0, -0.01); h.rotation.z = Math.PI / 4; } break;
+    case 'beard': add(B(0.27, 0.2, 0.1), c, 0, -0.15, 0.02); add(B(0.2, 0.12, 0.08), c, 0, -0.29, 0.02); break;
+    case 'pixel': add(B(0.3, 0.06, 0.02), c, 0, 0, -0.01); for (const sx of [-1, 1]) add(B(0.03, 0.03, 0.022), c2, sx * 0.09 - 0.02, 0.01, -0.012); break;
+    case 'mask': add(B(0.3, 0.08, 0.02), c, 0, 0, -0.005); break;
+    case 'lasers': { const lg = new THREE.Group(); g.add(lg); accAnim.lasers = lg;
+      for (const sx of [-1, 1]) { const l = new THREE.Mesh(B(0.025, 0.025, 6), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85 })); l.position.set(sx * 0.07, 0, -3); lg.add(l); add(S(0.025), c2, sx * 0.07, 0, -0.01, glow(0xff0000)); } } break;
+    // ---- back ----
+    case 'backpack': add(B(0.32, 0.38, 0.16), c, 0, 0, 0.06); add(B(0.33, 0.12, 0.17), c2, 0, 0.14, 0.06); break;
+    case 'cape': { const cp = new THREE.Group(); cp.position.set(0, 0.2, 0.02); g.add(cp); const m = accMesh(B(0.46, 0.75, 0.02), c); m.position.y = -0.37; cp.add(m); accAnim.cape = cp; } break;
+    case 'baguette': { const b = add(C(0.055, 0.05, 0.85, 7), c, 0, 0, 0.06); b.rotation.z = 0.7; for (let i = -1; i <= 1; i++) { const sl = add(B(0.02, 0.1, 0.02), c2, i * 0.18 * Math.cos(0.7), i * 0.18 * Math.sin(0.7), 0.11); sl.rotation.z = 0.7 + 0.9; } } break;
+    case 'surfboard': { const b = add(B(0.28, 1.05, 0.04), c, 0, 0.05, 0.08); b.rotation.z = 0.25; const st = add(B(0.05, 1.0, 0.045), c2, 0, 0.05, 0.081); st.rotation.z = 0.25; } break;
+    case 'wings': case 'dragon': {
+      for (const sx of [-1, 1]) {
+        const w = new THREE.Group(); w.position.set(sx * 0.08, 0.05, 0.06); g.add(w);
+        const geo = it.id === 'wings' ? B(0.5, 0.26, 0.03) : new THREE.ConeGeometry(0.3, 0.6, 3);
+        const m = accMesh(geo, c); m.position.x = sx * 0.28; m.rotation.z = it.id === 'wings' ? sx * 0.35 : sx * Math.PI / 2; w.add(m);
+        const f = accMesh(B(0.3, 0.12, 0.031), c2); f.position.set(sx * 0.38, -0.12, 0); f.rotation.z = sx * 0.5; w.add(f);
+        accAnim.wings.push({ g: w, sx });
+      } } break;
+    case 'jetpack': for (const sx of [-1, 1]) { add(C(0.07, 0.07, 0.38), c, sx * 0.09, 0, 0.08); add(new THREE.ConeGeometry(0.06, 0.1, 8), c2, sx * 0.09, -0.24, 0.08).rotation.x = Math.PI; } accAnim.jet = true; break;
+  }
+  return g;
+}
+function applyAccessories() {
+  accAnim.prop = accAnim.cape = accAnim.lasers = null; accAnim.wings = []; accAnim.jet = false;
+  for (const kind of ['hat', 'face', 'back']) {
+    const slot = slots[kind]; slot.clear();
+    const it = equipped(kind);
+    if (it && it.id !== 'none') slot.add(buildAccessory(kind, it));
+  }
+}
+function animateAccessories(dt) {
+  if (accAnim.prop) accAnim.prop.rotation.y += dt * (8 + p.speed * 0.6);
+  if (accAnim.cape) accAnim.cape.rotation.x = clamp(0.25 + p.speed * 0.025, 0.2, 1.3) + Math.sin(time * 14) * 0.08;
+  const flap = p.grounded ? 0.15 : Math.sin(time * 10) * 0.5;
+  for (const w of accAnim.wings) w.g.rotation.y = -w.sx * (0.3 + flap);
+  if (accAnim.jet && state === 'play' && !p.grounded && !p.grinding) {
+    tmpV.set(0, -0.2, 0.25); slots.back.localToWorld(tmpV); world.worldToLocal(tmpV);
+    Particles.emit(tmpV.x, tmpV.y, tmpV.z, 2, 0.3, 0.2, Math.random() < 0.5 ? 0xff7b00 : 0xffd60a, 3);
+  }
+}
 const isBoard = () => save.gear === 'board';
 function applyCosmetics() {
+  applyAccessories();
   skier.skis.visible = !isBoard(); skier.board.visible = isBoard();
   for (const pl of skier.poles) pl.visible = !isBoard();
   // sideways stance on a board
@@ -431,24 +503,28 @@ function addRail(x, z0, L, top = 0.9) {
   rails.push({ x, z0, L, top, mesh: g });
 }
 const blocked = (x, z, pad = 1.5) => checkpoints.some(c => Math.abs(z - c.z) < 5 && Math.abs(x - c.x) < c.w / 2 + pad);
+// A smooth, always-steerable lane that hazards can't fill, so every section has a way through.
+let laneSeed = [0, 0];
+const laneX = z => clamp(Math.sin(z * 0.02 + laneSeed[0]) * 7 + Math.sin(z * 0.05 + laneSeed[1]) * 2.5, -X_LIMIT + 2.5, X_LIMIT - 2.5);
+const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < 2.2 + r;
 function addTree(x, z, s, obstacle) {
-  if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z)) return; }
+  if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, 0.55 * s)) return; }
   const idx = trees.add(x, 0, z, s, rand(0, 6));
   if (obstacle) obstacles.push({ kind: 'tree', x, z, r: 0.55 * s, h: 3.8 * s, idx, pool: trees });
   else decor.push({ z, idx, pool: trees });
 }
 function addRock(x, z, s) {
-  x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z)) return;
+  x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, s)) return;
   const idx = rocks.add(x, 0.15 * s, z, s, rand(0, 6));
   obstacles.push({ kind: 'rock', x, z, r: 1.0 * s, h: 1.0 * s, idx, pool: rocks });
 }
 function addLog(x, z, hw) {
   if (blocked(x, z, hw)) return;
   const g = new THREE.Group(); g.position.set(x, 0, z);
-  const log = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, hw * 2, 7), logMat); log.rotation.z = Math.PI / 2; log.position.y = 0.38; g.add(log);
-  const cap = new THREE.Mesh(box(hw * 2 - 0.2, 0.12, 0.5), capMat); cap.position.y = 0.78; g.add(cap);
+  const log = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, hw * 2, 7), logMat); log.rotation.z = Math.PI / 2; log.position.y = 0.3; g.add(log);
+  const cap = new THREE.Mesh(box(hw * 2 - 0.2, 0.1, 0.4), capMat); cap.position.y = 0.62; g.add(cap);
   world.add(g);
-  obstacles.push({ kind: 'log', x, z, hw, r: 0.45, h: 0.85, mesh: g });
+  obstacles.push({ kind: 'log', x, z, hw, r: 0.4, h: 0.45, mesh: g });   // forgiving: any hop clears it
 }
 function addBall(z) {
   if (checkpoints.some(c => Math.abs(z - c.z) < 6)) return;
@@ -589,7 +665,7 @@ function featureRail(z, sp, withKicker) {
   return [len, x];
 }
 function featureRocks(z, d) {
-  const n = 3 + Math.floor(d * 7);
+  const n = 5 + Math.floor(d * 10);
   for (let i = 0; i < n; i++) addRock(wr(-12, 12), z - wr(0, 32), wr(0.7, 1.3));
   return [45, wr(-6, 6)];
 }
@@ -625,7 +701,7 @@ function featureBalls(z, d) {
   return [n * 16 + 24, 0];
 }
 function featureField(z, d) {
-  const n = 7 + Math.floor(d * 10);
+  const n = 10 + Math.floor(d * 16);
   for (let i = 0; i < n; i++) { const zz = z - wr(0, 60); if (crng() < 0.5) addRock(wr(-12, 12), zz, wr(0.7, 1.2)); else addTree(wr(-12, 12), zz, wr(0.8, 1.1), true); }
   return [70, 0];
 }
@@ -688,15 +764,15 @@ function featureStepDown(z, sp) {
 const RACE_LEN = 1500;
 function pickFeature(d) {
   const w = [
-    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 10 + 8 * d], ['slalom', 9 + 4 * d], ['snake', 7 - 4 * d],
-    ['crevasse', d > 0.06 ? 6 + 9 * d : 0], ['logs', d > 0.03 ? 5 + 9 * d : 0], ['balls', d > 0.2 ? 10 * d : 0], ['field', d > 0.3 ? 10 * d : 0],
+    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 12 + 10 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
+    ['crevasse', d > 0.05 ? 7 + 10 * d : 0], ['logs', d > 0.02 ? 6 + 10 * d : 0], ['balls', d > 0.12 ? 12 * d : 0], ['field', d > 0.2 ? 12 * d : 0],
   ];
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of w) if ((r -= v) < 0) return k;
   return 'ramp';
 }
 function spawnFeature() {
-  const z = spawnZ, D = -z, d = clamp(D / 2000, 0, 1), sp = baseSpeed(D);
+  const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
   if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
   const k = pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d);
   const f = {
@@ -708,8 +784,8 @@ function spawnFeature() {
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'bounce', 'table', 'stepdown', 'rollers'].includes(k) && crng() < d * 0.8) {
-    for (let i = 0, n = 1 + Math.floor(d * 3); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
+  if (!['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'bounce', 'table', 'stepdown', 'rollers'].includes(k) && crng() < 0.2 + d * 0.8) {
+    for (let i = 0, n = 1 + Math.floor(d * 5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
 }
@@ -1049,11 +1125,17 @@ function updatePlayer(dt) {
     if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading)) targetHead = -Math.sign(p.x) * 0.25;
     p.heading = damp(p.heading, targetHead, inp.h ? 7 : 8, dt);
     p.vx = Math.sin(p.heading) * p.speed;
+    const prevX = p.x;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
     if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.heading *= 0.5; }
     const [gh, gs] = groundAt(p.x, p.z);
-    if (gh - p.y > 1.3) return crash('Hit the side of a ramp');
+    if (gh - p.y > 1.3) {
+      // ran into the side wall of a ramp/tabletop: bounce off it instead of dying
+      p.x = prevX - Math.sign(p.vx) * 0.15; p.heading = -p.heading * 0.4; p.speed *= 0.85; shake = 0.25;
+      if (!p.bonkT || time - p.bonkT > 0.5) { p.bonkT = time; showTrick('Bonk!', '', false); Sfx.tone(140, 0.12, 'square', 0.12); }
+      return;
+    }
     const groundVy = gs * p.speed;
     // leave the snow off a lip, or when a crest drops away faster than gravity can pull you down (rollers, knuckles)
     if (gh < p.y - 0.25 || (p.vy - groundVy) > G * 1.1 * dt + 0.6) startAir();
@@ -1125,7 +1207,7 @@ function updatePlayer(dt) {
     if (o.dead) continue;
     const dz = o.z - p.z, dx = o.x - p.x;
     if (o.kind === 'log') {
-      if (Math.abs(dz) < 0.55 && Math.abs(dx) < o.hw + 0.3 && p.y < o.h) return crash('Tripped over a log');
+      if (Math.abs(dz) < 0.45 && Math.abs(dx) < o.hw + 0.1 && p.y < o.h && (p.grounded || p.vy < 0)) return crash('Tripped over a log');
       if (!o.passed && p.z < o.z - 0.6) { o.passed = true; if (Math.abs(dx) < o.hw + 0.3 && p.y >= o.h) { p.trickScore += 100; showTrick('Log hop!', '+100', false); Sfx.near(); missionToast(track('near', 1)); } }
       continue;
     }
@@ -1396,6 +1478,7 @@ function startRun(m = mode) {
     fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) addGhost(g.name, g.ghost); });
   }
   crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : Math.random;
+  laneSeed = [crng() * 6.28, crng() * 6.28];
   spawnZ = -55; decorZ = 30;
   checkpoints.forEach((c, i) => addCheckpointArch(c, i + 1));
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
@@ -1523,6 +1606,7 @@ function frame(now) {
   }
   updateCoins();
   updateCosmetics();
+  animateAccessories(dt);
   Particles.update(dt);
   Snowfall.update(dt, camera);
   updateSkierVisual(dt);
@@ -1539,11 +1623,11 @@ updateMuteBtn();
 initUI({
   sfx: Sfx, isTouch, hints: isTouch ? HINT_TOUCH : HINT_DESKTOP,
   onPlay: m => startRun(m), onAgain: () => restartWithAd(), onMenu: () => toMenu(),
-  onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN,
+  onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
 });
 toMenu();
 requestAnimationFrame(frame);
-Platform.init().then(() => Platform.loadingStop());
+Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v)); showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, startRun, applyCosmetics };
+window.__game = { p, race, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };

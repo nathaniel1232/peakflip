@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "dev": "python3 -m http.server 8123",
-    "zip:crazygames": "rm -f peak-flip-crazygames.zip && zip -qr peak-flip-crazygames.zip index.html game.js meta.js ui.js icons.js config.js lib"
+    "zip:crazygames": "rm -f peak-flip-crazygames.zip && zip -qr peak-flip-crazygames.zip index.html game.js meta.js ui.js icons.js ads.js config.js lib"
   }
 }

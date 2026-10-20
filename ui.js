@@ -3,7 +3,7 @@
 // ============================================================
 import {
   save, persist, CATALOG, RARITY, CHESTS, KIND_NAME, PITY,
-  openChest, collectionCount, missionText,
+  openChest, collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
 } from './meta.js';
 import { icon } from './icons.js';
 
@@ -50,7 +50,16 @@ export async function fetchGhosts(day) {
 
 // ---------- swatches ----------
 const RAINBOW = 'linear-gradient(90deg,#ff5a5a,#ffb35a,#ffe45a,#5aff8a,#5ac8ff,#b05aff)';
+const ACC_SVG = {
+  hat: '<path d="M6 16h12M8 16c0-6 2-9 4-9s4 3 4 9"/>',
+  face: '<circle cx="8" cy="12" r="3"/><circle cx="16" cy="12" r="3"/><path d="M11 12h2"/>',
+  back: '<path d="M8 5h8l2 15H6z"/><path d="M9 5c0-2 6-2 6 0"/>',
+};
 function swatch(kind, it) {
+  if (kind === 'hat' || kind === 'face' || kind === 'back') {
+    if (it.id === 'none') return '<div class="sw trail"><span>—</span></div>';
+    return `<div class="sw acc" style="background:${it.color2 || 'rgba(255,255,255,.12)'}"><svg viewBox="0 0 24 24" fill="${it.color}" stroke="rgba(0,0,0,.35)" stroke-width="1.2">${ACC_SVG[kind]}</svg></div>`;
+  }
   if (kind === 'outfit') return `<div class="sw" style="background:${it.jacket}"><i style="background:${it.pants}"></i><b style="background:${it.helmet}"></b></div>`;
   if (kind === 'ski') {
     const c = it.color === 'rainbow' ? RAINBOW : it.color;
@@ -106,11 +115,18 @@ function renderChests() {
   openPanel('Chests', `
     <div class="chips"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>
     <div class="chestRow">${chestCard('free')}${chestCard('basic')}${chestCard('epic')}</div>
+    ${cfg.ads.available ? `<div class="row">
+      <button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>
+      <button class="btn" id="adChest" ${adUsesLeft('chest') > 0 ? '' : 'disabled'}>${icon('play')} Free Snow Chest <small style="opacity:.7">(${adUsesLeft('chest')})</small></button>
+    </div>` : ''}
     <div class="note">Epic or better guaranteed within <b>${pityLeft}</b> Free/Snow chest${pityLeft > 1 ? 's' : ''}. Duplicates turn into coins.<br>Coins are earned only by playing. No real money involved.</div>`, true);
   $('panelBody').querySelectorAll('[data-chest]').forEach(b => b.onclick = () => doOpen(b.dataset.chest));
+  const adC = $('adCoins'), adX = $('adChest');
+  if (adC) adC.onclick = async () => { adC.disabled = true; if (await cfg.ads.rewarded()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderChests(); };
+  if (adX) adX.onclick = async () => { adX.disabled = true; if (await cfg.ads.rewarded()) { useAd('chest'); doOpen('basic', true); } else renderChests(); };
 }
-function doOpen(key) {
-  const res = openChest(key);
+function doOpen(key, paidByAd) {
+  const res = openChest(key, paidByAd);
   if (!res) { cfg.sfx.tone(200, 0.15, 'square', 0.1); return; }
   const rc = RARITY[res.rarity].color;
   const ov = $('chestOpen');
@@ -150,15 +166,26 @@ function renderLocker() {
   const grid = CATALOG[lockerTab].map(it => {
     const owned = save.inv[lockerTab].includes(it.id), on = save.eq[lockerTab] === it.id;
     const rc = RARITY[it.rarity].color;
+    if (it.ad && !owned) {
+      // ad exclusives are visible (so people want them) and unlock by watching ads
+      return `<div class="skin adItem">${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div>
+        <button class="btn go adBtn" data-ad="${it.id}" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(lockerTab, it.id)}/${it.ad}</button></div>`;
+    }
     return `<button class="skin ${on ? 'sel' : ''}" data-id="${it.id}" ${owned ? '' : 'disabled'}>
       ${owned ? swatch(lockerTab, it) : `<div class="sw q">${icon('lock')}</div>`}
-      <div class="nm">${owned ? esc(it.name) : 'Locked'}</div><div class="rr" style="color:${rc}">${RARITY[it.rarity].name}</div></button>`;
+      <div class="nm">${owned ? esc(it.name) : 'Locked'}</div><div class="rr" style="color:${rc}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
   }).join('');
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
-  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div><div class="grid">${grid}</div><div class="note">Unlock more from chests.</div>`, true);
+  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div><div class="grid">${grid}</div><div class="note">Unlock more from chests. Items with a ${icon('play')} button are exclusives: watch ads to unlock them.${cfg.ads.available ? '' : ' (Ads are not set up on this site yet.)'}</div>`, true);
   $('panelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
   $('panelBody').querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
   $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
+  $('panelBody').querySelectorAll('[data-ad]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    const ok = await cfg.ads.rewarded();
+    if (ok && adProgress(lockerTab, b.dataset.ad)) { save.eq[lockerTab] = b.dataset.ad; persist(); cfg.onCosmetics(); cfg.sfx.perfect(); }
+    renderLocker();
+  });
 }
 
 // ---------- missions ----------

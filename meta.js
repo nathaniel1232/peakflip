@@ -6,8 +6,9 @@
 const SAVE_KEY = 'peakflip_v1';
 export const save = Object.assign({
   best: 0, coins: 0, muted: false, runs: 0, gear: 'ski',
-  inv: { outfit: ['rookie'], ski: ['navy'], trail: ['none'] },
-  eq: { outfit: 'rookie', ski: 'navy', trail: 'none' },
+  inv: { outfit: ['rookie'], hat: ['none'], face: ['none'], back: ['none'], ski: ['navy'], trail: ['none'] },
+  eq: { outfit: 'rookie', hat: 'none', face: 'none', back: 'none', ski: 'navy', trail: 'none' },
+  adProgress: {}, adDay: '', adCount: {},
   freeChestAt: 0, pity: 0, chestsOpened: 0, missions: [], missionsDone: 0,
 }, (() => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch { return {}; } })());
 export const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {} };
@@ -20,6 +21,9 @@ if (Array.isArray(save.owned)) {
   delete save.owned; delete save.skin; persist();
 }
 
+for (const k of ['hat', 'face', 'back']) { save.inv[k] = save.inv[k] || ['none']; save.eq[k] = save.eq[k] || 'none'; }
+save.adProgress = save.adProgress || {}; save.adCount = save.adCount || {};
+
 // ---------- catalog ----------
 export const RARITY = {
   common:    { name: 'Common',    color: '#9fb3c8', dupe: 20 },
@@ -27,9 +31,11 @@ export const RARITY = {
   epic:      { name: 'Epic',      color: '#c264ff', dupe: 150 },
   legendary: { name: 'Legendary', color: '#ffb627', dupe: 400 },
 };
-const O = (id, name, rarity, jacket, pants, helmet) => ({ id, name, rarity, jacket, pants, helmet });
+const O = (id, name, rarity, jacket, pants, helmet, ad) => ({ id, name, rarity, jacket, pants, helmet, ad });
 const S = (id, name, rarity, color, tip, glow = false) => ({ id, name, rarity, color, tip, glow });
-const Tr = (id, name, rarity, colors) => ({ id, name, rarity, colors });
+const Tr = (id, name, rarity, colors, ad) => ({ id, name, rarity, colors, ad });
+// accessories: color/color2 tint the 3D model; `ad: n` = unlocked by watching n rewarded ads (never in chests)
+const A = (id, name, rarity, color, color2, ad) => ({ id, name, rarity, color, color2, ad });
 export const CATALOG = {
   outfit: [
     O('rookie', 'Rookie', 'common', '#e94f37', '#2d3142', '#ffffff'),
@@ -49,6 +55,48 @@ export const CATALOG = {
     O('lava', 'Lava', 'epic', '#ff4800', '#2b0a00', '#ffba08'),
     O('diamond', 'Diamond', 'legendary', '#b9f2ff', '#e0fbfc', '#ffffff'),
     O('king', 'Shadow King', 'legendary', '#0b0b0b', '#000000', '#ffd700'),
+    O('banana', 'Banana Suit', 'epic', '#ffe135', '#ffe135', '#6b4a2f'),
+    O('tux', 'Tuxedo', 'epic', '#111111', '#111111', '#ffffff', 2),
+    O('santa', 'Santa', 'legendary', '#d00000', '#d00000', '#ffffff'),
+  ],
+  hat: [
+    A('none', 'No Hat', 'common'),
+    A('beanie', 'Beanie', 'common', '#e63946', '#ffffff'),
+    A('cap', 'Backwards Cap', 'common', '#1d70d6', '#ffffff'),
+    A('bobble', 'Bobble Hat', 'common', '#2a9d8f', '#ffffff'),
+    A('party', 'Party Hat', 'rare', '#ff4fa3', '#ffd60a'),
+    A('cone', 'Traffic Cone', 'rare', '#ff7b00', '#ffffff'),
+    A('cowboy', 'Cowboy Hat', 'rare', '#8a5a35', '#3b2416'),
+    A('chef', 'Chef Hat', 'rare', '#ffffff', '#e5e5e5'),
+    A('tophat', 'Top Hat', 'epic', '#111111', '#e63946'),
+    A('viking', 'Viking Helmet', 'epic', '#9aa9b8', '#f1e3c8'),
+    A('pirate', 'Pirate Hat', 'epic', '#1b1b1b', '#ffffff'),
+    A('crown', 'Royal Crown', 'legendary', '#ffd23f', '#e63946'),
+    A('duck', 'Rubber Duck', 'legendary', '#ffd60a', '#ff7b00'),
+    A('halo', 'Halo', 'legendary', '#fff3b0', '#ffffff'),
+    A('propeller', 'Propeller Cap', 'epic', '#3a86ff', '#ffd60a', 2),
+    A('banana', 'Banana Head', 'epic', '#ffe135', '#6b4a2f', 3),
+  ],
+  face: [
+    A('none', 'Nothing', 'common'),
+    A('aviators', 'Aviators', 'common', '#222222', '#c9a227'),
+    A('mustache', 'Mustache', 'rare', '#3b2416'),
+    A('clown', 'Clown Nose', 'rare', '#e63946'),
+    A('hearts', 'Heart Shades', 'rare', '#ff4fa3', '#ffffff'),
+    A('beard', 'Big Beard', 'epic', '#8a5a35'),
+    A('pixel', 'Deal-With-It', 'epic', '#111111', '#ffffff'),
+    A('mask', 'Hero Mask', 'epic', '#3a0ca3'),
+    A('lasers', 'Laser Eyes', 'legendary', '#ff1e1e', '#ffb3b3', 3),
+  ],
+  back: [
+    A('none', 'Nothing', 'common'),
+    A('backpack', 'Backpack', 'common', '#2a9d8f', '#264653'),
+    A('cape', 'Hero Cape', 'rare', '#e63946'),
+    A('baguette', 'Baguette', 'rare', '#d4a056', '#b07a2e'),
+    A('surfboard', 'Surfboard', 'epic', '#4cc3ff', '#ffffff'),
+    A('wings', 'Angel Wings', 'epic', '#ffffff', '#e0fbfc'),
+    A('dragon', 'Dragon Wings', 'legendary', '#2b9348', '#80b918'),
+    A('jetpack', 'Jetpack', 'legendary', '#9aa9b8', '#ff7b00', 4),
   ],
   ski: [
     S('navy', 'Classic', 'common', '#1d3557', '#1d3557'),
@@ -62,6 +110,9 @@ export const CATALOG = {
     S('chrome', 'Chrome', 'epic', '#dfe7ee', '#9aa9b8', true),
     S('gold', 'Solid Gold', 'legendary', '#ffd23f', '#fff3b0', true),
     S('rainbow', 'Prism', 'legendary', 'rainbow', '#ffffff', true),
+    S('banana', 'Banana', 'rare', '#ffe135', '#6b4a2f'),
+    S('pizza', 'Pizza Slice', 'epic', '#f4a261', '#e63946'),
+    S('lava', 'Lava Flow', 'legendary', '#ff4800', '#ffd60a', true),
   ],
   trail: [
     Tr('none', 'No Trail', 'common', null),
@@ -72,9 +123,12 @@ export const CATALOG = {
     Tr('void', 'Void', 'epic', ['#7b2cbf', '#c77dff', '#240046']),
     Tr('rainbow', 'Rainbow', 'legendary', 'rainbow'),
     Tr('gold', 'Gold Rush', 'legendary', ['#ffd23f', '#fff3b0', '#ffb627']),
+    Tr('hearts', 'Love Trail', 'rare', ['#ff4fa3', '#ff8fab', '#ffffff']),
+    Tr('bubbles', 'Bubbles', 'rare', ['#bde0fe', '#a2d2ff', '#ffffff']),
+    Tr('money', 'Make It Rain', 'epic', ['#2b9348', '#80b918', '#d8f3dc'], 3),
   ],
 };
-export const KIND_NAME = { outfit: 'Outfit', ski: 'Skis/Board', trail: 'Trail' };
+export const KIND_NAME = { outfit: 'Outfit', hat: 'Hat', face: 'Face', back: 'Back', ski: 'Skis/Board', trail: 'Trail' };
 export const item = (kind, id) => CATALOG[kind].find(i => i.id === id) || CATALOG[kind][0];
 export const equipped = kind => item(kind, save.eq[kind]);
 
@@ -94,15 +148,16 @@ function rollRarity(chest) {
   for (const k of ['legendary', 'epic', 'rare', 'common']) { if ((r -= odds[k]) < 0) return k; }
   return 'common';
 }
-export function openChest(chest) {
+export function openChest(chest, paidByAd = false) {
   const c = CHESTS[chest];
-  if (chest === 'free') { if (Date.now() < save.freeChestAt) return null; save.freeChestAt = Date.now() + FREE_CHEST_COOLDOWN; }
+  if (paidByAd) { /* the player watched a rewarded ad */ }
+  else if (chest === 'free') { if (Date.now() < save.freeChestAt) return null; save.freeChestAt = Date.now() + FREE_CHEST_COOLDOWN; }
   else { if (save.coins < c.price) return null; save.coins -= c.price; }
   const rarity = rollRarity(chest);
   if (chest !== 'epic') save.pity = (rarity === 'epic' || rarity === 'legendary') ? 0 : save.pity + 1;
   // pick a kind weighted by how many items it has in that rarity; prefer unowned items
   const pool = [];
-  for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (it.rarity === rarity && it.id !== 'none') pool.push({ kind, it });
+  for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (it.rarity === rarity && it.id !== 'none' && !it.ad) pool.push({ kind, it });
   const unowned = pool.filter(({ kind, it }) => !save.inv[kind].includes(it.id));
   const src = unowned.length && Math.random() < 0.7 ? unowned : pool;
   const { kind, it } = src[(Math.random() * src.length) | 0];
@@ -180,3 +235,22 @@ export function settleMissions() {
   return { done, total };
 }
 ensureMissions();
+
+// ---------- rewarded-ad unlocks ----------
+export const AD_DAILY = { coins: 5, chest: 3 };   // per-day caps for the "watch an ad for…" rewards
+const todayStr = () => new Date().toISOString().slice(0, 10);
+export function adUsesLeft(kind) {
+  if (save.adDay !== todayStr()) { save.adDay = todayStr(); save.adCount = {}; }
+  return AD_DAILY[kind] - (save.adCount[kind] || 0);
+}
+export function useAd(kind) { adUsesLeft(kind); save.adCount[kind] = (save.adCount[kind] || 0) + 1; persist(); }
+// returns true when the item becomes unlocked
+export function adProgress(kind, id) {
+  const key = `${kind}:${id}`, it = CATALOG[kind].find(i => i.id === id);
+  save.adProgress[key] = (save.adProgress[key] || 0) + 1;
+  const done = save.adProgress[key] >= it.ad;
+  if (done && !save.inv[kind].includes(id)) save.inv[kind].push(id);
+  persist();
+  return done;
+}
+export const adWatched = (kind, id) => save.adProgress[`${kind}:${id}`] || 0;
