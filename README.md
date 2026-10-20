@@ -22,6 +22,16 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
 2. The project URL and publishable key live in `config.js`. The browser can only call the validated
    `submit_score`, `get_leaderboard` and `get_ghosts` functions — it has no direct table access.
 
+## Cloud saves & moving to a new domain
+Every change to a player's progress (coins, items, missions, name) is backed up to Supabase (`saves` table, via
+`save_progress` / `load_progress` / `restore_progress` in `supabase/schema.sql`). Each player gets a save code
+(Menu → profile button) that restores their progress on any device or browser.
+
+To move to a new domain (e.g. `peakflip.io`):
+1. Add the domain in Vercel → Settings → Domains, but **don't** set a redirect from the old address.
+2. Set `canonicalHost: 'peakflip.io'` in `config.js` and push.
+Visitors on the old address get their save uploaded and are sent to the new domain with it, so nobody loses progress.
+
 ## Ads
 
 The game has three kinds of ad slots, all going through `ads.js`:
@@ -62,7 +72,8 @@ Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). 
 ## Files
 - `game.js` — rendering, physics, controls, world generation, sky themes, race track (winding course, gates, points)
 - `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), chests & odds, missions
-- `ui.js` — menus, chest opening, locker, leaderboards, results
+- `ui.js` — menus, chest opening, locker (3D closet + try-on), profile & save code, leaderboards, results
+- `cloud.js` — cloud saves, save codes, domain hand-off · `net.js` — Supabase RPC helper
 - `icons.js` — the hand-made SVG icon set
 - `ads.js` — rewarded / between-run ads (CrazyGames, Google H5, dev fake)
 - `supabase/schema.sql` — leaderboard table + functions

@@ -5,6 +5,10 @@ window.PEAKFLIP_CONFIG = {
   supabaseUrl: 'https://hbptqumqhdxylqjbxeoa.supabase.co',
   supabaseKey: 'sb_publishable_icbskoqmC0gKi-_7ACfcZQ_nuw717DM',
 
+  // Moving to a new domain? Put it here (e.g. 'peakflip.io') once it works in Vercel. Visitors on any other
+  // address get their progress uploaded and are sent to the new domain with it, so nobody loses anything.
+  canonicalHost: '',
+
   // Google H5 Games Ads (rewarded + between-run ads on your own site). Needs an approved AdSense account.
   h5GamesAds: false,
   adsTestMode: true,   // shows Google's test ads; set false once approved and live

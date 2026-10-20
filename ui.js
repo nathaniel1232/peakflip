@@ -6,6 +6,8 @@ import {
   openChest, collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
 } from './meta.js';
 import { icon } from './icons.js';
+import { rpc } from './net.js';
+import { Cloud, fmtCode } from './cloud.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -17,17 +19,6 @@ let cfg = null;
 if (!save.pid) { save.pid = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now()); persist(); }
 
 // ---------- leaderboard / ghost client (Supabase RPC over plain fetch) ----------
-const SB = window.PEAKFLIP_CONFIG || {};
-async function rpc(fn, args) {
-  if (!SB.supabaseUrl || !SB.supabaseKey) throw new Error('no backend');
-  const r = await fetch(`${SB.supabaseUrl}/rest/v1/rpc/${fn}`, {
-    method: 'POST',
-    headers: { apikey: SB.supabaseKey, 'content-type': 'application/json' },
-    body: JSON.stringify(args),
-  });
-  if (!r.ok) throw new Error(`${fn} ${r.status}`);
-  return r.json();
-}
 // The Daily Race is scored in points since the winding-track update; it lives on its own board ('racepts')
 // so it never mixes with the old time-based 'race' rows.
 const DB = board => board === 'race' ? 'racepts' : board;
@@ -73,13 +64,23 @@ function swatch(kind, it) {
 }
 
 // ---------- panel ----------
-function openPanel(title, html, wide) {
+// closet: the Locker docks to one side and the menu steps away so the 3D avatar shows in its wardrobe
+let inCloset = false;
+function openPanel(title, html, wide, closet = false) {
+  const card = $('panel').querySelector('.card'), keep = $('panelTitle').textContent === title && !$('panel').classList.contains('hidden') ? card.scrollTop : 0;
   $('panelTitle').textContent = title;
   $('panelBody').innerHTML = html;
   $('panel').classList.toggle('wide', !!wide);
+  $('panel').classList.toggle('closet', closet);
   $('panel').classList.remove('hidden');
+  card.scrollTop = keep;   // re-rendering after a tap shouldn't jump back to the top
+  if (closet !== inCloset) { inCloset = closet; cfg.closet(closet); $('menu').classList.toggle('hidden', closet); }
 }
-function closePanel() { $('panel').classList.add('hidden'); showMenuUI(); }
+function closePanel() {
+  $('panel').classList.add('hidden');
+  if (inCloset) { inCloset = false; tryOn = null; cfg.closet(false); $('menu').classList.remove('hidden'); }
+  showMenuUI();
+}
 
 // ---------- menu ----------
 const freeChestReady = () => Date.now() >= (save.freeChestAt || 0);
@@ -115,6 +116,44 @@ async function miniBoard(force) {
   miniCache[key] = { at: Date.now(), html };
   if (miniTab === key) el.innerHTML = html;
 }
+
+// ---------- profile & cloud save ----------
+const statusText = () => ({
+  synced: `${icon('check')} Saved to the cloud`, syncing: 'Saving…', offline: 'Offline · saved on this device for now', off: 'Connecting…',
+})[Cloud.status];
+function renderProfile() {
+  openPanel('Profile & save', `
+    <div id="nameSlot"></div>
+    <div class="saveBox">
+      <div class="secHead">Your save code</div>
+      <div class="codeRow"><code id="saveCode">${fmtCode(Cloud.code) || '…'}</code><button class="btn" id="copyCode">Copy</button></div>
+      <div class="syncLine ${Cloud.status}" id="syncLine">${statusText()}</div>
+      <div class="note">Your coins, items, missions and name are backed up automatically. Write this code down:
+        it gets your progress back on another phone, browser or computer, or if this browser's data is cleared.</div>
+    </div>
+    <div class="saveBox">
+      <div class="secHead">Load progress from a code</div>
+      <div class="nameRow"><input id="restoreIn" maxlength="11" placeholder="XXXXX-XXXXX" autocomplete="off" style="text-transform:uppercase"><button class="btn" id="restoreBtn">Load</button></div>
+      <div class="note" id="restoreMsg">This replaces the progress on this device with the saved one.</div>
+    </div>
+    <button class="btn" id="profLb">${icon('trophy')} Leaderboard</button>`);
+  nameForm($('nameSlot'), () => renderProfile());
+  if (!Cloud.code) Cloud.push().then(() => { const c = $('saveCode'); if (c) c.textContent = fmtCode(Cloud.code) || '—'; });
+  $('copyCode').onclick = async () => { try { await navigator.clipboard.writeText(fmtCode(Cloud.code)); $('copyCode').textContent = 'Copied'; } catch {} };
+  $('profLb').onclick = () => renderLeaderboard();
+  let armed = false;
+  $('restoreBtn').onclick = async () => {
+    const msg = $('restoreMsg'), btn = $('restoreBtn'), code = $('restoreIn').value;
+    if (code.replace(/[^A-Za-z0-9]/g, '').toUpperCase() === Cloud.code) { msg.textContent = "That's this device's own code."; return; }
+    if (!armed) { armed = true; btn.textContent = 'Replace?'; btn.classList.add('primary'); msg.innerHTML = '<b>Tap again</b> to replace this device\'s progress.'; return; }
+    btn.disabled = true; btn.textContent = '…';
+    const r = await Cloud.restore(code);
+    if (r === 'ok') { msg.textContent = 'Loaded! Restarting…'; setTimeout(() => location.reload(), 600); return; }
+    btn.disabled = false; btn.textContent = 'Load'; btn.classList.remove('primary'); armed = false;
+    msg.textContent = r === 'not_found' ? 'No save found for that code. Check it and try again.' : "Couldn't reach the server. Try again in a moment.";
+  };
+}
+Cloud.onStatus(() => { const l = $('syncLine'); if (l) { l.className = `syncLine ${Cloud.status}`; l.innerHTML = statusText(); } });
 
 // ---------- how to play ----------
 function renderHelp() {
@@ -196,7 +235,10 @@ function doOpen(key, paidByAd) {
 }
 
 // ---------- locker ----------
-let lockerTab = 'fits';
+let lockerTab = 'fits', tryOn = null;   // tryOn: { kind: id } previewed on the avatar, not equipped
+const setChest = set => Object.values(CHESTS).find(c => c.set === set);
+const howToGet = (kind, it) => it.ad ? `watch ${it.ad} ads in the ${KIND_NAME[kind]} tab` : it.set ? `the ${setChest(it.set).name}` : 'chests';
+function preview(t) { tryOn = t && Object.keys(t).length ? t : null; cfg.preview(tryOn); }
 function fitsGrid() {
   return `<div class="fits">${FITS.map(f => {
     const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length;
@@ -208,7 +250,8 @@ function fitsGrid() {
     return `<div class="fit" style="--c:${set.color}">
       <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name}</span></div>
       <div class="fitPieces">${pieces}</div>
-      <button class="btn ${worn ? '' : have > 0 ? 'go' : ''}" data-fit="${f.id}" ${have > 0 && !worn ? '' : 'disabled'}>${worn ? `${icon('check')} Wearing` : `Wear fit · ${have}/${total}`}</button>
+      <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
+      <button class="btn ${worn ? '' : have > 0 ? 'go' : ''}" data-fit="${f.id}" ${have > 0 && !worn ? '' : 'disabled'}>${worn ? `${icon('check')} Wearing` : `Wear · ${have}/${total}`}</button></div>
     </div>`;
   }).join('')}</div>`;
 }
@@ -223,23 +266,39 @@ function renderLocker() {
       return `<div class="skin adItem">${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div>
         <button class="btn go adBtn" data-ad="${it.id}" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(lockerTab, it.id)}/${it.ad}</button></div>`;
     }
-    return `<button class="skin ${on ? 'sel' : ''}" data-id="${it.id}" ${owned ? '' : 'disabled'}>
-      ${owned ? swatch(lockerTab, it) : `<div class="sw q">${icon('lock')}</div>`}
-      <div class="nm">${owned ? esc(it.name) : 'Locked'}</div><div class="rr" style="color:${rc}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
+    // locked items can still be tried on in the closet
+    const trying = tryOn?.[lockerTab] === it.id;
+    return `<button class="skin ${on ? 'sel' : ''} ${owned ? '' : 'locked'} ${trying ? 'trying' : ''}" ${owned ? `data-id="${it.id}"` : `data-try="${it.id}"`}>
+      <div class="swWrap">${swatch(lockerTab, it)}${owned ? '' : `<span class="lockBadge">${icon('lock')}</span>`}</div>
+      <div class="nm">${esc(it.name)}</div><div class="rr" style="color:${rc}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
   }).join('');
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
   const body = lockerTab === 'fits'
     ? `${fitsGrid()}<div class="note">A fit puts on every piece you own from a themed set. Get the missing pieces from the <b>themed chests</b>.</div>`
     : `<div class="grid">${grid}</div><div class="note">Unlock more from chests. Items with a ${icon('play')} button are exclusives: watch ads to unlock them.${cfg.ads.available ? '' : ' (Ads are not set up on this site yet.)'}</div>`;
-  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div>${body}`, true);
+  const tryBar = tryOn ? `<div class="tryBar"><span>Trying on <b>${Object.entries(tryOn).filter(([, id]) => id !== 'none').map(([k, id]) => {
+      const it = CATALOG[k].find(i => i.id === id); return esc(it.name) + (save.inv[k].includes(id) ? '' : ` <small>(get it from ${howToGet(k, it)})</small>`);
+    }).join(', ') || 'nothing'}</b></span><button class="btn" id="tryReset">Take off</button></div>` : '';
+  openPanel('Locker', `${tryBar}${gear}<div class="tabs">${tabs}</div>${body}<div class="note closetTip">Drag the avatar to spin it.</div>`, true, true);
+  if ($('tryReset')) $('tryReset').onclick = () => { preview(null); renderLocker(); };
+  $('panelBody').querySelectorAll('[data-try]').forEach(b => b.onclick = () => {
+    const id = b.dataset.try, t = { ...(tryOn || {}) };
+    if (t[lockerTab] === id) delete t[lockerTab]; else t[lockerTab] = id;   // tap again to take it off
+    preview(t); renderLocker();
+  });
+  $('panelBody').querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderLocker(); });
   $('panelBody').querySelectorAll('[data-fit]').forEach(b => b.onclick = () => {
     const f = FITS.find(x => x.id === b.dataset.fit);
     for (const [k, id] of Object.entries(f.pieces)) if (save.inv[k].includes(id)) save.eq[k] = id;
-    persist(); cfg.onCosmetics(); cfg.sfx.perfect(); renderLocker();
+    persist(); preview(null); cfg.sfx.perfect(); renderLocker();
   });
   $('panelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
   $('panelBody').querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
-  $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
+  $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => {
+    save.eq[lockerTab] = b.dataset.id; persist();
+    if (tryOn) { delete tryOn[lockerTab]; preview(tryOn); } else cfg.onCosmetics();
+    renderLocker();
+  });
   $('panelBody').querySelectorAll('[data-ad]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     const ok = await cfg.ads.rewarded();
@@ -495,7 +554,7 @@ export function initUI(c) {
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
-  $('profileBtn').onclick = () => { c.sfx.init(); renderLeaderboard(); };
+  $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };

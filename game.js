@@ -28,10 +28,11 @@ const $ = id => document.getElementById(id);
 const isTouch = matchMedia('(pointer: coarse)').matches;
 
 // ---------- save data / meta-game ----------
-import { save, persist, equipped, track, resetRun, run as runStats, settleMissions } from './meta.js';
+import { save, persist, equipped, item, CATALOG, track, resetRun, run as runStats, settleMissions } from './meta.js';
 import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
 import { icon } from './icons.js';
 import { Ads } from './ads.js';
+import { Cloud } from './cloud.js';
 
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
 const ADS_ENABLED = false;   // TEMP: midgame ads switched off — set to true before publishing
@@ -122,7 +123,7 @@ const SKY = 0xbfe3f5;
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 70, 230);
-const camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.1, 500);
+const camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.25, 500);
 const hemi = new THREE.HemisphereLight(0xffffff, 0x9bb8cc, 1.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2); sun.position.set(-30, 60, 25); scene.add(sun);
 // a soft lamp that rides with the player, only switched on at night
@@ -136,6 +137,7 @@ world.updateMatrixWorld(true);
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  if (typeof setViewOffset === 'function' && closet.on) setViewOffset();
 });
 
 // ---------- materials & geometry ----------
@@ -233,11 +235,12 @@ const capMatSky = lam(0xffffff, { fog: false });
   for (const [n, dist, hMin, hMax, rMin, rMax, y0] of [[16, 400, 90, 170, 70, 120, -170], [12, 330, 60, 120, 50, 90, -150]]) {
     for (let i = 0; i < n; i++) {
       const h = rand(hMin, hMax), r = rand(rMin, rMax);
-      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mountMats[(i + (dist < 350 ? 1 : 0)) % 3]);
+      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mountMats[dist < 350 ? 1 : 0]);   // one shade per range
       const a = (i / n - 0.5) * 2.6 + rand(-0.05, 0.05);
       m.position.set(Math.sin(a) * dist, h / 2 + y0, -Math.cos(a) * dist);
       m.rotation.y = rand(0, 3);
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.36, h * 0.36, 6), capMatSky); cap.position.y = h * 0.32; m.add(cap);
+      // the cap is a bit wider than the peak where they meet, so the two surfaces never share depth (that flickered)
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, h * 0.38, 6), capMatSky); cap.position.y = h * 0.31 + 0.5; m.add(cap);
       mountains.add(m);
     }
   }
@@ -316,15 +319,15 @@ const clouds = (() => {
 // ---------- time-of-day themes ----------
 const THEMES = {
   day: {
-    top: 0x4f9fe3, horizon: 0xd8eef9, fog: 0xcfe8f6, hemi: [0xffffff, 0x9bb8cc, 1.6], sun: [0xfff4e0, 2.2], disc: [0xfff8e0, 0, 150, -380, 110],
+    top: 0x4f9fe3, horizon: 0xd8eef9, hemi: [0xffffff, 0x9bb8cc, 1.6], sun: [0xfff4e0, 2.2], disc: [0xfff8e0, 0, 150, -380, 110],
     mountains: [0xe6eef5, 0xcdd9e5, 0xb7c7d8], cap: 0xffffff, cloud: 0xffffff, clouds: true,
   },
   golden: {
-    top: 0x3d4f9a, horizon: 0xffb27a, fog: 0xf0c0a0, hemi: [0xffe2c8, 0x8f7fa8, 1.35], sun: [0xffb36b, 2.5], disc: [0xffc27a, -120, 25, -380, 170],
+    top: 0x3d4f9a, horizon: 0xf6bf98, hemi: [0xffe2c8, 0x8f7fa8, 1.35], sun: [0xffb36b, 2.5], disc: [0xffc27a, -120, 25, -380, 170],
     mountains: [0xf1cfc0, 0xd6aeb4, 0xb294ad], cap: 0xffe9dc, cloud: 0xffcfb8, clouds: true,
   },
   night: {
-    top: 0x030817, horizon: 0x1d335f, fog: 0x1a2d55, hemi: [0x9ab8ff, 0x1c2848, 1.05], sun: [0xbcd4ff, 1.0], disc: [0xe8f0ff, 140, 170, -360, 55],
+    top: 0x030817, horizon: 0x1d335f, hemi: [0x9ab8ff, 0x1c2848, 1.05], sun: [0xbcd4ff, 1.0], disc: [0xe8f0ff, 140, 170, -360, 55],
     mountains: [0x3a4d78, 0x2d3d63, 0x223052], cap: 0x8fa4cc, cloud: 0x3b4b70, clouds: false, stars: true, aurora: true, lamp: 1.4,
   },
 };
@@ -333,7 +336,7 @@ const tmpCol = new THREE.Color(), tmpCol2 = new THREE.Color();
 function setTheme(name) {
   theme = THEMES[name] || THEMES.day; theme.id = name;
   const t = theme;
-  scene.background.set(t.horizon); scene.fog.color.set(t.fog);
+  scene.background.set(t.horizon); scene.fog.color.set(t.horizon);   // one colour, so snow, haze and sky meet without a band
   hemi.color.set(t.hemi[0]); hemi.groundColor.set(t.hemi[1]); hemi.intensity = t.hemi[2];
   sun.color.set(t.sun[0]); sun.intensity = t.sun[1];
   // sky gradient: horizon colour near the ground, fading to the top colour overhead
@@ -545,11 +548,14 @@ function buildAccessory(kind, it) {
   }
   return g;
 }
+// what the avatar is wearing: equipped items, unless the closet is previewing (trying on) something
+let preview = null;
+const worn = kind => preview?.[kind] ? item(kind, preview[kind]) : equipped(kind);
 function applyAccessories() {
   accAnim.prop = accAnim.cape = accAnim.lasers = accAnim.sun = accAnim.crystal = null; accAnim.wings = []; accAnim.jet = false;
   for (const kind of ['hat', 'face', 'back']) {
     const slot = slots[kind]; slot.clear();
-    const it = equipped(kind);
+    const it = worn(kind);
     if (it && it.id !== 'none') slot.add(buildAccessory(kind, it));
   }
 }
@@ -606,14 +612,15 @@ function setPattern(m, tex, color, glowColor) {
   if (em) m.emissive.set(glowColor).multiplyScalar(1.2); else m.emissive.set('#000000');
 }
 const isBoard = () => save.gear === 'board';
-function applyCosmetics() {
+function applyCosmetics(tryOn) {
+  if (tryOn !== undefined) preview = tryOn;
   applyAccessories();
   skier.skis.visible = !isBoard(); skier.board.visible = isBoard();
   for (const pl of skier.poles) pl.visible = !isBoard();
   // sideways stance on a board
   skier.legs.rotation.y = skier.upper.rotation.y = isBoard() ? Math.PI / 2 : 0;
   skier.legs.scale.x = isBoard() ? 1.6 : 1;
-  const o = equipped('outfit'), k = equipped('ski');
+  const o = worn('outfit'), k = worn('ski');
   setPattern(skinMats.jacket, o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
   setPattern(skinMats.pants, o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
   skinMats.helmet.color.set(o.helmet);
@@ -624,13 +631,64 @@ function applyCosmetics() {
 }
 const hsl = new THREE.Color();
 function updateCosmetics() {
-  if (equipped('ski').color === 'rainbow') { skinMats.ski.color.setHSL((time * 0.25) % 1, 0.9, 0.55); skinMats.ski.emissive.copy(skinMats.ski.color).multiplyScalar(0.3); }
+  if (worn('ski').color === 'rainbow') { skinMats.ski.color.setHSL((time * 0.25) % 1, 0.9, 0.55); skinMats.ski.emissive.copy(skinMats.ski.color).multiplyScalar(0.3); }
   // air trail
-  const tr = equipped('trail');
+  const tr = worn('trail');
   if (tr.colors && !p.grounded && !p.grinding && !p.crashed && (state === 'play')) {
     const col = tr.colors === 'rainbow' ? hsl.setHSL((time * 0.8) % 1, 1, 0.6).getHex() : tr.colors[(Math.random() * tr.colors.length) | 0];
     Particles.emit(p.x, p.y + 0.5, p.z + 0.4, 2, 0.25, 0.6, col, 1);
   }
+}
+
+// ---------- 3D closet (Locker): a wardrobe set around the menu avatar ----------
+const closet = (() => {
+  const g = new THREE.Group(); g.visible = false;
+  const wood = lam(0x8a5a35), dark = lam(0x5c3a20), metal = lam(0xc9d3dc);
+  const put = (geo, m, x, y, z, ry = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.rotation.y = ry; g.add(o); return o; };
+  put(new THREE.CylinderGeometry(1.7, 1.7, 0.05, 20), lam(0x9b2335), 0, 0.03, 0.2);                 // rug
+  put(new THREE.CylinderGeometry(1.25, 1.25, 0.06, 20), lam(0xd9a441), 0, 0.045, 0.2);              // turntable
+  put(box(4.6, 3.4, 0.16), wood, 0, 1.7, 1.75);                                                   // back
+  for (const sx of [-1, 1]) {
+    put(box(0.16, 3.4, 1.5), wood, sx * 2.3, 1.7, 1.05);                                          // sides
+    const door = new THREE.Group(); door.position.set(sx * 2.3, 0, 0.3); door.rotation.y = sx * 1.0;   // swung open toward the camera g.add(door);
+    const d = new THREE.Mesh(box(1.3, 3.2, 0.1), dark); d.position.set(sx * 0.65, 1.65, 0); door.add(d);
+    if (sx > 0) { const mir = new THREE.Mesh(box(0.9, 2.4, 0.02), lam(0xbfe3f5, { emissive: 0x2a4a5a })); mir.position.set(0.65, 1.7, -0.06); door.add(mir); }
+    else { const knob = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), metal); knob.position.set(-1.15, 1.6, -0.08); door.add(knob); }
+  }
+  put(box(4.8, 0.22, 1.7), dark, 0, 3.45, 1.05);                                                  // top
+  put(box(4.4, 0.08, 0.7), wood, 0, 2.95, 1.35);                                                  // hat shelf
+  const rod = put(new THREE.CylinderGeometry(0.03, 0.03, 4.3, 6), metal, 0, 2.55, 1.2); rod.rotation.z = Math.PI / 2;
+  // a few hanging jackets in catalog colours, either side of the avatar
+  const fits = CATALOG.outfit.filter(o => o.rarity !== 'common').slice(0, 10);
+  fits.forEach((o, i) => {
+    const x = (i < 5 ? -2.05 + i * 0.22 : 1.15 + (i - 5) * 0.22);
+    const hook = put(box(0.02, 0.18, 0.02), metal, x, 2.47, 1.2);
+    const j = put(box(0.08, 0.7, 0.5), lam(o.jacket), x, 2.05, 1.2); j.rotation.z = (i % 2 ? 0.04 : -0.04);
+  });
+  // hat boxes and a couple of hats on the shelf
+  [[-1.7, 0xff6b2c], [-1.2, 0x4cc3ff], [1.3, 0xc264ff], [1.8, 0x3ddc84]].forEach(([x, c]) => put(new THREE.CylinderGeometry(0.2, 0.2, 0.26, 10), lam(c), x, 3.12, 1.35));
+  put(new THREE.ConeGeometry(0.14, 0.4, 8), lam(0x2b1240), -0.4, 3.19, 1.35); put(new THREE.CylinderGeometry(0.3, 0.3, 0.02, 12), lam(0x2b1240), -0.4, 3.0, 1.35);
+  put(new THREE.SphereGeometry(0.17, 8, 6), lam(0xff7518), 0.4, 3.15, 1.35);
+  // a warm lamp over the avatar
+  const shade = put(new THREE.ConeGeometry(0.35, 0.3, 10, 1, true), lam(0xffd27a, { emissive: 0xffb347, side: THREE.DoubleSide }), 0, 3.15, 0.2);
+  const light = new THREE.PointLight(0xffe2b0, 0, 9, 1.2); light.position.set(0, 2.9, -0.6); g.add(light);
+  world.add(g);
+  return { group: g, light, on: false, yaw: 0, dragging: false };
+})();
+function setCloset(on) {
+  closet.on = on; closet.group.visible = on; closet.light.intensity = on ? 3 : 0; closet.yaw = 0;
+  if (!on) applyCosmetics(null);
+  setViewOffset(); snapCam = false;
+}
+// frame the avatar beside the Locker panel: to the left on wide screens, at the top on phones
+function setViewOffset() {
+  const W = innerWidth, H = innerHeight;
+  if (!closet.on) camera.clearViewOffset();
+  else if (W > 760) camera.setViewOffset(W, H, W * 0.22, 0, W, H);
+  else camera.setViewOffset(W, H, 0, H * 0.27, W, H);
+  // on phones only the top ~45% is free, so stand further back to fit the whole avatar there
+  closet.dist = W > 760 ? 5.8 : 7.8;
+  camera.updateProjectionMatrix();
 }
 
 // ---------- particles (snow spray / sparks / coin sparkle) ----------
@@ -1303,7 +1361,7 @@ addEventListener('keydown', e => {
   if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
   if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
-  if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy) startRun();
+  if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy && $('panel').classList.contains('hidden')) startRun();
 });
 addEventListener('keyup', e => {
   keys[e.code] = false; latched.delete(e.code);
@@ -1319,6 +1377,7 @@ canvas.addEventListener('pointerdown', e => {
 });
 canvas.addEventListener('pointermove', e => {
   if (!ptr.down) return;
+  if (closet.on) { closet.yaw += (e.clientX - ptr.x) * 0.012; closet.dragT = performance.now(); }
   ptr.x = e.clientX; ptr.y = e.clientY;
   ptr.moved = Math.max(ptr.moved, Math.hypot(ptr.x - ptr.sx, ptr.y - ptr.sy));
 });
@@ -1740,7 +1799,13 @@ function updateCamera(dt) {
   skier.upper.visible = view !== 'first';
   camera.up.set(0, 1, 0);
   const k = snapCam ? 60 : 1;
-  if (state === 'menu') {
+  if (state === 'menu' && closet.on) {
+    camPos.set(0, 1.4, -(closet.dist || 4.8)); camLook.set(0, 1.1, 0);
+    world.localToWorld(camPos); world.localToWorld(camLook);
+    camera.position.lerp(camPos, 1 - Math.exp(-6 * dt)); camera.lookAt(camLook);
+    if (Math.abs(camera.fov - 40) > 0.05) { camera.fov = damp(camera.fov, 40, 6, dt); camera.updateProjectionMatrix(); }
+  } else if (state === 'menu') {
+    if (Math.abs(camera.fov - 66) > 0.05) { camera.fov = damp(camera.fov, 66, 6, dt); camera.updateProjectionMatrix(); }
     orbit += dt * 0.25;
     camPos.set(Math.sin(orbit) * 6.5, 2.6, Math.cos(orbit) * 6.5 - 1);
     camLook.set(0, 1.1, 0);
@@ -1900,6 +1965,7 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 function startRun(m = mode) {
   mode = m;
+  if (closet.on) setCloset(false);
   Sfx.init();
   jumpQueued = false; latched.clear();
   clearWorld();
@@ -2068,6 +2134,11 @@ function frame(now) {
     }
     Sfx.wind(state === 'play' ? clamp(p.speed / 60, 0, 0.5) * (p.grounded ? 1 : 0.6) : 0, 250 + p.speed * 25);
   }
+  if (state === 'menu') {
+    // the closet turntable spins slowly unless you're dragging it
+    if (closet.on && !(ptr.down || performance.now() - (closet.dragT || 0) < 1500)) closet.yaw += dt * 0.45;
+    p.yaw = closet.on ? closet.yaw : 0;
+  }
   updateCoins();
   updateCosmetics();
   animateAccessories(dt);
@@ -2090,10 +2161,13 @@ initUI({
   sfx: Sfx, isTouch, hints: isTouch ? HINT_TOUCH : HINT_DESKTOP,
   onPlay: m => startRun(m), onAgain: () => restartWithAd(), onMenu: () => toMenu(),
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
+  closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn),
 });
 toMenu();
 requestAnimationFrame(frame);
 Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v)); showMenuUI(); });
+// cloud save: if newer progress comes back from the server (another device, a new domain), show it
+Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, get course() { return course; }, trackC, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };
+window.__game = { p, race, camera, get course() { return course; }, trackC, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };

@@ -11,7 +11,13 @@ export const save = Object.assign({
   adProgress: {}, adDay: '', adCount: {},
   freeChestAt: 0, pity: 0, chestsOpened: 0, missions: [], missionsDone: 0,
 }, (() => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch { return {}; } })());
-export const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {} };
+// persist(true) marks a real change (bumps savedAt and queues a cloud sync); persist(false) only writes locally
+export const onPersist = { fn: null };
+export const persist = (changed = true) => {
+  if (changed) save.savedAt = Date.now();
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {}
+  if (changed && onPersist.fn) onPersist.fn();
+};
 
 // migrate the old "owned skins by index" format
 if (Array.isArray(save.owned)) {
@@ -179,6 +185,17 @@ export const FITS = [
   { id: 'mensch', name: 'Fedora Classic', set: 'tradition', pieces: { outfit: 'shabbat', hat: 'fedora', face: 'none', back: 'none' } },
 ];
 export const fitOwned = f => Object.entries(f.pieces).filter(([k, id]) => save.inv[k].includes(id)).length;
+// fills in anything a save from an older version (or another device) is missing
+export function normalizeSave() {
+  save.inv = save.inv || {}; save.eq = save.eq || {};
+  for (const k of Object.keys(CATALOG)) {
+    if (!Array.isArray(save.inv[k]) || !save.inv[k].length) save.inv[k] = [CATALOG[k][0].id];
+    if (!save.eq[k]) save.eq[k] = CATALOG[k][0].id;
+  }
+  for (const k of ['best', 'coins', 'runs', 'freeChestAt', 'pity', 'chestsOpened', 'missionsDone']) save[k] = +save[k] || 0;
+  save.adProgress = save.adProgress || {}; save.adCount = save.adCount || {}; save.missions = save.missions || [];
+  save.gear = save.gear || 'ski';
+}
 export const KIND_NAME = { outfit: 'Outfit', hat: 'Hat', face: 'Face', back: 'Back', ski: 'Skis/Board', trail: 'Trail' };
 export const item = (kind, id) => CATALOG[kind].find(i => i.id === id) || CATALOG[kind][0];
 export const equipped = kind => item(kind, save.eq[kind]);
@@ -262,9 +279,11 @@ function newMission(exclude) {
   return { type: t.type, n: t.tiers[tier], reward: REWARDS[tier], done: false };
 }
 export function ensureMissions() {
+  const before = (save.missions || []).length;
   save.missions = (save.missions || []).filter(m => MISSION_TYPES.some(t => t.type === m.type));
-  while (save.missions.length < 3) save.missions.push(newMission(save.missions.map(m => m.type)));
-  persist();
+  let added = save.missions.length !== before;
+  while (save.missions.length < 3) { save.missions.push(newMission(save.missions.map(m => m.type))); added = true; }
+  if (added) persist();   // don't mark the save as changed on every page load
 }
 export const missionText = m => MISSION_TYPES.find(t => t.type === m.type).text(m.n);
 

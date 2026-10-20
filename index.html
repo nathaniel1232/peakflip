@@ -110,6 +110,13 @@
   .tabs.mini .tab { padding: 6px; font-size: 12px; }
   #miniLb { flex: 1; min-height: 150px; }
   #miniLb .item { padding: 8px 10px; }
+  .saveBox { display: flex; flex-direction: column; gap: 8px; background: var(--ink-2); border-radius: var(--r); padding: 12px; }
+  .codeRow { display: flex; gap: 8px; align-items: center; }
+  .codeRow code { flex: 1; font: 800 22px ui-monospace, Menlo, monospace; letter-spacing: .12em; text-align: center; background: rgba(0,0,0,.25); border-radius: 10px; padding: 10px; user-select: all; -webkit-user-select: all; }
+  .codeRow .btn { padding: 12px 14px; }
+  .syncLine { font-size: 12px; font-weight: 700; color: var(--muted); display: flex; gap: 6px; align-items: center; justify-content: center; }
+  .syncLine.synced { color: var(--good); }
+  .syncLine .ic { width: 15px; height: 15px; }
   .help { display: flex; flex-direction: column; gap: 8px; }
   .help .item { display: block; line-height: 1.9; font-weight: 600; }
   .help h4 { margin: 4px 0 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
@@ -186,6 +193,25 @@
   .tabs { flex-wrap: wrap; }
   .tabs .tab { min-width: 70px; }
   .sw.q { background: var(--ink-2); display: grid; place-items: center; color: var(--muted); }
+  /* ---------- 3D closet (Locker) ---------- */
+  #panel.closet { background: linear-gradient(90deg, transparent 40%, rgba(8,18,32,.35)); pointer-events: none; justify-content: flex-end; padding-right: 3vw; }
+  #panel.closet .card { pointer-events: auto; max-width: 540px; margin: 0; }
+  @media (max-width: 760px) {
+    #panel.closet { background: linear-gradient(180deg, transparent 35%, rgba(8,18,32,.35)); align-items: flex-end; padding: 8px; }
+    #panel.closet .card { max-height: 56vh; border-radius: 20px; margin: 0 auto; }
+  }
+  .closetTip { display: none; }
+  #panel.closet .closetTip { display: block; }
+  .tryBar { display: flex; align-items: center; gap: 10px; background: rgba(76,195,255,.16); box-shadow: inset 0 0 0 1px rgba(76,195,255,.4); border-radius: 12px; padding: 8px 8px 8px 12px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  .tryBar span { flex: 1; } .tryBar b { color: var(--text); } .tryBar small { color: var(--muted); font-weight: 600; }
+  .tryBar .btn { padding: 8px 12px; font-size: 13px; }
+  .swWrap { position: relative; width: 44px; margin: 0 auto; }
+  .skin.locked .sw { opacity: .45; filter: saturate(.6); }
+  .lockBadge { position: absolute; right: -6px; bottom: -6px; width: 20px; height: 20px; border-radius: 50%; background: #13253b; display: grid; place-items: center; color: var(--muted); }
+  .lockBadge .ic { width: 12px; height: 12px; }
+  .skin.locked .nm { color: var(--muted); }
+  .skin.trying { box-shadow: inset 0 0 0 2px var(--ice); background: rgba(76,195,255,.14); }
+  .fit .row .btn { padding: 9px 6px; }
   .secHead { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
   .secHead small { text-transform: none; letter-spacing: 0; font-weight: 600; opacity: .8; }
   .chestCard { position: relative; }

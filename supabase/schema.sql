@@ -113,6 +113,57 @@ language sql stable security definer set search_path = public as $$
   ) t;
 $$;
 
+-- ---------- cloud saves ----------
+-- One row per player id. The save code is a short random code the player can use to restore on another
+-- device or domain. Writes only go through when they're newer than what's stored.
+create table if not exists public.saves (
+  pid        text primary key,
+  code       text not null unique,
+  data       jsonb not null,
+  saved_at   bigint not null default 0,          -- client clock (ms) of the change
+  updated_at timestamptz not null default now()
+);
+alter table public.saves enable row level security;
+revoke all on public.saves from anon, authenticated;
+
+create or replace function public.save_progress(p_pid text, p_code text, p_data jsonb, p_saved_at bigint) returns json
+language plpgsql security definer set search_path = public as $$
+declare v_code text;
+begin
+  if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
+  if p_code is null or p_code !~ '^[A-Z2-9]{10}$' then raise exception 'bad code'; end if;
+  if jsonb_typeof(p_data) is distinct from 'object' or pg_column_size(p_data) > 200000 then raise exception 'bad data'; end if;
+  if exists (select 1 from saves where code = p_code and pid <> p_pid) then return json_build_object('ok', false, 'error', 'code_taken'); end if;
+  insert into saves as s (pid, code, data, saved_at) values (p_pid, p_code, p_data, coalesce(p_saved_at, 0))
+  on conflict (pid) do update set
+    data = case when excluded.saved_at >= s.saved_at then excluded.data else s.data end,
+    saved_at = greatest(s.saved_at, excluded.saved_at),
+    updated_at = now()
+  returning code into v_code;   -- a player keeps the first code they were given
+  return json_build_object('ok', true, 'code', v_code);
+exception when unique_violation then
+  return json_build_object('ok', false, 'error', 'code_taken');
+end $$;
+
+create or replace function public.load_progress(p_pid text) returns json
+language sql stable security definer set search_path = public as $$
+  select coalesce((select json_build_object('found', true, 'data', data, 'saved_at', saved_at, 'code', code) from saves where pid = p_pid),
+                  json_build_object('found', false));
+$$;
+
+create or replace function public.restore_progress(p_code text) returns json
+language sql stable security definer set search_path = public as $$
+  select coalesce((select json_build_object('found', true, 'data', data, 'saved_at', saved_at) from saves where code = upper(p_code)),
+                  json_build_object('found', false));
+$$;
+
+revoke all on function public.save_progress(text, text, jsonb, bigint) from public;
+revoke all on function public.load_progress(text) from public;
+revoke all on function public.restore_progress(text) from public;
+grant execute on function public.save_progress(text, text, jsonb, bigint) to anon, authenticated;
+grant execute on function public.load_progress(text) to anon, authenticated;
+grant execute on function public.restore_progress(text) to anon, authenticated;
+
 revoke all on function public.register_name(text, text) from public;
 grant execute on function public.register_name(text, text) to anon, authenticated;
 revoke all on function public.submit_score(text, text, text, text, double precision, jsonb) from public;
