@@ -1,13 +1,14 @@
 -- Peak Flip leaderboards + race ghosts.
 -- Paste this whole file into Supabase → SQL Editor → Run. Safe to run again.
 
--- One registered name per browser (pid). Names are unique (case-insensitive) and can't be changed.
+-- One registered name per browser (pid). Names are unique (case-insensitive); players can rename (see change_name).
 create table if not exists public.players (
   pid        text primary key,
   name       text not null,
   created_at timestamptz not null default now()
 );
 create unique index if not exists players_name_unique on public.players (lower(name));
+alter table public.players add column if not exists renamed_at timestamptz;
 alter table public.players enable row level security;
 revoke all on public.players from anon, authenticated;
 
@@ -41,6 +42,33 @@ begin
   if length(v_name) < 2 then return json_build_object('ok', false, 'error', 'too_short'); end if;
   if exists (select 1 from players where lower(name) = lower(v_name)) then return json_build_object('ok', false, 'error', 'taken'); end if;
   insert into players (pid, name) values (p_pid, v_name);
+  return json_build_object('ok', true, 'name', v_name);
+exception when unique_violation then
+  return json_build_object('ok', false, 'error', 'taken');
+end $$;
+
+-- Rename (or claim, if this player has no name yet). At most once every 10 minutes; old scores follow the new name.
+create or replace function public.change_name(p_pid text, p_name text) returns json
+language plpgsql security definer set search_path = public as $$
+declare v_name text; v_old text; v_when timestamptz;
+begin
+  if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
+  v_name := btrim(left(regexp_replace(coalesce(p_name, ''), '[^[:alnum:] _.!-]', '', 'g'), 14));
+  if length(v_name) < 2 then return json_build_object('ok', false, 'error', 'too_short'); end if;
+  select name, renamed_at into v_old, v_when from players where pid = p_pid;
+  if exists (select 1 from players where lower(name) = lower(v_name) and pid <> p_pid) then
+    return json_build_object('ok', false, 'error', 'taken');
+  end if;
+  if v_old is null then
+    insert into players (pid, name) values (p_pid, v_name);
+    return json_build_object('ok', true, 'name', v_name);
+  end if;
+  if v_old = v_name then return json_build_object('ok', true, 'name', v_name); end if;
+  if v_when is not null and v_when > now() - interval '10 minutes' then
+    return json_build_object('ok', false, 'error', 'too_soon');
+  end if;
+  update players set name = v_name, renamed_at = now() where pid = p_pid;
+  update scores set name = v_name where pid = p_pid;
   return json_build_object('ok', true, 'name', v_name);
 exception when unique_violation then
   return json_build_object('ok', false, 'error', 'taken');
@@ -167,6 +195,8 @@ grant execute on function public.restore_progress(text) to anon, authenticated;
 
 revoke all on function public.register_name(text, text) from public;
 grant execute on function public.register_name(text, text) to anon, authenticated;
+revoke all on function public.change_name(text, text) from public;
+grant execute on function public.change_name(text, text) to anon, authenticated;
 revoke all on function public.submit_score(text, text, text, text, double precision, jsonb) from public;
 revoke all on function public.get_leaderboard(text, text, text, int) from public;
 revoke all on function public.get_ghosts(text, text) from public;

@@ -905,6 +905,84 @@ const Debris = (() => {
     clear() { for (const d of items) world.remove(d.g); items.length = 0; },
   };
 })();
+// ---------- dragon dance: land five rotations and a random dragon shows up to dance for you ----------
+const Dragon = (() => {
+  const KINDS = [
+    { name: 'Ember', kind: 'Red Dragon', body: 0xd62839, belly: 0xffd23f, accent: 0xffd23f },
+    { name: 'Jade', kind: 'Jade Dragon', body: 0x2a9d4f, belly: 0xd8f3dc, accent: 0xffd23f },
+    { name: 'Nyx', kind: 'Shadow Dragon', body: 0x1b1b1b, belly: 0x6a040f, accent: 0xff4800 },
+    { name: 'Aurora', kind: 'Crystal Dragon', body: 0x6a0dad, belly: 0xe0aaff, accent: 0x3cf2ff },
+    { name: 'Frost', kind: 'Ice Dragon', body: 0x3a86ff, belly: 0xe0fbfc, accent: 0xffffff },
+    { name: 'Sol', kind: 'Golden Dragon', body: 0xffc93c, belly: 0xfff3b0, accent: 0xd62839 },
+    { name: 'Bubblegum', kind: 'Party Dragon', body: 0xff4fa3, belly: 0xffffff, accent: 0x3cf2ff },
+  ];
+  const N = 13;
+  let g = null, segs = [], head = null, jaw = null, wings = [], t = 0, side = 1, life = 0;
+  function build(k) {
+    g = new THREE.Group(); segs = []; wings = [];
+    const body = lam(k.body), belly = lam(k.belly), acc = lam(k.accent, { emissive: k.accent, emissiveIntensity: 0.25 });
+    for (let i = 0; i < N; i++) {
+      const r = 0.75 * (1 - i / (N + 2)) + 0.12, seg = new THREE.Group();
+      seg.add(new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), body));
+      const under = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 0.8, 0), belly); under.position.y = -r * 0.35; under.scale.set(0.9, 0.6, 0.9); seg.add(under);
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(r * 0.35, r * 0.9, 4), acc); spike.position.y = r * 0.95; seg.add(spike);
+      if (i === 2 || i === 8) for (const sz of [-1, 1]) { const leg = new THREE.Mesh(box(0.18, 0.7, 0.18), body); leg.position.set(0, -r - 0.2, sz * r * 0.6); seg.add(leg); }
+      if (i === N - 1) { const fin = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 3), acc); fin.rotation.z = Math.PI / 2; fin.position.x = 0.45; seg.add(fin); }
+      g.add(seg); segs.push(seg);
+    }
+    for (const sz of [-1, 1]) {   // small wings behind the head
+      const w = new THREE.Group(); w.position.set(0.5, 0.5, sz * 0.4); segs[2].add(w);
+      const m = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.8, 3), acc); m.scale.z = 0.12; m.rotation.x = sz * 1.2; m.position.set(0, 0.6, sz * 0.7); w.add(m);
+      wings.push({ w, sz });
+    }
+    head = new THREE.Group(); g.add(head);
+    head.add(new THREE.Mesh(box(1.2, 0.9, 1.1), body));
+    const snout = new THREE.Mesh(box(0.8, 0.5, 0.9), body); snout.position.set(-0.85, -0.1, 0); head.add(snout);
+    jaw = new THREE.Mesh(box(0.9, 0.2, 0.8), belly); jaw.position.set(-0.75, -0.45, 0); head.add(jaw);
+    const eyeM = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
+    for (const sz of [-1, 1]) {
+      const eye = new THREE.Mesh(box(0.2, 0.2, 0.08), eyeM); eye.position.set(-0.3, 0.2, sz * 0.56); head.add(eye);
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.8, 5), acc); horn.position.set(0.25, 0.7, sz * 0.35); horn.rotation.z = -0.6; head.add(horn);
+      const wh = new THREE.Mesh(box(0.9, 0.05, 0.05), acc); wh.position.set(-1.4, -0.05, sz * 0.35); wh.rotation.y = sz * 0.5; head.add(wh);
+    }
+    world.add(g);
+  }
+  function clear() { if (g) { world.remove(g); g = null; } life = 0; }
+  return {
+    summon() {
+      clear();
+      const k = KINDS[(Math.random() * KINDS.length) | 0];
+      build(k); t = 0; life = 5; side = Math.random() < 0.5 ? -1 : 1;
+      // a quick festive tune with a drum
+      [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => Sfx.tone(f, 0.16, 'triangle', 0.12, null, i * 0.11));
+      [0, 0.44, 0.88].forEach(d => Sfx.tone(90, 0.12, 'square', 0.14, 50, d));
+      return k;
+    },
+    clear,
+    update(dt) {
+      if (!g) return;
+      t += dt; life -= dt;
+      const leave = Math.max(0, 1 - life);   // last second: fly up and away
+      // floats ahead of you with its head near the middle and its body stretching out to one side; the head looks at you
+      g.position.set(side * 2.5, Math.max(0, p.y) * 0.5 + 4.5 + leave * leave * 25, p.z - 12);
+      g.rotation.y = (side > 0 ? 0 : Math.PI) + Math.sin(t * 2) * 0.25;
+      g.rotation.z = Math.sin(t * 6) * 0.08; g.scale.setScalar(1.5);
+      // the body is a wave running from head to tail; the head bobs to the beat and snaps its jaw
+      segs.forEach((sg, i) => sg.position.set(0.85 * (i + 1), Math.sin(t * 6 - i * 0.65) * 0.9 * Math.min(1, (i + 1) / 3), Math.sin(t * 3 - i * 0.45) * 0.7));
+      head.position.set(0, Math.sin(t * 6 + 0.6) * 0.45, Math.sin(t * 3 + 0.4) * 0.5);
+      head.rotation.set(0, side * Math.PI / 2 + Math.sin(t * 3) * 0.3, Math.sin(t * 12) * 0.25);
+      jaw.rotation.z = Math.max(0, Math.sin(t * 12)) * 0.5;
+      for (const w of wings) w.w.rotation.x = w.sz * Math.sin(t * 14) * 0.6;
+      if (Math.random() < 0.5) {
+        const cols = [0xffd23f, 0xff4fa3, 0x3cf2ff, 0x3ddc84, 0xffffff];
+        tmpV.set(0, 0, 0); head.localToWorld(tmpV); world.worldToLocal(tmpV);
+        Particles.emit(tmpV.x, tmpV.y, tmpV.z, 3, 3, 4, cols[(Math.random() * cols.length) | 0], 0);
+      }
+      if (life <= 0) clear();
+    },
+  };
+})();
+
 const fling = (up, side = 0) => new THREE.Vector3(p.vx * 0.5 + side + rand(-2.5, 2.5), up + rand(0, 3), -p.speed * 0.55 + rand(-3, 3));
 const tumble = (k = 12) => new THREE.Vector3(rand(-k, k), rand(-k, k), rand(-k, k));
 // the brutal part: everything loose flies off, and so does a leg
@@ -2091,6 +2169,9 @@ function scoreAirTrick(perfect, sketchy) {
   let pts = flips * 1000 + rolls * 1100 + (spins / 180) * 300 + (grabbed ? Math.round(t.grabTotal * 10) * 70 + (t.grabs.length - 1) * 400 : 0);
   if (p.airTime > 1.4) pts += Math.round(p.airTime * 120);
   if (pts === 0) return;
+  // five full rotations (a 1800, or any mix of flips, rolls and spins): a dragon comes to dance
+  const dragon = !sketchy && (spins >= 1800 || flips + rolls + spins / 360 >= 5) ? Dragon.summon() : null;
+  if (dragon) pts += 5000;
   const parts = [];
   if (t.switch) parts.push('Switch');
   if (spins) parts.push((isBoard() ? (t.yaw < 0 ? 'Frontside ' : 'Backside ') : '') + (rolls ? 'Cork ' : '') + spins);
@@ -2105,6 +2186,7 @@ function scoreAirTrick(perfect, sketchy) {
   if (t.tramp) { pts = Math.round(pts * 1.5); parts.unshift('Tramp'); }
   else Sfx.trick(flips + spins / 360);
   award(parts.join(' '), pts, perfect);
+  if (dragon) setTimeout(() => showTrick('DRAGON DANCE!', `${dragon.name} the ${dragon.kind}  +5,000`, true), 1100);
 }
 
 function land(groundSlope) {
@@ -2608,7 +2690,7 @@ function startRun(m = mode) {
   mode = m;
   zone = 'normal'; portal = null; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
-  SkiTracks.clear(); Debris.clear(); fixRider();
+  SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
   if (closet.on) setCloset(false);
   Sfx.init();
   jumpQueued = false; latched.clear();
@@ -2697,7 +2779,7 @@ async function restartWithAd() {
 
 function toMenu() {
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
-  SkiTracks.clear(); Debris.clear(); fixRider();
+  SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   clearWorld(); resetPlayer();
@@ -2723,7 +2805,8 @@ $('camBtn').innerHTML = icon('camera');
 $('camBtn').onclick = () => cycleView();
 $('muteBtn').onclick = () => { Sfx.init(); Sfx.toggle(); };
 addEventListener('keydown', e => {
-  if ((e.code === 'Enter') && state === 'over' && !e.repeat && !typing(e)) restartWithAd();
+  // Enter restarts only from the results card itself (not during the record screen, and not in its first moment)
+  if (e.code === 'Enter' && state === 'over' && !e.repeat && !typing(e) && !$('lbReveal') && !$('over').classList.contains('hidden') && !$('over').classList.contains('arming')) restartWithAd();
 });
 
 // ---------- main loop ----------
@@ -2777,6 +2860,7 @@ function frame(now) {
   animateAccessories(dt);
   Particles.update(dt);
   Debris.update(dt);
+  Dragon.update(dt);
   updatePads(dt);
   updateAnimals(dt);
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
@@ -2813,4 +2897,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, renderer, get quality() { return Quality.ratio; }, LITE, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, camera, renderer, get quality() { return Quality.ratio; }, LITE, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, Dragon, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

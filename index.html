@@ -147,6 +147,9 @@
   .note { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.5; }
   .note b { color: var(--text); }
   .nameRow { display: flex; gap: 6px; }
+  .nameChip { align-self: center; display: flex; align-items: center; gap: 10px; background: var(--ink-2); border-radius: 99px; padding: 5px 5px 5px 14px; font-size: 14px; font-weight: 700; color: var(--muted); }
+  .nameChip b { color: var(--text); }
+  .nameChip .btn { padding: 6px 12px; font-size: 13px; border-radius: 99px; }
   .nameRow input { flex: 1; min-width: 0; border: 0; border-radius: 12px; padding: 12px; font: 700 15px system-ui, sans-serif; background: #fff; color: #0f1c2e; }
 
   /* ---------- panel ---------- */
@@ -263,6 +266,7 @@
   /* ---------- leaderboard reveal ---------- */
   #lbReveal { position: fixed; inset: 0; z-index: 7; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(6,12,24,.7); animation: fadeIn .25s ease-out; overflow-y: auto; }
   #lbReveal .rv { margin: auto; flex-shrink: 0; }
+  .arming button, .arming input { pointer-events: none; }
   .rvClose { position: fixed; top: 14px; right: 14px; z-index: 3; width: 42px; height: 42px; border-radius: 12px; background: rgba(13,25,42,.75); display: grid; place-items: center; }
   .rvClose:hover { background: rgba(13,25,42,.95); }
   @media (max-height: 640px) { .rv-rank { font-size: 52px; } .rv-score { font-size: 42px; } #lbReveal .rv { gap: 10px; padding: 16px; } #lbReveal .item { padding: 7px 10px; } }

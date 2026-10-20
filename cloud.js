@@ -32,6 +32,19 @@ async function reachable(host) {
   } catch { return false; }
 }
 
+// Bring progress from another address into this one when this browser already has progress of its own:
+// items are combined, the bigger numbers win, and if only the incoming save has a leaderboard name, that
+// identity (player id + name) comes along so the name isn't "taken" by your own old save.
+function merge(inc) {
+  for (const k of Object.keys(inc.inv || {})) save.inv[k] = [...new Set([...(save.inv[k] || []), ...inc.inv[k]])];
+  for (const k of ['coins', 'best', 'runs', 'chestsOpened', 'missionsDone']) save[k] = Math.max(+save[k] || 0, +inc[k] || 0);
+  for (const [k, v] of Object.entries(inc.adProgress || {})) save.adProgress[k] = Math.max(save.adProgress[k] || 0, v);
+  for (const [d, t] of Object.entries(inc.raceBest || {})) if (!save.raceBest?.[d] || t < save.raceBest[d]) (save.raceBest ||= {})[d] = t;
+  if (!save.name && inc.name) { save.pid = inc.pid; save.name = inc.name; save.code = inc.code || save.code; }
+  normalizeSave(); ensureMissions();
+  persist();   // a real change: back it up
+}
+
 let timer = null, listeners = [];
 export const Cloud = {
   status: 'off',   // off · syncing · synced · offline
@@ -69,6 +82,7 @@ export const Cloud = {
         // a brand-new browser here has a fresh (but empty) save, so the incoming progress wins unless this one has real progress
         const fresh = !save.runs && !save.coins && !save.chestsOpened && (save.inv?.outfit?.length || 0) <= 1;
         if (r?.found && (fresh || (r.saved_at || 0) > (save.savedAt || 0))) { adopt(r.data, r.saved_at); save.code = cleanCode(m[1]); persist(false); onReplaced(); }
+        else if (r?.found) { merge({ ...r.data, code: cleanCode(m[1]) }); onReplaced(); }
       } catch {}
     }
     // moved to a new domain: hand this browser's progress over before redirecting

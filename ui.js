@@ -34,6 +34,11 @@ LB.register = async name => {
   try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
   catch { return null; }
 };
+// undefined = the database doesn't have change_name yet (404); null = network trouble
+LB.rename = async name => {
+  try { return await rpc('change_name', { p_pid: save.pid, p_name: name }); }
+  catch (e) { return /\b404\b/.test(e.message) ? undefined : null; }
+};
 export async function fetchGhosts(day) {
   try { return (await rpc('get_ghosts', { p_day: day, p_pid: save.pid })) || []; }
   catch { return []; }
@@ -363,24 +368,40 @@ async function renderLeaderboard() {
   const el = $('lbList'); if (el) el.innerHTML = lbRows(data, lbTab, 20);
 }
 
-// Names are claimed once per browser and can't be changed afterwards (enforced in the database too).
-function nameForm(slot, after, compact) {
+// Claim a leaderboard name, or (with a name already) change it. Names are unique; renames are limited to one
+// every 10 minutes in the database, and old scores follow the new name.
+const NAME_ERR = {
+  taken: 'That name is taken. Try another.', too_short: 'Pick a longer name.',
+  too_soon: 'You just changed your name. Try again in a few minutes.',
+};
+function nameForm(slot, after, compact, editing = false) {
   if (!slot) return;
-  if (save.name) { slot.innerHTML = compact ? '' : `<div class="chip" style="align-self:center">Playing as <b>${esc(save.name)}</b></div>`; return; }
-  slot.innerHTML = `<div class="note" style="margin-bottom:6px">Pick a name for the leaderboard. You can't change it later.</div>
-    <div class="nameRow"><input id="nameIn" maxlength="14" placeholder="Your name" autocomplete="off" onkeydown="if(event.key==='Enter')document.getElementById('nameSave').click()"><button class="btn primary" id="nameSave">Claim</button></div>
+  if (save.name && !editing) {
+    slot.innerHTML = compact ? '' : `<div class="nameChip">Playing as <b>${esc(save.name)}</b><button class="btn" id="nameEdit">Change</button></div>`;
+    if (!compact) $('nameEdit').onclick = () => nameForm(slot, after, compact, true);
+    return;
+  }
+  const renaming = !!save.name;
+  slot.innerHTML = `<div class="note" style="margin-bottom:6px">${renaming ? 'Pick a new name. Your scores move with you.' : 'Pick a name for the leaderboard. You can change it later.'}</div>
+    <div class="nameRow"><input id="nameIn" maxlength="14" placeholder="Your name" autocomplete="off" value="${renaming ? esc(save.name) : ''}"><button class="btn primary" id="nameSave">${renaming ? 'Save' : 'Claim'}</button>${renaming ? '<button class="btn" id="nameCancel">Cancel</button>' : ''}</div>
     <div class="note" id="nameErr" style="color:#ff8a8a"></div>`;
   const btn = $('nameSave'), input = $('nameIn');
-  setTimeout(() => input?.focus(), 50);
+  input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') btn.click(); };   // typing never reaches the game
+  setTimeout(() => { input?.focus(); input?.select(); }, 50);
+  if (renaming) $('nameCancel').onclick = () => nameForm(slot, after, compact);
   btn.onclick = async () => {
     const v = input.value.trim().replace(/\s+/g, ' ').slice(0, 14);
     if (v.length < 2) { $('nameErr').textContent = 'At least 2 characters.'; return; }
+    if (renaming && v === save.name) { nameForm(slot, after, compact); return; }
     btn.disabled = true; btn.textContent = '…';
-    const res = await LB.register(v);
-    btn.disabled = false; btn.textContent = 'Claim';
-    if (!res) { $('nameErr').textContent = "Couldn't reach the leaderboard. Try again in a moment."; return; }
-    if (!res.ok) { $('nameErr').textContent = res.error === 'taken' ? 'That name is taken. Try another.' : 'Pick a longer name.'; return; }
+    // change_name also claims when there's no name yet; fall back to register_name if the database hasn't been updated
+    let res = await LB.rename(v);
+    if (res === undefined && !renaming) res = await LB.register(v);
+    btn.disabled = false; btn.textContent = renaming ? 'Save' : 'Claim';
+    if (!res) { $('nameErr').textContent = res === undefined && renaming ? "Name changes aren't switched on yet." : "Couldn't reach the leaderboard. Try again in a moment."; return; }
+    if (!res.ok) { $('nameErr').textContent = NAME_ERR[res.error] || 'Something went wrong. Try another name.'; return; }
     save.name = res.name; persist(); miniCache = {};
+    if (renaming) nameForm(slot, after, compact);
     after && after();
   };
 }
@@ -438,6 +459,7 @@ function resultsCard(r) {
     </div>
   </div>`;
   el.classList.remove('hidden');
+  arm(el);
   $('againBtn').onclick = () => { const b = $('againBtn'); b.disabled = true; b.innerHTML = `${icon('retry')}Loading…`; cfg.onAgain(); };
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
@@ -464,11 +486,15 @@ function overlay() {
   el.id = 'lbReveal';
   el.innerHTML = `<canvas id="confetti"></canvas><div class="card rv" id="rvCard"></div><button class="rvClose" id="rvClose" aria-label="Close">${icon('close')}</button>`;
   document.body.appendChild(el);
-  // there's always a way out: the corner X, a tap outside the card, or Esc
-  const close = () => (el._done || (() => el.remove()))();
-  el.querySelector('#rvClose').onclick = close;
-  el.onclick = e => { if (e.target === el) close(); };
+  // there's always a way out: the corner X or Esc (not a tap outside: on phones that's usually a jump tap)
+  el.querySelector('#rvClose').onclick = () => (el._done || (() => el.remove()))();
+  arm(el);
   return el;
+}
+// Screens that pop up when you crash ignore taps for a moment, so taps meant as jumps don't hit Ride again
+function arm(el) {
+  el.classList.add('arming');
+  clearTimeout(el._armT); el._armT = setTimeout(() => el.classList.remove('arming'), 900);
 }
 
 // The new-record moment: big number → (claim a name) → animated leaderboard with your row flying into place.
