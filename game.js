@@ -751,6 +751,123 @@ const Snowfall = (() => {
   };
 })();
 
+// ---------- ski tracks: grooves left in the snow behind you ----------
+// A ring of samples along your path (every 0.5 m). Each sample draws a short quad per ski (one wide one on a
+// board); samples taken in the air are invisible, so jumps leave a gap. Older track fades out.
+const SkiTracks = (() => {
+  const N = 240, STEP = 0.5, LINES = 2;
+  const pos = new Float32Array(N * LINES * 2 * 3), col = new Float32Array(N * LINES * 2 * 4), idx = [];
+  for (let i = 0; i < N - 1; i++) for (let l = 0; l < LINES; l++) {
+    const a = (i * LINES + l) * 2, b = ((i + 1) * LINES + l) * 2;
+    idx.push(a, a + 1, b, a + 1, b + 1, b);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 4));
+  geo.setIndex(idx);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  mesh.frustumCulled = false; mesh.renderOrder = 1; world.add(mesh);
+  const samples = []; let lastZ = Infinity;
+  const tint = new THREE.Color(0x8fa9c2);
+  return {
+    clear() { samples.length = 0; lastZ = Infinity; this.rebuild(); },
+    update() {
+      if (lastZ - p.z < STEP) return;
+      lastZ = p.z;
+      const on = p.grounded && !p.crashed;
+      samples.push({ x: p.x, y: p.y + 0.025, z: p.z, h: p.heading, on, board: isBoard() });
+      if (samples.length > N) samples.shift();
+      this.rebuild();
+    },
+    rebuild() {
+      col.fill(0);
+      for (let i = 0; i < samples.length; i++) {
+        const sm = samples[i], rx = Math.cos(sm.h), rz = Math.sin(sm.h);   // sideways across the skis
+        const fade = sm.on ? 0.55 * Math.min(1, i / 40) : 0;                 // oldest part fades out
+        const lines = sm.board ? [[0, 0.2]] : [[-0.17, 0.065], [0.17, 0.065]];
+        for (let l = 0; l < LINES; l++) {
+          const [off, w] = lines[Math.min(l, lines.length - 1)], v = (i * LINES + l) * 2;
+          const cx = sm.x + rx * off, cz = sm.z + rz * off;
+          pos.set([cx - rx * w, sm.y, cz - rz * w, cx + rx * w, sm.y, cz + rz * w], v * 3);
+          const a = sm.board && l === 1 ? 0 : fade;   // a board only uses the first line
+          col.set([tint.r, tint.g, tint.b, a, tint.r, tint.g, tint.b, a], v * 4);
+        }
+      }
+      geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true;
+    },
+  };
+})();
+
+// ---------- crash debris: skis, poles, hat and a leg come off and tumble across the snow ----------
+const Debris = (() => {
+  const items = [], wp = new THREE.Vector3(), wq = new THREE.Quaternion(), ws = new THREE.Vector3(), inv = new THREE.Quaternion();
+  const splatMat = new THREE.MeshBasicMaterial({ color: 0x9b111e, transparent: true, opacity: 0.85, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  return {
+    // copies `parts` (meshes sharing one parent on the rider) into a loose piece at the same spot and throws it
+    throwParts(parts, vel, spin) {
+      if (!parts.length) return;
+      const parent = parts[0].parent;
+      parent.updateWorldMatrix(true, false);
+      parent.matrixWorld.decompose(wp, wq, ws);
+      const g = new THREE.Group();
+      world.worldToLocal(g.position.copy(wp));
+      g.quaternion.copy(inv.copy(world.quaternion).invert().multiply(wq));
+      g.scale.copy(ws);
+      for (const m of parts) g.add(m.clone(true));
+      world.add(g);
+      items.push({ g, vel, spin, settled: false });
+    },
+    splat(x, z) {
+      const [gh] = groundAt(x, z);
+      for (let i = 0; i < 6; i++) {
+        const r = i ? rand(0.12, 0.3) : rand(0.8, 1.1), m = new THREE.Mesh(new THREE.CircleGeometry(r, 9).rotateX(-Math.PI / 2), splatMat);
+        m.position.set(x + (i ? rand(-1.6, 1.6) : 0), gh + 0.03, z + (i ? rand(-2.2, 1) : 0)); m.scale.z = rand(0.6, 1.3);
+        world.add(m); items.push({ g: m, settled: true });
+      }
+    },
+    update(dt) {
+      for (const d of items) {
+        if (d.settled) continue;
+        const g = d.g, v = d.vel;
+        v.y -= G * dt;
+        g.position.addScaledVector(v, dt);
+        g.rotateX(d.spin.x * dt); g.rotateY(d.spin.y * dt); g.rotateZ(d.spin.z * dt);
+        const [gh] = groundAt(g.position.x, g.position.z);
+        if (g.position.y < gh + 0.06) {
+          // bounce, skid and lose spin; lies still once it has run out of energy
+          g.position.y = gh + 0.06; v.y = Math.abs(v.y) > 1.5 ? -v.y * 0.35 : 0; v.x *= 0.7; v.z *= 0.7; d.spin.multiplyScalar(0.55);
+          if (Math.abs(v.y) < 0.1 && v.lengthSq() < 0.5) d.settled = true;
+          if (Math.random() < 0.5) Particles.emit(g.position.x, gh + 0.1, g.position.z, 2, 1.5, 2, 0xffffff, 0);
+        }
+      }
+    },
+    clear() { for (const d of items) world.remove(d.g); items.length = 0; },
+  };
+})();
+const fling = (up, side = 0) => new THREE.Vector3(p.vx * 0.5 + side + rand(-2.5, 2.5), up + rand(0, 3), -p.speed * 0.55 + rand(-3, 3));
+const tumble = (k = 12) => new THREE.Vector3(rand(-k, k), rand(-k, k), rand(-k, k));
+// the brutal part: everything loose flies off, and so does a leg
+function breakRider() {
+  skier.root.updateMatrixWorld(true);
+  const sk = skier.skis.children, legs = skier.legs.children;
+  if (isBoard()) Debris.throwParts([...skier.board.children], fling(7), tumble(10));
+  else { Debris.throwParts([sk[0], sk[1]], fling(6, -2), tumble(14)); Debris.throwParts([sk[2], sk[3]], fling(8, 2), tumble(14)); }
+  for (const pl of skier.poles) if (pl.visible) Debris.throwParts([pl], fling(9), tumble(16));
+  if (slots.hat.children.length) Debris.throwParts([...slots.hat.children], fling(11), tumble(9));
+  Debris.throwParts([legs[2], legs[3]], fling(10, 1.5), tumble(15));
+  skier.skis.visible = skier.board.visible = slots.hat.visible = legs[2].visible = legs[3].visible = false;
+  for (const pl of skier.poles) pl.visible = false;
+  // cartoon gore: a red burst from the hip and a splat on the snow
+  Particles.emit(p.x, p.y + 0.6, p.z, 30, 3.5, 6, 0xc1121f, -3);
+  Particles.emit(p.x, p.y + 0.6, p.z, 14, 2.5, 4, 0x6a040f, -2);
+  Debris.splat(p.x, p.z - 1.5);
+}
+function fixRider() {
+  const legs = skier.legs.children;
+  legs[2].visible = legs[3].visible = slots.hat.visible = true;
+  applyCosmetics();   // puts the skis/board and poles back
+}
+
 // ---------- world content ----------
 let ramps = [], rails = [], obstacles = [], coins = [], decor = [], crevasses = [], gates = [], movers = [], pads = [];
 let shapes = [];        // smooth terrain: rollers, tabletops (height profile along z)
@@ -1398,12 +1515,13 @@ function leaveRail(pop) {
 function crash(reason) {
   if (p.crashed) return;
   p.crashed = true; p.crashT = 0; p.reason = reason; p.grinding = null;
-  p.spinX = rand(-9, 9); p.spinZ = rand(-6, 6);
-  if (p.grounded) p.vy = 6;
+  p.spinX = rand(-14, 14); p.spinZ = rand(-10, 10);
+  if (p.grounded) p.vy = 8;
   p.grounded = false;
   state = 'crash';
-  Sfx.crash(); shake = 0.8;
-  Particles.emit(p.x, p.y + 0.5, p.z, 50, 5, 7, 0xffffff, -4);
+  Sfx.crash(); Sfx.tone(90, 0.5, 'sawtooth', 0.22, 30); Sfx.noise(0.3, 0.8, 2400, 'highpass'); shake = 1.2;
+  Particles.emit(p.x, p.y + 0.5, p.z, 80, 6, 8, 0xffffff, -4);
+  breakRider();
   Platform.gameplayStop();
 }
 
@@ -1562,25 +1680,18 @@ function updatePlayer(dt) {
   }
 }
 
-// Coins: swept along the rider's path this frame (so nothing tunnels at 200 km/h) plus a short magnet.
-const MAGNET = 3.2;
-function collectCoins(x0, y0, z0, dt) {
+// Coins: tested along the rider's whole path this frame, so nothing tunnels past at 200 km/h.
+// Coins never move toward you; the pickup reach is just a little generous.
+function collectCoins(x0, y0, z0) {
   const x1 = p.x, y1 = p.y + 0.9, z1 = p.z;
   y0 += 0.9;
   const sx = x1 - x0, sy = y1 - y0, sz = z1 - z0, len2 = sx * sx + sy * sy + sz * sz || 1;
   for (const c of coins) {
-    if (c.taken || c.z < z1 - 8 || c.z > z0 + 4) continue;
+    if (c.taken || c.z < z1 - 3 || c.z > z0 + 3) continue;
     // closest point on this frame's path to the coin
     const t = clamp(((c.x - x0) * sx + (c.y - y0) * sy + (c.z - z0) * sz) / len2, 0, 1);
     const dx = c.x - (x0 + sx * t), dy = (c.y - (y0 + sy * t)) * 0.75, dz = c.z - (z0 + sz * t);
-    const d = Math.hypot(dx, dy, dz);
-    if (d < MAGNET && !c.mag) c.mag = true;
-    if (c.mag) {
-      // pulled in toward the rider; collected once it's close
-      const k = 1 - Math.exp(-14 * dt);
-      c.x += (x1 - c.x) * k; c.y += (y1 - c.y) * k; c.z += (z1 - c.z) * k;
-    }
-    if (d < 1.5 || (c.mag && Math.hypot(c.x - x1, c.y - y1, c.z - z1) < 1)) {
+    if (Math.hypot(dx, dy, dz) < 1.7) {
       c.taken = true; coinPool.remove(c.idx);
       p.coins++; p.trickScore += 25; Sfx.coin(); missionToast(track('coins', 1));
       Particles.emit(c.x, c.y, c.z, 8, 2, 3, 0xffd23f, -2);
@@ -1593,6 +1704,7 @@ function respawn() {
   for (const o of obstacles) if (Math.abs(o.z - p.z) < 6) { o.dead = true; if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh); o.pool = null; o.mesh = new THREE.Group(); }
   Object.assign(p, { crashed: false, y: 0, vy: 0, vx: 0, speed: 14, pitch: 0, yaw: 0, roll: 0, rollVel: 0, lean: 0, heading: 0, grounded: true, trick: null, grinding: null, pitchVel: 0, yawVel: 0, combo: 0, comboTimer: 0 });
   p.x = clamp(p.x, -X_LIMIT, X_LIMIT);
+  fixRider();
   state = 'play';
   Platform.gameplayStart();
   showTrick('Back on your feet', '', false);
@@ -1807,6 +1919,7 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 function startRun(m = mode) {
   mode = m;
+  SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
   Sfx.init();
   jumpQueued = false; latched.clear();
@@ -1894,6 +2007,7 @@ async function restartWithAd() {
 }
 
 function toMenu() {
+  SkiTracks.clear(); Debris.clear(); fixRider();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   clearWorld(); resetPlayer();
@@ -1926,13 +2040,14 @@ addEventListener('keydown', e => {
 let last = performance.now();
 function frame(now) {
   requestAnimationFrame(frame);
-  const dt = Math.min(0.033, (now - last) / 1000); last = now;
+  let dt = Math.min(0.033, (now - last) / 1000); last = now;
+  if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
   if (paused) return;
   time += dt;
   if (state === 'play') {
     const x0 = p.x, y0 = p.y, z0 = p.z;
     updatePlayer(dt);
-    if (state === 'play') collectCoins(x0, y0, z0, dt);
+    if (state === 'play') { collectCoins(x0, y0, z0); SkiTracks.update(); }
     if (mode === 'race') race.t += dt;
   }
   else if (state === 'crash') { updateCrash(dt); if (mode === 'race') race.t += dt; }
@@ -1967,6 +2082,7 @@ function frame(now) {
   updateCosmetics();
   animateAccessories(dt);
   Particles.update(dt);
+  Debris.update(dt);
   Snowfall.update(dt, camera);
   aurora.update(time); if (clouds.group.visible) clouds.update(dt);
   updateSkierVisual(dt);
@@ -1994,4 +2110,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };
+window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash };
