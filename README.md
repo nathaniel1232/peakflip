@@ -12,8 +12,13 @@ Open http://localhost:8123
 1. Import the GitHub repo on vercel.com → **Add New → Project** → **Deploy** (static site, no settings needed).
 2. Every push to `main` redeploys automatically.
 
+## Analytics (Vercel Web Analytics)
+`index.html` loads Vercel's `/_vercel/insights/script.js` (the static-site version of `@vercel/analytics`).
+Turn it on once in Vercel → your project → **Analytics** → **Enable**. It only loads on the deployed site, not on localhost or CrazyGames.
+
 ## Global leaderboards (Supabase)
-1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run** (once).
+1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes
+   (the points-based Daily Race needs the `racepts` board added in this version).
 2. The project URL and publishable key live in `config.js`. The browser can only call the validated
    `submit_score`, `get_leaderboard` and `get_ghosts` functions — it has no direct table access.
 
@@ -55,8 +60,8 @@ or simply publish on CrazyGames/Poki and let them handle ads.
 Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). CrazyGames doesn't allow third-party ads, and online leaderboards there should use their SDK instead.
 
 ## Files
-- `game.js` — rendering, physics, controls, world generation, race mode
-- `meta.js` — save data, cosmetics catalog, chests & odds, missions
+- `game.js` — rendering, physics, controls, world generation, sky themes, race track (winding course, gates, points)
+- `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), chests & odds, missions
 - `ui.js` — menus, chest opening, locker, leaderboards, results
 - `icons.js` — the hand-made SVG icon set
 - `ads.js` — rewarded / between-run ads (CrazyGames, Google H5, dev fake)

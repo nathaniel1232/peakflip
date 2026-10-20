@@ -23,5 +23,7 @@ export const ICONS = {
   board: svg('<rect x="9" y="2.5" width="6" height="19" rx="3" transform="rotate(30 12 12)"/><path d="M9.2 9.8l3 1.7M11.8 13.5l3 1.7"/>'),
   crown: svg('<path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z" fill="currentColor" fill-opacity=".25"/><path d="M5 19h14"/>'),
   gift: svg('<rect x="4" y="9" width="16" height="11" rx="1"/><path d="M3 9h18M12 9v11"/><path d="M12 9c-2-4-6-4-6-1.5S10 9 12 9c2 0 6-.5 6-3S14 5 12 9z"/>'),
+  help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><circle cx="12" cy="17.2" r=".6" fill="currentColor"/>'),
+  user: svg('<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.5-6 8-6s7 1.5 8 6"/>'),
 };
 export const icon = name => ICONS[name] || '';

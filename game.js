@@ -10,7 +10,7 @@ const SLOPE = 0.2;         // visual tilt of the mountain (rad)
 const FLIP_RATE = 8.5;     // rad/s
 const SPIN_RATE = 10.5;    // rad/s
 const STEER = 13;          // lateral m/s
-let X_LIMIT = 13;           // course half-width (narrower in the forest race)
+let X_LIMIT = 13;           // endless course half-width
 const ROLL_RATE = 8;        // sideflip rad/s
 const VIEW = 260;          // how far ahead we spawn
 const COMBO_WINDOW = 3.0;  // seconds on the ground before a combo banks
@@ -123,8 +123,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 70, 230);
 const camera = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.1, 500);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x9bb8cc, 1.6));
+const hemi = new THREE.HemisphereLight(0xffffff, 0x9bb8cc, 1.6); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff4e0, 2.2); sun.position.set(-30, 60, 25); scene.add(sun);
+// a soft lamp that rides with the player, only switched on at night
+const headlamp = new THREE.PointLight(0xcfe0ff, 0, 40, 1.2); scene.add(headlamp);
 
 const world = new THREE.Group();
 world.rotation.x = -SLOPE;
@@ -188,8 +190,10 @@ const patchGeo = new THREE.CircleGeometry(1, 6).rotateX(-Math.PI / 2);
 // ---------- instanced pools ----------
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const dummy = new THREE.Object3D();
+const allPools = [];
 class Pool {
   constructor(geo, material, cap) {
+    allPools.push(this);
     this.mesh = new THREE.InstancedMesh(geo, material, cap);
     this.mesh.frustumCulled = false;
     this.free = [];
@@ -207,27 +211,148 @@ class Pool {
 }
 const trees = new Pool(treeGeo, vcol, 520);
 const rocks = new Pool(rockGeo, vcol, 90);
-const coinPool = new Pool(coinGeo, coinMat, 160);
+const coinPool = new Pool(coinGeo, coinMat, 420);
 const patches = new Pool(patchGeo, mat.patch, 260);
+const kerbRed = new Pool(new THREE.BoxGeometry(0.5, 0.12, 4.2), lam(0xe63946), 120);
+const kerbWhite = new Pool(new THREE.BoxGeometry(0.5, 0.12, 4.2), lam(0xf8fbff), 120);
+const netPool = new Pool(merged([
+  { geo: new THREE.BoxGeometry(0.06, 1.0, 4.1), color: 0xff6b1a, m: T(0, 0.75, 0) },
+  { geo: new THREE.BoxGeometry(0.1, 1.3, 0.1), color: 0x4a5563, m: T(0, 0.65, 2) },
+]), vcol, 300);
 
 // ---------- ground ----------
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 600).rotateX(-Math.PI / 2), mat.snow);
 world.add(ground);
 
-// distant mountains (not tilted, follow camera so they always sit on the horizon)
+// ---------- sky & horizon (not tilted, follow the camera so they always sit on the horizon) ----------
 const mountains = new THREE.Group();
+const mountMats = [lam(0xe6eef5, { fog: false }), lam(0xcdd9e5, { fog: false }), lam(0xb7c7d8, { fog: false })];
+const capMatSky = lam(0xffffff, { fog: false });
 {
-  const mm = [lam(0xe6eef5, { fog: false }), lam(0xcdd9e5, { fog: false }), lam(0xb7c7d8, { fog: false })];
-  for (let i = 0; i < 14; i++) {
-    const h = rand(70, 140), r = rand(60, 110);
-    const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mm[i % 3]);
-    const a = (i / 14 - 0.5) * 2.4;
-    m.position.set(Math.sin(a) * 380, h / 2 - 150, -Math.cos(a) * 380);
-    m.rotation.y = rand(0, 3);
-    mountains.add(m);
+  // two rings of peaks: a far pale range and a nearer one with snow caps
+  for (const [n, dist, hMin, hMax, rMin, rMax, y0] of [[16, 400, 90, 170, 70, 120, -170], [12, 330, 60, 120, 50, 90, -150]]) {
+    for (let i = 0; i < n; i++) {
+      const h = rand(hMin, hMax), r = rand(rMin, rMax);
+      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mountMats[(i + (dist < 350 ? 1 : 0)) % 3]);
+      const a = (i / n - 0.5) * 2.6 + rand(-0.05, 0.05);
+      m.position.set(Math.sin(a) * dist, h / 2 + y0, -Math.cos(a) * dist);
+      m.rotation.y = rand(0, 3);
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.36, h * 0.36, 6), capMatSky); cap.position.y = h * 0.32; m.add(cap);
+      mountains.add(m);
+    }
   }
 }
 scene.add(mountains);
+const sky = new THREE.Group(); scene.add(sky);
+const skyGeo = new THREE.SphereGeometry(460, 24, 16);
+skyGeo.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(skyGeo.attributes.position.count * 3), 3));
+const skyDome = new THREE.Mesh(skyGeo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.BackSide, fog: false, depthWrite: false }));
+skyDome.renderOrder = -2; sky.add(skyDome);
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.18, 'rgba(255,255,255,.95)'); gr.addColorStop(0.3, 'rgba(255,255,255,.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128); return new THREE.CanvasTexture(c);
+})();
+const sunDisc = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, fog: false, depthWrite: false, transparent: true }));
+sunDisc.scale.set(120, 120, 1); sky.add(sunDisc);
+const stars = (() => {
+  const N = 900, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const a = rand(0, TAU), e = Math.asin(rand(0.05, 1)), r = 440;
+    pos[i * 3] = Math.cos(a) * Math.cos(e) * r; pos[i * 3 + 1] = Math.sin(e) * r; pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 1.6, sizeAttenuation: false, color: 0xffffff, fog: false, transparent: true, opacity: 0.9, depthWrite: false }));
+  sky.add(pts); return pts;
+})();
+// aurora: a few wavy vertical ribbons, colour fades from green at the bottom to violet at the top
+const aurora = (() => {
+  const g = new THREE.Group(), ribbons = [];
+  for (let r = 0; r < 3; r++) {
+    const N = 48, pos = new Float32Array(N * 2 * 3), idx = [];
+    for (let i = 0; i < N - 1; i++) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    // RGBA per vertex: the bottom edge glows green, fading to transparent violet at the top
+    const c4 = new Float32Array(N * 2 * 4);
+    for (let i = 0; i < N; i++) { c4.set([0.25, 1, 0.65, 0.7], i * 8); c4.set([0.6, 0.35, 1, 0], i * 8 + 4); }
+    geo.setAttribute('color', new THREE.BufferAttribute(c4, 4));
+    geo.setIndex(idx);
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, side: THREE.DoubleSide, depthWrite: false, fog: false, blending: THREE.AdditiveBlending }));
+    m.renderOrder = -1; m.frustumCulled = false;
+    g.add(m); ribbons.push({ geo, pos, N, seed: rand(0, 10), z: -260 - r * 40, y: 90 + r * 18, h: 70 + r * 15, x: rand(-80, 80) });
+  }
+  sky.add(g);
+  return {
+    group: g,
+    update(t) {
+      if (!g.visible) return;
+      for (const rb of ribbons) {
+        for (let i = 0; i < rb.N; i++) {
+          const u = i / (rb.N - 1), x = rb.x + (u - 0.5) * 520, z = rb.z + Math.sin(u * 6 + t * 0.35 + rb.seed) * 40 + Math.sin(u * 13 + t * 0.6) * 10;
+          const y = rb.y + Math.sin(u * 4 + rb.seed + t * 0.2) * 15;
+          rb.pos.set([x, y, z], i * 6); rb.pos.set([x, y + rb.h * (0.75 + 0.25 * Math.sin(u * 9 + t + rb.seed)), z], i * 6 + 3);
+        }
+        rb.geo.attributes.position.needsUpdate = true;
+      }
+    },
+  };
+})();
+// low-poly clouds drifting around the horizon
+const clouds = (() => {
+  const g = new THREE.Group(), cm = lam(0xffffff, { fog: false });
+  for (let i = 0; i < 14; i++) {
+    const c = new THREE.Group();
+    for (let k = 0; k < 5; k++) { const b = new THREE.Mesh(new THREE.DodecahedronGeometry(rand(8, 16), 0), cm); b.position.set(k * 12 - 24 + rand(-4, 4), rand(-3, 5), rand(-6, 6)); b.scale.y = 0.6; c.add(b); }
+    const a = rand(-1.4, 1.4), d = rand(260, 360);
+    c.position.set(Math.sin(a) * d, rand(40, 110), -Math.cos(a) * d); c.userData.a = a; c.userData.d = d;
+    g.add(c);
+  }
+  sky.add(g);
+  return { group: g, mat: cm, update(dt) { for (const c of g.children) { c.userData.a += dt * 0.004; if (c.userData.a > 1.5) c.userData.a = -1.5; c.position.x = Math.sin(c.userData.a) * c.userData.d; c.position.z = -Math.cos(c.userData.a) * c.userData.d; } } };
+})();
+
+// ---------- time-of-day themes ----------
+const THEMES = {
+  day: {
+    top: 0x4f9fe3, horizon: 0xd8eef9, fog: 0xcfe8f6, hemi: [0xffffff, 0x9bb8cc, 1.6], sun: [0xfff4e0, 2.2], disc: [0xfff8e0, 0, 150, -380, 110],
+    mountains: [0xe6eef5, 0xcdd9e5, 0xb7c7d8], cap: 0xffffff, cloud: 0xffffff, clouds: true,
+  },
+  golden: {
+    top: 0x3d4f9a, horizon: 0xffb27a, fog: 0xf0c0a0, hemi: [0xffe2c8, 0x8f7fa8, 1.35], sun: [0xffb36b, 2.5], disc: [0xffc27a, -120, 25, -380, 170],
+    mountains: [0xf1cfc0, 0xd6aeb4, 0xb294ad], cap: 0xffe9dc, cloud: 0xffcfb8, clouds: true,
+  },
+  night: {
+    top: 0x030817, horizon: 0x1d335f, fog: 0x1a2d55, hemi: [0x9ab8ff, 0x1c2848, 1.05], sun: [0xbcd4ff, 1.0], disc: [0xe8f0ff, 140, 170, -360, 55],
+    mountains: [0x3a4d78, 0x2d3d63, 0x223052], cap: 0x8fa4cc, cloud: 0x3b4b70, clouds: false, stars: true, aurora: true, lamp: 1.4,
+  },
+};
+let theme = THEMES.day;
+const tmpCol = new THREE.Color(), tmpCol2 = new THREE.Color();
+function setTheme(name) {
+  theme = THEMES[name] || THEMES.day; theme.id = name;
+  const t = theme;
+  scene.background.set(t.horizon); scene.fog.color.set(t.fog);
+  hemi.color.set(t.hemi[0]); hemi.groundColor.set(t.hemi[1]); hemi.intensity = t.hemi[2];
+  sun.color.set(t.sun[0]); sun.intensity = t.sun[1];
+  // sky gradient: horizon colour near the ground, fading to the top colour overhead
+  const pos = skyGeo.attributes.position, col = skyGeo.attributes.color;
+  tmpCol.set(t.horizon); tmpCol2.set(t.top);
+  for (let i = 0; i < pos.count; i++) {
+    const k = clamp(pos.getY(i) / 460, -0.2, 1), f = Math.pow(clamp((k + 0.05) / 0.75, 0, 1), 0.7);
+    const c = tmpCol.clone().lerp(tmpCol2, f); col.setXYZ(i, c.r, c.g, c.b);
+  }
+  col.needsUpdate = true;
+  sunDisc.material.color.set(t.disc[0]); sunDisc.position.set(t.disc[1], t.disc[2], t.disc[3]); sunDisc.scale.setScalar(t.disc[4]);
+  mountMats.forEach((m, i) => m.color.set(t.mountains[i])); capMatSky.color.set(t.cap);
+  clouds.group.visible = !!t.clouds; clouds.mat.color.set(t.cloud);
+  stars.visible = !!t.stars; aurora.group.visible = !!t.aurora;
+  headlamp.intensity = t.lamp || 0;
+  lanternMat.emissiveIntensity = t.lamp ? 1 : 0.15;
+  document.body.style.background = '#' + tmpCol.set(t.horizon).getHexString();
+}
+const pickTheme = (r = Math.random()) => r < 0.45 ? 'day' : r < 0.75 ? 'golden' : 'night';
 
 // ---------- ramp geometry ----------
 const rampCache = new Map();
@@ -302,7 +427,7 @@ const slots = {
 };
 slots.hat.position.set(0, 1.02, 0.01); slots.face.position.set(0, 0.82, -0.15); slots.back.position.set(0, 0.36, 0.17);
 for (const k in slots) skier.upper.add(slots[k]);
-const accAnim = { prop: null, cape: null, wings: [], jet: false, lasers: null };
+const accAnim = { prop: null, cape: null, wings: [], jet: false, lasers: null, sun: null, crystal: null };
 function accMesh(geo, color, x = 0, y = 0, z = 0, extra) {
   const m = new THREE.Mesh(geo, lam(color, extra)); m.position.set(x, y, z); return m;
 }
@@ -359,11 +484,69 @@ function buildAccessory(kind, it) {
         accAnim.wings.push({ g: w, sx });
       } } break;
     case 'jetpack': for (const sx of [-1, 1]) { add(C(0.07, 0.07, 0.38), c, sx * 0.09, 0, 0.08); add(new THREE.ConeGeometry(0.06, 0.1, 8), c2, sx * 0.09, -0.24, 0.08).rotation.x = Math.PI; } accAnim.jet = true; break;
+    // ---- Agartha ----
+    case 'crystal': {
+      add(C(0.17, 0.18, 0.05, 8), c2, 0, 0, 0, glow(0x40105a));
+      [[0, 0.2, -0.02, 0.09, 0.32], [-0.1, 0.12, -0.04, 0.06, 0.2], [0.1, 0.12, -0.04, 0.06, 0.2], [-0.06, 0.1, 0.1, 0.05, 0.16], [0.07, 0.1, 0.1, 0.05, 0.15]].forEach(([x, y, z, r, h], i) => {
+        const cr = add(new THREE.OctahedronGeometry(r, 0), c, x, y, z, glow(0x1aa6b8)); cr.scale.y = h / r / 2; cr.rotation.z = x * 2.5; cr.rotation.y = i;
+      });
+      accAnim.crystal = g; } break;
+    case 'thirdeye': { const e = add(new THREE.OctahedronGeometry(0.04, 0), c, 0, 0.13, 0.02, glow(0x1aa6b8)); e.scale.y = 1.4;
+      const r = add(new THREE.TorusGeometry(0.05, 0.012, 4, 10), c2, 0, 0.13, 0.025, glow(0x553300)); } break;
+    case 'innersun': {
+      const sunG = new THREE.Group(); sunG.position.set(0, 0.12, 0.32); g.add(sunG);
+      sunG.add(accMesh(S(0.15, 12, 8), c, 0, 0, 0, glow(0xffaa00)));
+      const ring = accMesh(new THREE.TorusGeometry(0.28, 0.018, 6, 24), c2, 0, 0, 0, glow(0x1aa6b8)); sunG.add(ring);
+      const ring2 = accMesh(new THREE.TorusGeometry(0.36, 0.01, 4, 24), c2, 0, 0, 0, glow(0x1aa6b8)); ring2.rotation.x = 1.2; sunG.add(ring2);
+      for (let i = 0; i < 8; i++) { const ray = accMesh(new THREE.ConeGeometry(0.025, 0.12, 4), c, 0, 0, 0, glow(0xffaa00)); const a = i / 8 * TAU; ray.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0); ray.rotation.z = a - Math.PI / 2; sunG.add(ray); }
+      accAnim.sun = sunG; } break;
+    // ---- Halloween ----
+    case 'pumpkinhead': {
+      const pk = add(S(0.27, 12, 8), c, 0, -0.2, 0, glow(0x331400)); pk.scale.y = 0.85;
+      for (let i = 0; i < 6; i++) { const rib = add(S(0.272, 12, 8), c, 0, -0.2, 0); rib.scale.set(0.35, 0.86, 1.01); rib.rotation.y = i / 6 * Math.PI; rib.material.color.offsetHSL(0, 0, -0.06); }
+      add(C(0.03, 0.04, 0.1, 5), '#4a7a2a', 0, 0.05, 0);
+      const face = new THREE.MeshBasicMaterial({ color: c2 });
+      for (const sx of [-1, 1]) { const eye = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.06, 3), face); eye.position.set(sx * 0.09, -0.14, -0.25); eye.rotation.x = -Math.PI / 2; g.add(eye); }
+      const mouth = new THREE.Mesh(B(0.2, 0.04, 0.03), face); mouth.position.set(0, -0.29, -0.235); g.add(mouth);
+      for (const mx of [-0.05, 0.05]) { const t = new THREE.Mesh(B(0.03, 0.03, 0.031), new THREE.MeshLambertMaterial({ color: c })); t.position.set(mx, -0.275, -0.235); g.add(t); }
+    } break;
+    case 'witchhat': {
+      add(C(0.34, 0.34, 0.025, 14), c, 0, 0); add(C(0.17, 0.17, 0.06, 10), c2, 0, 0.04);
+      const t1 = add(new THREE.ConeGeometry(0.16, 0.34, 10), c, 0, 0.22); const t2 = add(new THREE.ConeGeometry(0.08, 0.22, 8), c, 0.06, 0.44, 0.02); t2.rotation.z = -0.6;
+      add(B(0.07, 0.07, 0.02), '#ffd23f', 0, 0.04, -0.17); } break;
+    case 'fangs': for (const sx of [-1, 1]) { const f = add(new THREE.ConeGeometry(0.018, 0.06, 4), c, sx * 0.04, -0.11, -0.01); f.rotation.x = Math.PI; } add(B(0.1, 0.012, 0.01), c2, 0, -0.085, -0.01); break;
+    case 'batwings': for (const sx of [-1, 1]) {
+      const w = new THREE.Group(); w.position.set(sx * 0.08, 0.1, 0.06); g.add(w);
+      const bone = accMesh(B(0.62, 0.03, 0.03), c); bone.position.x = sx * 0.3; bone.rotation.z = sx * 0.35; w.add(bone);
+      for (let k = 0; k < 3; k++) { const m = accMesh(new THREE.ConeGeometry(0.12, 0.42, 3), c2); m.position.set(sx * (0.18 + k * 0.17), -0.12 + k * 0.05, 0); m.rotation.z = Math.PI + sx * 0.2; m.scale.z = 0.15; w.add(m); }
+      accAnim.wings.push({ g: w, sx });
+    } break;
+    case 'scythe': { const sc = new THREE.Group(); sc.position.set(0, 0.05, 0.12); sc.rotation.z = -0.5; g.add(sc);
+      sc.add(accMesh(C(0.025, 0.025, 1.5, 6), c2, 0, 0, 0));
+      const blade = accMesh(new THREE.TorusGeometry(0.32, 0.03, 4, 12, Math.PI * 0.75), c, 0, 0.72, 0, { emissive: 0x223344 }); blade.scale.z = 0.4; blade.rotation.z = Math.PI * 0.3; blade.position.x = -0.3; sc.add(blade); } break;
+    // ---- Shabbat / traditional ----
+    case 'kippah': { const k = add(new THREE.SphereGeometry(0.15, 12, 4, 0, TAU, 0, Math.PI / 2), c, 0, -0.035); k.scale.y = 0.45;
+      const r = add(new THREE.TorusGeometry(0.11, 0.008, 4, 16), c2, 0, 0.0); r.rotation.x = Math.PI / 2; } break;
+    case 'fedora': add(C(0.28, 0.28, 0.025, 14), c, 0, 0); add(C(0.15, 0.17, 0.17, 10), c, 0, 0.1); add(C(0.172, 0.172, 0.04, 10), c2, 0, 0.035);
+      add(B(0.05, 0.02, 0.28), c, 0, 0.19, 0); break;
+    case 'shtreimel': {
+      add(C(0.15, 0.15, 0.13, 10), c2, 0, 0.07);   // velvet top
+      for (let i = 0; i < 16; i++) { const a = i / 16 * TAU, f = add(S(0.07, 6, 4), i % 2 ? c : '#6e4a28', Math.sin(a) * 0.2, 0.06, Math.cos(a) * 0.2); f.scale.set(1, 1.4, 1); }
+    } break;
+    case 'payot': for (const sx of [-1, 1]) for (let k = 0; k < 6; k++) {
+      const a = k * 1.4; add(S(0.022, 5, 4), c, sx * (0.16 + Math.cos(a) * 0.015), -0.02 - k * 0.035, 0.1 + Math.sin(a) * 0.015);
+    } break;
+    case 'tallitshawl': {
+      add(B(0.58, 0.46, 0.03), c, 0, 0.06, 0.02);
+      for (const y of [0.22, 0.18, -0.1, -0.14]) add(B(0.59, 0.025, 0.032), c2, 0, y, 0.02);
+      add(B(0.62, 0.05, 0.3), c, 0, 0.27, -0.12);   // over the shoulders
+      for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) add(C(0.008, 0.008, 0.2, 3), c, sx * (0.25 + k * 0.012), -0.27, 0.03);
+    } break;
   }
   return g;
 }
 function applyAccessories() {
-  accAnim.prop = accAnim.cape = accAnim.lasers = null; accAnim.wings = []; accAnim.jet = false;
+  accAnim.prop = accAnim.cape = accAnim.lasers = accAnim.sun = accAnim.crystal = null; accAnim.wings = []; accAnim.jet = false;
   for (const kind of ['hat', 'face', 'back']) {
     const slot = slots[kind]; slot.clear();
     const it = equipped(kind);
@@ -372,6 +555,8 @@ function applyAccessories() {
 }
 function animateAccessories(dt) {
   if (accAnim.prop) accAnim.prop.rotation.y += dt * (8 + p.speed * 0.6);
+  if (accAnim.sun) { accAnim.sun.rotation.z += dt * 1.5; accAnim.sun.children[1].rotation.y += dt * 2; }
+  if (accAnim.crystal) accAnim.crystal.position.y = Math.sin(time * 3) * 0.015;
   if (accAnim.cape) accAnim.cape.rotation.x = clamp(0.25 + p.speed * 0.025, 0.2, 1.3) + Math.sin(time * 14) * 0.08;
   const flap = p.grounded ? 0.15 : Math.sin(time * 10) * 0.5;
   for (const w of accAnim.wings) w.g.rotation.y = -w.sx * (0.3 + flap);
@@ -379,6 +564,46 @@ function animateAccessories(dt) {
     tmpV.set(0, -0.2, 0.25); slots.back.localToWorld(tmpV); world.worldToLocal(tmpV);
     Particles.emit(tmpV.x, tmpV.y, tmpV.z, 2, 0.3, 0.2, Math.random() < 0.5 ? 0xff7b00 : 0xffd60a, 3);
   }
+}
+// Pattern textures for themed outfits (painted on a small canvas, wrapped on every face of the jacket / legs)
+const texCache = {};
+function outfitTexture(kind, o) {
+  const key = kind + o.id;
+  if (texCache[key]) return texCache[key];
+  const S = 64, c = document.createElement('canvas'); c.width = c.height = S; const g = c.getContext('2d');
+  const e = document.createElement('canvas'); e.width = e.height = S; const ge = e.getContext('2d');   // emissive (glow) layer
+  ge.fillStyle = '#000'; ge.fillRect(0, 0, S, S);
+  g.fillStyle = o.jacket; g.fillRect(0, 0, S, S);
+  const both = (fn) => { fn(g); if (o.glow) fn(ge); };
+  switch (kind) {
+    case 'runes': both(k => { k.strokeStyle = o.glow; k.lineWidth = 3; k.beginPath();
+      k.moveTo(8, 8); k.lineTo(32, 20); k.lineTo(56, 8); k.moveTo(32, 20); k.lineTo(32, 56); k.moveTo(14, 40); k.lineTo(32, 32); k.lineTo(50, 40); k.stroke();
+      k.beginPath(); k.arc(32, 44, 6, 0, TAU); k.stroke(); }); break;
+    case 'crystal': for (let i = 0; i < 9; i++) { g.fillStyle = i % 2 ? '#1c8c84' : '#147570'; g.beginPath(); const x = (i % 3) * 22, y = Math.floor(i / 3) * 22; g.moveTo(x, y + 22); g.lineTo(x + 11, y); g.lineTo(x + 22, y + 22); g.fill(); }
+      both(k => { k.strokeStyle = o.glow; k.lineWidth = 2; for (let i = 0; i < 3; i++) { k.beginPath(); k.moveTo(i * 22, 22 + i * 20); k.lineTo(i * 22 + 11, i * 20 + 2); k.stroke(); } }); break;
+    case 'skeleton': g.fillStyle = '#f1f1f1'; g.fillRect(29, 4, 6, 56);
+      for (let i = 0; i < 4; i++) { g.fillRect(10, 10 + i * 11, 44, 5); } g.fillStyle = o.jacket; g.fillRect(29, 46, 6, 2); break;
+    case 'bones': g.fillStyle = '#f1f1f1'; g.fillRect(28, 0, 8, 64); g.beginPath(); g.arc(32, 32, 8, 0, TAU); g.fill(); break;
+    case 'jack': both(k => { k.fillStyle = k === g ? '#111' : '#ffb000';
+      k.beginPath(); k.moveTo(12, 26); k.lineTo(22, 12); k.lineTo(28, 26); k.fill(); k.beginPath(); k.moveTo(36, 26); k.lineTo(42, 12); k.lineTo(52, 26); k.fill();
+      k.beginPath(); k.moveTo(10, 38); for (let i = 0; i <= 8; i++) k.lineTo(10 + i * 5.5, i % 2 ? 46 : 38); k.lineTo(54, 50); k.lineTo(10, 50); k.fill(); }); break;
+    case 'vampire': g.fillStyle = '#b3001b'; g.beginPath(); g.moveTo(16, 0); g.lineTo(32, 40); g.lineTo(48, 0); g.fill();
+      g.fillStyle = '#eee'; g.beginPath(); g.moveTo(24, 0); g.lineTo(32, 22); g.lineTo(40, 0); g.fill(); break;
+    case 'suit': g.fillStyle = '#ffffff'; g.beginPath(); g.moveTo(20, 0); g.lineTo(32, 34); g.lineTo(44, 0); g.fill();
+      g.fillStyle = '#111'; g.fillRect(30, 2, 4, 26); g.fillStyle = '#333'; g.fillRect(31, 40, 2, 2); g.fillRect(31, 50, 2, 2); break;
+    case 'tallit': g.fillStyle = '#1d4ed8'; for (const y of [8, 16, 44, 52]) g.fillRect(0, y, S, 4); break;
+    case 'ninja': g.fillStyle = '#d00000'; g.fillRect(0, 44, S, 7); g.fillStyle = '#333'; g.fillRect(0, 0, S, 3); break;
+    case 'astro': g.strokeStyle = '#b8c2cc'; g.lineWidth = 2; g.strokeRect(6, 6, 52, 52); g.fillStyle = '#1d70d6'; g.fillRect(40, 10, 14, 9);
+      g.fillStyle = '#e63946'; g.fillRect(10, 12, 12, 4); g.fillStyle = '#ffd23f'; g.fillRect(22, 34, 20, 8); break;
+  }
+  const mk = cv => { const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.magFilter = THREE.NearestFilter; return t; };
+  return (texCache[key] = { map: mk(c), emissiveMap: o.glow ? mk(e) : null });
+}
+function setPattern(m, tex, color, glowColor) {
+  const map = tex ? tex.map : null, em = tex ? tex.emissiveMap : null;
+  if (m.map !== map || m.emissiveMap !== em) { m.map = map; m.emissiveMap = em; m.needsUpdate = true; }
+  m.color.set(map ? '#ffffff' : color);
+  if (em) m.emissive.set(glowColor).multiplyScalar(1.2); else m.emissive.set('#000000');
 }
 const isBoard = () => save.gear === 'board';
 function applyCosmetics() {
@@ -389,7 +614,9 @@ function applyCosmetics() {
   skier.legs.rotation.y = skier.upper.rotation.y = isBoard() ? Math.PI / 2 : 0;
   skier.legs.scale.x = isBoard() ? 1.6 : 1;
   const o = equipped('outfit'), k = equipped('ski');
-  skinMats.jacket.color.set(o.jacket); skinMats.pants.color.set(o.pants); skinMats.helmet.color.set(o.helmet);
+  setPattern(skinMats.jacket, o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
+  setPattern(skinMats.pants, o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
+  skinMats.helmet.color.set(o.helmet);
   skinMats.helmet.emissive.set(o.rarity === 'legendary' ? o.helmet : '#000000').multiplyScalar(0.35);
   if (k.color !== 'rainbow') skinMats.ski.color.set(k.color);
   skinMats.tip.color.set(k.tip);
@@ -546,20 +773,24 @@ function addCoin(x, y, z) {
   const idx = coinPool.add(x, y, z);
   if (idx >= 0) coins.push({ x, y, z, idx, taken: false });
 }
-function addGate(x, z, w = 6) {
-  const g = new THREE.Group(); g.position.set(x, 0, z);
+const gateHit = lam(0x3ddc84, { emissive: 0x0c5a2a }), gateMiss = lam(0x6c7a89);
+function addGate(x, z, w, ry = 0) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry;
   const m = gateMats[gates.length % 2];
-  for (const sx of [-1, 1]) { const pole = new THREE.Mesh(box(0.14, 2.4, 0.14), m); pole.position.set(sx * w / 2, 1.2, 0); g.add(pole); }
-  const ban = new THREE.Mesh(box(w, 0.45, 0.05), m); ban.position.y = 2.25; g.add(ban);
+  for (const sx of [-1, 1]) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 2.6, 6), m); pole.position.set(sx * w / 2, 1.3, 0); g.add(pole);
+    const flag = new THREE.Mesh(box(0.9, 0.7, 0.04), m); flag.position.set(sx * (w / 2 - 0.45), 2.2, 0); g.add(flag);
+  }
   world.add(g);
   gates.push({ x, z, w, mesh: g, passed: false });
 }
-function addFinish(z) {
-  const g = new THREE.Group(); g.position.set(0, 0, z);
-  for (const sx of [-1, 1]) { const p = new THREE.Mesh(box(0.4, 6, 0.4), gateMats[0]); p.position.set(sx * 14, 3, 0); g.add(p); }
-  const b = new THREE.Mesh(new THREE.BoxGeometry(28, 3.2, 0.2), [bannerMat, bannerMat, bannerMat, bannerMat, new THREE.MeshBasicMaterial({ map: finishTex }), new THREE.MeshBasicMaterial({ map: finishTex })]);
+function colorGate(g, material) { g.mesh.traverse(o => { if (o.isMesh) o.material = material; }); }
+function addFinish(z, x = 0, w = 28) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  for (const sx of [-1, 1]) { const p = new THREE.Mesh(box(0.4, 6, 0.4), gateMats[0]); p.position.set(sx * w / 2, 3, 0); g.add(p); }
+  const b = new THREE.Mesh(new THREE.BoxGeometry(w, 3.2, 0.2), [bannerMat, bannerMat, bannerMat, bannerMat, new THREE.MeshBasicMaterial({ map: finishTex }), new THREE.MeshBasicMaterial({ map: finishTex })]);
   b.position.y = 5.2; g.add(b);
-  const line = new THREE.Mesh(box(28, 0.03, 0.8), new THREE.MeshBasicMaterial({ map: finishTex })); line.position.y = 0.02; g.add(line);
+  const line = new THREE.Mesh(box(w, 0.03, 0.8), new THREE.MeshBasicMaterial({ map: finishTex })); line.position.y = 0.02; g.add(line);
   world.add(g);
   finish = { z, mesh: g };
 }
@@ -607,25 +838,6 @@ function addPad(kind, x, z) {
   world.add(g);
   pads.push({ kind, x, z, r: kind === 'bounce' ? 1.9 : 1.6, len: kind === 'bounce' ? 1.9 : 2.3, mesh: g, used: false });
 }
-const archMat = lam(0x6b4a2f), archBanner = lam(0xff6b2c);
-function cpTexture(n) {
-  const c = document.createElement('canvas'); c.width = 512; c.height = 96; const g = c.getContext('2d');
-  g.fillStyle = '#ff6b2c'; g.fillRect(0, 0, 512, 96); g.fillStyle = '#fff'; g.font = '900 54px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(`CHECKPOINT ${n}`, 256, 68);
-  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
-}
-function addCheckpointArch(cp, n) {
-  const g = new THREE.Group(); g.position.set(cp.x, 0, cp.z);
-  for (const sx of [-1, 1]) {
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 5, 6), archMat); p.position.set(sx * cp.w / 2, 2.5, 0); g.add(p);
-    const cap = new THREE.Mesh(new THREE.ConeGeometry(0.5, 0.6, 6), mat.snow); cap.position.set(sx * cp.w / 2, 5.25, 0); g.add(cap);
-  }
-  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, cp.w + 0.6, 6), archMat); beam.rotation.z = Math.PI / 2; beam.position.y = 4.7; g.add(beam);
-  const tex = new THREE.MeshBasicMaterial({ map: cpTexture(n) });
-  const ban = new THREE.Mesh(new THREE.BoxGeometry(Math.min(cp.w - 0.6, 6.4), 1.2, 0.08), [archBanner, archBanner, archBanner, archBanner, tex, tex]); ban.position.y = 3.9; g.add(ban);
-  world.add(g);
-  gates.push({ ...cp, n, mesh: g, passed: false });
-}
-
 // predicted hang time off a kicker (matches the in-game physics closely enough for coin arcs)
 function lipSpeed(sp, H) { return Math.sqrt(Math.max(64, sp * sp - 2 * 0.35 * G * H)); }
 function airTime(sp, H, L) {
@@ -761,7 +973,123 @@ function featureStepDown(z, sp) {
   return [8 + 6 + 46 + 18, x];
 }
 
-const RACE_LEN = 1500;
+// ============================================================
+//  Daily Race: a winding, fenced track. Score = tricks + coins + gates + time bonus.
+// ============================================================
+const RACE_LEN = 1600;
+const RACE_PAR = 75;          // seconds; every second under par is worth TIME_BONUS points
+const TIME_BONUS = 250;
+let course = null;             // { segs: [{ z0, z1, x0, x1, kind }], hw }
+const ease = t => (1 - Math.cos(Math.PI * t)) / 2;
+function trackSeg(z) {
+  for (const sg of course.segs) if (z <= sg.z0 && z >= sg.z1) return sg;
+  return z > 0 ? course.segs[0] : course.segs[course.segs.length - 1];
+}
+// centre line x at z (0 in endless)
+function trackC(z) {
+  if (!course) return 0;
+  const sg = trackSeg(z), t = clamp((sg.z0 - z) / (sg.z0 - sg.z1), 0, 1);
+  return sg.x0 + (sg.x1 - sg.x0) * ease(t);
+}
+const trackHW = () => course ? course.hw : X_LIMIT;
+// sideways metres per metre travelled downhill: the heading the track asks for is atan(trackSlope)
+const trackSlope = z => (trackC(z - 1) - trackC(z + 1)) / 2;
+
+function buildTrack() {
+  const segs = []; let z = 0, x = 0;
+  const push = (L, dx, kind) => { const x1 = clamp(x + dx, -30, 30); segs.push({ z0: z, z1: z - L, x0: x, x1, kind }); z -= L; x = x1; };
+  push(110, 0, 'straight');
+  let last = 'straight';
+  while (z > -RACE_LEN + 140) {
+    const side = x > 14 ? -1 : x < -14 ? 1 : (crng() < 0.5 ? -1 : 1);
+    let r = crng();
+    if (last === 'straight' && r < 0.3) r = 0.3 + crng() * 0.7;   // no two straights in a row
+    if (r < 0.3) { push(wr(70, 100), 0, 'straight'); last = 'straight'; }
+    else if (r < 0.58) { push(wr(90, 125), side * wr(13, 20), 'sweep'); last = 'sweep'; }
+    else if (r < 0.8) { const d = wr(6, 8); push(34, side * d, 'chicane'); push(34, -side * d * 1.6, 'chicane'); last = 'chicane'; }
+    else { push(wr(48, 56), side * wr(15, 19), 'hairpin'); last = 'hairpin'; }
+  }
+  push(-z - RACE_LEN + 260, 0, 'straight');   // finishing straight + run-out
+  course = { segs, hw: 7.5 };
+}
+
+const signTex = (() => {
+  const c = document.createElement('canvas'); c.width = 128; c.height = 64; const g = c.getContext('2d');
+  g.fillStyle = '#ffd60a'; g.fillRect(0, 0, 128, 64); g.fillStyle = '#111';
+  for (let i = 0; i < 3; i++) { g.beginPath(); const x = 20 + i * 34; g.moveTo(x + 18, 8); g.lineTo(x, 32); g.lineTo(x + 18, 56); g.lineTo(x + 28, 56); g.lineTo(x + 10, 32); g.lineTo(x + 28, 8); g.fill(); }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const signMat = new THREE.MeshBasicMaterial({ map: signTex });
+// chevron boards on the outside of tight turns, pointing the way
+function addTurnSign(z, dir) {
+  const c = trackC(z), x = c - dir * (course.hw + 1.2);
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = Math.atan(-trackSlope(z));
+  for (const sx of [-0.8, 0.8]) { const post = new THREE.Mesh(box(0.12, 1.6, 0.12), postMat); post.position.set(sx, 0.8, 0); g.add(post); }
+  const b = new THREE.Mesh(box(2.4, 1.2, 0.08), [postMat, postMat, postMat, postMat, signMat, postMat]); b.position.y = 1.9; b.scale.x = dir < 0 ? 1 : -1; g.add(b);
+  world.add(g); decor.push({ z: z - 1, mesh: g });
+}
+
+// Lays out the whole course (features, coins, gates) from today's seed, so every player gets the same race.
+function buildRaceCourse() {
+  buildTrack();
+  const hw = course.hw, used = [];   // z ranges taken by jumps, so gates don't land on a kicker
+  const take = (a, b) => used.push([Math.max(a, b), Math.min(a, b)]);
+  const free = z => !used.some(([a, b]) => z <= a + 6 && z >= b - 6);
+  for (const sg of course.segs) {
+    const L = sg.z0 - sg.z1, D = -sg.z0, sp = baseSpeed(D);
+    if (sg.z0 > -60 || D > RACE_LEN - 30) continue;
+    if (sg.kind === 'straight') {
+      let z = sg.z0 - 12;
+      while (z > sg.z1 + 40 && z > -RACE_LEN + 60) {
+        const c = trackC(z), r = crng();
+        if (r < 0.35) {          // kicker with a coin arc
+          const big = crng() < 0.4, kl = big ? 9 : 7, kh = big ? 3.4 : 2.4, x = c + wr(-2.5, 2.5);
+          addRamp(x, z, kl, kh, big ? 6 : 5);
+          const at = airTime(sp, kh, kl), ls = lipSpeed(sp, kh);
+          for (let i = 1; i < 7; i++) { const t = at * i / 7; addCoin(x, arcY(sp, kh, kl, t) + 1.2, z - kl - ls * t); }
+          take(z, z - kl - ls * at); z -= kl + ls * at + 16;
+        } else if (r < 0.55) {   // tabletop
+          const H = wr(2.2, 2.9), TL = wr(36, 44);
+          addShape(c, z, TL, 9, table(H, 0.36, 0.55), tableMat, true);
+          for (let i = 0; i < 6; i++) addCoin(c, H + 1.6 + Math.sin(i / 5 * Math.PI) * 1.6, z - TL * (0.36 + i * 0.07));
+          take(z, z - TL); z -= TL + 14;
+        } else if (r < 0.72) {   // rail down the middle
+          const RL = wr(14, 20), x = c + wr(-2, 2);
+          addRail(x, z, RL);
+          for (let i = 1; i < RL / 3; i++) addCoin(x, 2.2, z - i * 3);
+          take(z, z - RL); z -= RL + 14;
+        } else if (r < 0.86) {   // rollers across the full width
+          const n = 3; let zz = z;
+          for (let i = 0; i < n; i++) { const RL = wr(13, 16), H = wr(1.2, 1.8); addShape(trackC(zz - RL / 2), zz, RL, hw * 2 + 6, bump(H), mat.snow, false); addCoin(trackC(zz - RL / 2), H + 2.2, zz - RL / 2); zz -= RL; }
+          take(z, zz); z = zz - 12;
+        } else {                 // log to hop + boost after it
+          addLog(c, z, hw); addCoin(c, 2.3, z);
+          addPad('boost', trackC(z - 14), z - 14);
+          take(z + 2, z - 2); z -= 30;
+        }
+      }
+    } else {
+      // corners: a coin line on the racing line (it hugs the inside at the apex), boost on the exit
+      const dir = Math.sign(sg.x1 - sg.x0) || 1;
+      if (crng() < 0.75) for (let zz = sg.z0 - 6; zz > sg.z1 + 4; zz -= 7) {
+        const t = (sg.z0 - zz) / L, inside = Math.sin(Math.PI * t) * hw * 0.55;
+        addCoin(trackC(zz) + dir * inside, 1.2, zz);
+      }
+      if (sg.kind === 'hairpin') { for (const dz of [8, 20]) addTurnSign(sg.z0 - dz, dir); addTurnSign(sg.z0 - L * 0.5, dir); }
+      if (sg.kind === 'sweep' && crng() < 0.5) addPad('boost', trackC(sg.z1 + 6), sg.z1 + 6);
+    }
+  }
+  // slalom gates: alternate sides of the centre line, roughly every 48 m
+  let side = 1;
+  for (let z = -90; z > -RACE_LEN + 40; z -= wr(42, 54)) {
+    let gz = z; while (!free(gz) && gz > z - 30) gz -= 4;
+    if (!free(gz)) continue;
+    const c = trackC(gz), sl = trackSlope(gz);
+    addGate(c + side * wr(1.5, 3.2), gz, 4.6, Math.atan(-sl));
+    side = -side;
+  }
+  addFinish(-RACE_LEN, trackC(-RACE_LEN), hw * 2 + 3);
+}
 function pickFeature(d) {
   const w = [
     ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 12 + 10 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
@@ -773,7 +1101,6 @@ function pickFeature(d) {
 }
 function spawnFeature() {
   const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
-  if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
   const k = pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d);
   const f = {
     ramp: () => featureRamp(z, false, sp), big: () => featureRamp(z, true, sp), rail: () => featureRail(z, sp, false), railKick: () => featureRail(z, sp, true),
@@ -814,8 +1141,51 @@ function addCabin(x, z) {
   const win = new THREE.Mesh(box(0.9, 0.7, 0.05), lam(0xffd166, { emissive: 0x7a5a00 })); win.position.set(0, 1.5, 1.72); g.add(win);
   world.add(g); decor.push({ z: z - 4, mesh: g });
 }
+const lanternMat = lam(0xffd27a, { emissive: 0xffb347, emissiveIntensity: 0.15 }), postMat = lam(0x3b4a5a);
+const snowmanParts = { body: lam(0xf8fbff), coal: lam(0x222222), carrot: lam(0xff7b00), scarf: lam(0xe63946) };
+function addSnowman(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rand(-0.6, 0.6) + Math.PI * 0.1;
+  const ball = (r, y) => { const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), snowmanParts.body); m.position.y = y; g.add(m); };
+  ball(0.9, 0.75); ball(0.65, 1.95); ball(0.45, 2.85);
+  const nose = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 5), snowmanParts.carrot); nose.rotation.x = -Math.PI / 2; nose.position.set(0, 2.85, -0.6); g.add(nose);
+  for (const sx of [-1, 1]) { const e = new THREE.Mesh(box(0.08, 0.08, 0.05), snowmanParts.coal); e.position.set(sx * 0.15, 3, -0.4); g.add(e); }
+  const sc = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.09, 5, 10), snowmanParts.scarf); sc.rotation.x = Math.PI / 2; sc.position.y = 2.45; g.add(sc);
+  const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.45, 8), snowmanParts.coal); hat.position.y = 3.45; g.add(hat);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.05, 8), snowmanParts.coal); brim.position.y = 3.24; g.add(brim);
+  for (const sx of [-1, 1]) { const arm = new THREE.Mesh(box(0.06, 0.06, 1.2), cabinWall); arm.position.set(sx * 0.9, 2.1, 0); arm.rotation.set(0, Math.PI / 2, sx * 0.5); g.add(arm); }
+  world.add(g); decor.push({ z: z - 2, mesh: g });
+}
+function addIgloo(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = rand(-0.8, 0.8);
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(2.6, 10, 6, 0, TAU, 0, Math.PI / 2), lam(0xeef6fb)); g.add(dome);
+  const door = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 1.6, 8, 1, false, 0, Math.PI), lam(0xeef6fb)); door.rotation.set(Math.PI / 2, 0, 0); door.position.set(0, 0, -2.6); g.add(door);
+  const hole = new THREE.Mesh(box(1.1, 1.1, 0.1), lanternMat); hole.position.set(0, 0.55, -3.35); g.add(hole);
+  for (let r = 1; r < 4; r++) { const ring = new THREE.Mesh(new THREE.TorusGeometry(2.6 * Math.cos(r * 0.38), 0.03, 3, 20), lam(0xc9dbe9)); ring.rotation.x = Math.PI / 2; ring.position.y = 2.6 * Math.sin(r * 0.38); g.add(ring); }
+  world.add(g); decor.push({ z: z - 3, mesh: g });
+}
+function addLantern(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const post = new THREE.Mesh(box(0.14, 2.6, 0.14), postMat); post.position.y = 1.3; g.add(post);
+  const lamp = new THREE.Mesh(box(0.42, 0.5, 0.42), lanternMat); lamp.position.y = 2.75; g.add(lamp);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(0.38, 0.3, 4), postMat); roof.position.y = 3.15; roof.rotation.y = Math.PI / 4; g.add(roof);
+  if (theme.lamp) { const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 })); gl.scale.set(3.2, 3.2, 1); gl.position.y = 2.75; g.add(gl); }
+  world.add(g); decor.push({ z, mesh: g });
+}
 function spawnDecor(z) {
   const forest = mode === 'race';
+  if (course) {
+    // red/white kerbs and orange safety netting following the track edges
+    const c = trackC(z), ry = Math.atan(-trackSlope(z)), hw = course.hw, red = Math.round(z / 4) % 2 === 0;
+    for (const sx of [-1, 1]) {
+      const kp = red ? kerbRed : kerbWhite;
+      decor.push({ z, idx: kp.add(c + sx * (hw - 0.25), 0.02, z, 1, ry), pool: kp });
+      decor.push({ z, idx: netPool.add(c + sx * (hw + 0.55), 0, z, 1, ry), pool: netPool });
+      for (let i = 0; i < 3 + (Math.random() < 0.5 ? 1 : 0); i++) addTree(c + sx * (hw + 2.2 + Math.pow(Math.random(), 1.6) * 34), z - rand(0, 4), rand(1, 2.1), false);
+    }
+    if (Math.random() < 0.85) decor.push({ z, idx: patches.add(c + rand(-40, 40), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
+    if (theme.lamp && Math.round(z) % 24 === 0) addLantern(c + (Math.round(z / 24) % 2 ? 1 : -1) * (hw + 1.6), z);
+    return;
+  }
   for (const side of [-1, 1]) {
     const n = forest ? 3 + (Math.random() < 0.5 ? 1 : 0) : Math.random() < 0.55 ? 1 : 2;
     for (let i = 0; i < n; i++) {
@@ -825,6 +1195,9 @@ function spawnDecor(z) {
   }
   if (!forest && Math.round(z) % 48 === 0) addLiftTower(z);
   if (!forest && Math.random() < 0.025) addCabin((Math.random() < 0.5 ? -1 : 1) * rand(19, 34), z);
+  if (!forest && Math.random() < 0.02) addSnowman((Math.random() < 0.5 ? -1 : 1) * rand(16.5, 24), z);
+  if (!forest && Math.random() < 0.01) addIgloo((Math.random() < 0.5 ? -1 : 1) * rand(22, 36), z);
+  if (!forest && theme.lamp && Math.round(z) % 32 === 0) for (const sx of [-1, 1]) addLantern(sx * (X_LIMIT + 1.8), z);
   if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-40, 40), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
 }
 
@@ -836,7 +1209,7 @@ function cleanup(pz) {
   keep(obstacles, o => o.z, o => o.pool ? o.pool.remove(o.idx) : world.remove(o.mesh));
   keep(movers, o => o.z, () => {});
   keep(crevasses, c => c.z0 - c.L, c => world.remove(c.mesh));
-  keep(gates, g => g.z, g => world.remove(g.mesh));
+  keep(gates, g => g.z, g => { world.remove(g.mesh); race.gonePassed++; });
   keep(pads, q => q.z - 3, q => world.remove(q.mesh));
   keep(coins, c => c.z, c => { if (!c.taken) coinPool.remove(c.idx); });
   keep(decor, o => o.z, o => o.pool ? o.pool.remove(o.idx) : world.remove(o.mesh));
@@ -844,6 +1217,7 @@ function cleanup(pz) {
 }
 function clearWorld() {
   cleanup(-1e9);
+  race.gonePassed = 0;
   if (finish) { world.remove(finish.mesh); finish = null; }
 }
 
@@ -1086,6 +1460,21 @@ function crash(reason) {
   Platform.gameplayStop();
 }
 
+// Race track walls: you bounce off the netting, lose speed and your combo, and get pointed back along the track.
+function fence(grounded) {
+  const c = trackC(p.z), lim = course.hw - 0.45, off = p.x - c;
+  if (Math.abs(off) <= lim) return;
+  const sd = Math.sign(off), ht = Math.atan(trackSlope(p.z));
+  p.x = c + sd * lim;
+  if (grounded) p.heading = ht - sd * 0.12;
+  else p.vx = Math.tan(ht) * Math.cos(p.heading) * p.speed;
+  if (!p.fenceT || time - p.fenceT > 0.4) {
+    p.fenceT = time; p.speed *= 0.86; shake = 0.3; p.comboTimer = 0; race.walls++;
+    showTrick('Wall!', '', false); Sfx.tone(130, 0.14, 'square', 0.14); Sfx.noise(0.2, 0.5, 900);
+    Particles.emit(p.x, p.y + 0.6, p.z, 14, 2.5, 3, 0xff6b1a, 0);
+  }
+}
+
 // ---------- per-frame player update ----------
 function updatePlayer(dt) {
   const inp = readInput();
@@ -1120,15 +1509,17 @@ function updatePlayer(dt) {
   } else if (p.grounded) {
     p.groundTime += dt;
     // --- carving: steer sets a heading; velocity follows the skis ---
-    const maxHead = 0.62 * clamp(24 / p.speed, 0.55, 1);
+    // the race track bends, so you get more steering there (but tight turns still need braking at speed)
+    const maxHead = course ? 1.0 * clamp(22 / p.speed, 0.5, 1) : 0.62 * clamp(24 / p.speed, 0.55, 1);
     let targetHead = inp.h * maxHead;
-    if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading)) targetHead = -Math.sign(p.x) * 0.25;
+    if (!course && Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading)) targetHead = -Math.sign(p.x) * 0.25;
     p.heading = damp(p.heading, targetHead, inp.h ? 7 : 8, dt);
     p.vx = Math.sin(p.heading) * p.speed;
     const prevX = p.x;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
-    if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.heading *= 0.5; }
+    if (course) fence(true);
+    else if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.heading *= 0.5; }
     const [gh, gs] = groundAt(p.x, p.z);
     if (gh - p.y > 1.3) {
       // ran into the side wall of a ramp/tabletop: bounce off it instead of dying
@@ -1163,7 +1554,8 @@ function updatePlayer(dt) {
     p.airTime += dt;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
-    if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.vx = 0; }
+    if (course) fence(false);
+    else if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.vx = 0; }
     const prevY = p.y;
     p.vy -= G * (p.vy < 0 ? 1.15 : 1) * dt; p.y += p.vy * dt;   // slightly heavier fall = snappier
     p.maxH = Math.max(p.maxH, p.y - gh0);
@@ -1221,28 +1613,49 @@ function updatePlayer(dt) {
   for (const c of crevasses) {
     if (!c.passed && p.z < c.z0 - c.L) { c.passed = true; p.trickScore += 300; showTrick('Crevasse cleared!', '+300', false); Sfx.trick(1); missionToast(track('crevasse', 1)); }
   }
-  // race checkpoints & finish
+  // race gates & finish
   if (mode === 'race') {
     for (const g of gates) {
       if (g.passed || p.z > g.z) continue;
       g.passed = true;
-      const t = race.t + race.penalty;
-      if (Math.abs(p.x - g.x) < g.w / 2 + 0.3) {
-        race.gates++; race.splits[g.n - 1] = t;
-        const pb = save.raceSplits?.[race.day]?.[g.n - 1];
-        showTrick(`Checkpoint ${g.n}/${checkpoints.length}`, pb != null ? `${t - pb <= 0 ? '−' : '+'}${Math.abs(t - pb).toFixed(2)}s` : fmtTime(t), pb != null && t <= pb);
-        Sfx.tone(988, 0.1, 'triangle', 0.14); Sfx.tone(1319, 0.14, 'triangle', 0.14, null, 0.08);
+      // gates may sit at an angle on a bend: measure across the gate, not across the world
+      if (Math.abs((p.x - g.x) * Math.cos(g.mesh.rotation.y)) < g.w / 2 + 0.35) {
+        race.gates++; race.streak++;
+        const pts = 150 + 50 * Math.min(race.streak - 1, 10);
+        p.trickScore += pts; race.gatePts += pts;
+        showTrick(race.streak > 1 ? `Gate streak x${race.streak}` : 'Gate!', `+${pts}`, race.streak >= 5);
+        Sfx.tone(988, 0.1, 'triangle', 0.14); Sfx.tone(1319 + race.streak * 40, 0.14, 'triangle', 0.14, null, 0.08);
+        colorGate(g, gateHit);
       } else {
-        race.penalty += 3; race.splits[g.n - 1] = t + 3;
-        showTrick('Missed checkpoint', '+3.0s', false); Sfx.tone(180, 0.25, 'square', 0.1);
+        race.streak = 0; race.missed++;
+        p.trickScore = Math.max(0, p.trickScore - 100);
+        showTrick('Missed gate', '−100', false); Sfx.tone(180, 0.25, 'square', 0.1);
+        colorGate(g, gateMiss);
       }
     }
     if (p.z < -RACE_LEN) return finishRace();
   }
-  // coins
+}
+
+// Coins: swept along the rider's path this frame (so nothing tunnels at 200 km/h) plus a short magnet.
+const MAGNET = 3.2;
+function collectCoins(x0, y0, z0, dt) {
+  const x1 = p.x, y1 = p.y + 0.9, z1 = p.z;
+  y0 += 0.9;
+  const sx = x1 - x0, sy = y1 - y0, sz = z1 - z0, len2 = sx * sx + sy * sy + sz * sz || 1;
   for (const c of coins) {
-    if (c.taken || Math.abs(c.z - p.z) > 1.3) continue;
-    if (Math.abs(c.x - p.x) < 1.25 && Math.abs(c.y - (p.y + 0.9)) < 1.6) {
+    if (c.taken || c.z < z1 - 8 || c.z > z0 + 4) continue;
+    // closest point on this frame's path to the coin
+    const t = clamp(((c.x - x0) * sx + (c.y - y0) * sy + (c.z - z0) * sz) / len2, 0, 1);
+    const dx = c.x - (x0 + sx * t), dy = (c.y - (y0 + sy * t)) * 0.75, dz = c.z - (z0 + sz * t);
+    const d = Math.hypot(dx, dy, dz);
+    if (d < MAGNET && !c.mag) c.mag = true;
+    if (c.mag) {
+      // pulled in toward the rider; collected once it's close
+      const k = 1 - Math.exp(-14 * dt);
+      c.x += (x1 - c.x) * k; c.y += (y1 - c.y) * k; c.z += (z1 - c.z) * k;
+    }
+    if (d < 1.5 || (c.mag && Math.hypot(c.x - x1, c.y - y1, c.z - z1) < 1)) {
       c.taken = true; coinPool.remove(c.idx);
       p.coins++; p.trickScore += 25; Sfx.coin(); missionToast(track('coins', 1));
       Particles.emit(c.x, c.y, c.z, 8, 2, 3, 0xffd23f, -2);
@@ -1254,7 +1667,8 @@ function respawn() {
   for (const c of crevasses) if (p.z <= c.z0 + 2 && p.z >= c.z0 - c.L - 2) p.z = c.z0 - c.L - 3;
   for (const o of obstacles) if (Math.abs(o.z - p.z) < 6) { o.dead = true; if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh); o.pool = null; o.mesh = new THREE.Group(); }
   Object.assign(p, { crashed: false, y: 0, vy: 0, vx: 0, speed: 14, pitch: 0, yaw: 0, roll: 0, rollVel: 0, lean: 0, heading: 0, grounded: true, trick: null, grinding: null, pitchVel: 0, yawVel: 0, combo: 0, comboTimer: 0 });
-  p.x = clamp(p.x, -X_LIMIT, X_LIMIT);
+  if (course) { p.x = trackC(p.z); p.heading = Math.atan(trackSlope(p.z)); }
+  else p.x = clamp(p.x, -X_LIMIT, X_LIMIT);
   state = 'play';
   Platform.gameplayStart();
   showTrick('Back on your feet', '', false);
@@ -1283,7 +1697,7 @@ function updateSkierVisual(dt) {
   p.tilt = damp(p.tilt, targetTilt, 12, dt);
   p.slideYaw = damp(p.slideYaw, p.grinding ? Math.PI / 2 : 0, 14, dt);
   const steerYaw = p.crashed ? 0 : -p.heading;
-  if (!p.crashed) p.lean = damp(p.lean, p.grounded ? -p.heading * clamp(p.speed / 25, 0.4, 1.2) : 0, 8, dt);
+  if (!p.crashed) p.lean = damp(p.lean, p.grounded ? clamp(-p.heading * clamp(p.speed / 25, 0.4, 1.2), -0.62, 0.62) : 0, 8, dt);
   const b = skier.body;
   b.rotation.y = p.yaw + p.slideYaw + steerYaw;
   b.rotation.x = p.pitch + p.tilt;
@@ -1344,7 +1758,12 @@ function updateCamera(dt) {
     camera.lookAt(camLook);
   } else {
     let off, ahead;
-    if (view === 'high') { off = [p.x * 0.6, Math.max(0, p.y) * 0.45 + 10, p.z + 15]; ahead = [p.x * 0.8, Math.max(0, p.y) * 0.6, p.z - 14]; }
+    if (course && view !== 'side') {
+      // sit behind the rider along the track and look down the next bend
+      const c0 = trackC(p.z), back = trackC(p.z + 10) - c0, fwd = trackC(p.z - 14) - c0;
+      if (view === 'high') { off = [p.x + back * 1.3, Math.max(0, p.y) * 0.45 + 10, p.z + 15]; ahead = [p.x + fwd, Math.max(0, p.y) * 0.6, p.z - 14]; }
+      else { off = [p.x + back * 0.9, Math.max(0, p.y) * 0.55 + 4.4, p.z + 10]; ahead = [p.x + fwd * 0.75, Math.max(0, p.y) * 0.75 + 1.2, p.z - 9]; }
+    } else if (view === 'high') { off = [p.x * 0.6, Math.max(0, p.y) * 0.45 + 10, p.z + 15]; ahead = [p.x * 0.8, Math.max(0, p.y) * 0.6, p.z - 14]; }
     else if (view === 'side') { off = [p.x + 9, Math.max(0, p.y) * 0.7 + 2.4, p.z - 1]; ahead = [p.x, p.y + 1, p.z - 3]; }
     else { off = [p.x * 0.75, Math.max(0, p.y) * 0.55 + 4.4, p.z + 10]; ahead = [p.x * 0.85, Math.max(0, p.y) * 0.75 + 1.2, p.z - 9]; }
     tmpV.set(...off); world.localToWorld(tmpV);
@@ -1366,9 +1785,11 @@ function updateCamera(dt) {
     shake = Math.max(0, shake - dt * 1.8);
   }
   mountains.position.set(camera.position.x, camera.position.y, camera.position.z);
+  sky.position.copy(camera.position);
+  headlamp.position.set(camera.position.x, camera.position.y + 2, camera.position.z - 4);
   // keep ground under the player
   ground.position.z = Math.round((state === 'menu' ? 0 : p.z) / 10) * 10 - 200;
-  ground.position.x = 0;
+  ground.position.x = course ? Math.round(trackC(p.z) / 10) * 10 : 0;
 }
 
 function updateCoins() {
@@ -1397,7 +1818,7 @@ function addGhost(name, data) {
   root.traverse(o => { if (o.isMesh) o.material = m; });
   root.add(nameTag(name, color));
   world.add(root);
-  ghosts.push({ name, t: data.t, f: data.f, n: Math.floor(data.f.length / 6), root, body: root.children[0] });
+  ghosts.push({ name, t: data.t, s: data.s, f: data.f, n: Math.floor(data.f.length / 6), root, body: root.children[0], color });
 }
 function clearGhosts() { for (const g of ghosts) world.remove(g.root); ghosts.length = 0; }
 function ghostState(g) {
@@ -1421,7 +1842,7 @@ function racePosition() {
 const ordinal = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 
 // ---------- HUD ----------
-const hud = { score: $('score'), coins: $('coinCount'), combo: $('combo'), comboText: $('comboText'), comboFill: $('comboFill'), trick: $('trick'), trickName: $('trickName'), trickPts: $('trickPts'), hint: $('hint'), race: $('raceInfo'), speed: $('speedo') };
+const hud = { minimap: $('minimap'), score: $('score'), coins: $('coinCount'), combo: $('combo'), comboText: $('comboText'), comboFill: $('comboFill'), trick: $('trick'), trickName: $('trickName'), trickPts: $('trickPts'), hint: $('hint'), race: $('raceInfo'), speed: $('speedo') };
 let lastScore = -1, lastCoins = -1, hintT = 0;
 const totalScore = () => Math.floor(p.distScore) + p.trickScore;
 function showTrick(name, pts, perfect) {
@@ -1433,9 +1854,10 @@ function showTrick(name, pts, perfect) {
 const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 function updateHUD(dt) {
   if (mode === 'race') {
-    const t = race.t + race.penalty;
-    hud.score.textContent = fmtTime(t);
-    hud.race.textContent = `${ghosts.length ? ordinal(racePosition()) + ' of ' + (ghosts.length + 1) + '  ·  ' : ''}${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}${race.penalty ? `  ·  +${race.penalty}s` : ''}`;
+    const s = p.trickScore;
+    if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
+    hud.race.textContent = `${fmtTime(race.t)}  ·  ${ghosts.length ? ordinal(racePosition()) + ' of ' + (ghosts.length + 1) + '  ·  ' : ''}Gates ${race.gates}/${gates.length + race.gonePassed}  ·  ${Math.max(0, Math.ceil(RACE_LEN + p.z))} m`;
+    drawMinimap();
   } else {
     const s = totalScore();
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
@@ -1450,12 +1872,29 @@ function updateHUD(dt) {
   }
   if (hintT > 0) { hintT -= dt; if (hintT <= 0) hud.hint.style.opacity = 0; }
 }
+// track overview in the corner: the whole course, you, and the ghosts
+function drawMinimap() {
+  const cv = hud.minimap; if (!cv || !course) return;
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height, pad = 8;
+  const zx = z => H - pad - (-z / RACE_LEN) * (H - pad * 2), xx = x => W / 2 + x * (W - pad * 2) / 70;
+  g.clearRect(0, 0, W, H);
+  g.lineCap = g.lineJoin = 'round';
+  for (const [w, col] of [[7, 'rgba(13,25,42,.55)'], [3, 'rgba(255,255,255,.9)']]) {
+    g.strokeStyle = col; g.lineWidth = w; g.beginPath();
+    for (let z = 0; z >= -RACE_LEN; z -= 20) { const X = xx(trackC(z)), Y = zx(z); z === 0 ? g.moveTo(X, Y) : g.lineTo(X, Y); }
+    g.stroke();
+  }
+  g.fillStyle = '#ff5a1f'; g.fillRect(xx(trackC(-RACE_LEN)) - 6, zx(-RACE_LEN) - 2, 12, 4);
+  for (const gh of ghosts) { if (!gh.root.visible) continue; g.fillStyle = gh.color; g.beginPath(); g.arc(xx(gh.root.position.x), zx(gh.root.position.z), 3, 0, TAU); g.fill(); }
+  g.fillStyle = '#ffc93c'; g.strokeStyle = '#0d192a'; g.lineWidth = 2; g.beginPath(); g.arc(xx(p.x), zx(Math.min(0, p.z)), 4.5, 0, TAU); g.fill(); g.stroke();
+}
 const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>S</kbd> slow down<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; hold <kbd>Space</kbd> grab<br><kbd>C</kbd> camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
 const HINT_TOUCH = 'Drag to steer, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab';
+const HINT_RACE = 'Race for <b>points</b>: ride through gates (streaks multiply), land tricks, grab coins, finish fast for a time bonus.<br>Walls slow you down. Brake into the tight turns.';
 
 // ---------- game flow ----------
 let state = 'menu', paused = false, overlayBusy = false, mode = 'endless';
-const race = { t: 0, gates: 0, penalty: 0, day: '' };
+const race = { t: 0, gates: 0, day: '', cd: 0, gonePassed: 0 };
 const today = () => new Date().toISOString().slice(0, 10);
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
@@ -1465,22 +1904,23 @@ function startRun(m = mode) {
   jumpQueued = false; latched.clear();
   clearWorld();
   resetPlayer(); resetRun();
-  Object.assign(race, { t: 0, gates: 0, penalty: 0, day: today(), splits: [], rec: [], recT: 0 });
-  X_LIMIT = mode === 'race' ? 11 : 13;
-  scene.fog.near = mode === 'race' ? 45 : 70; scene.fog.far = mode === 'race' ? 170 : 230;
+  Object.assign(race, { t: 0, gates: 0, day: today(), rec: [], recT: 0, streak: 0, missed: 0, walls: 0, gatePts: 0, gonePassed: 0, cd: mode === 'race' ? 3 : 0, cdShown: 0 });
+  X_LIMIT = 13; course = null;
+  scene.fog.near = mode === 'race' ? 55 : 70; scene.fog.far = mode === 'race' ? 190 : 230;
   checkpoints = [];
   clearGhosts();
-  if (mode === 'race') {
-    const cr = mulberry32(hashStr('cp-' + race.day));
-    for (let i = 1; i <= 11; i++) checkpoints.push({ x: (cr() * 2 - 1) * 5.5, z: -125 * i, w: 8 });
-    if (save.ghost?.day === race.day) addGhost('Your best', save.ghost);
-    const day = race.day;
-    fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) addGhost(g.name, g.ghost); });
-  }
-  crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : Math.random;
+  setTheme(mode === 'race' ? pickTheme(mulberry32(hashStr('theme-' + race.day))()) : pickTheme());
+  crng = mode === 'race' ? mulberry32(hashStr('peakflip-v2-' + race.day)) : Math.random;
   laneSeed = [crng() * 6.28, crng() * 6.28];
   spawnZ = -55; decorZ = 30;
-  checkpoints.forEach((c, i) => addCheckpointArch(c, i + 1));
+  if (mode === 'race') {
+    buildRaceCourse();
+    spawnZ = -Infinity;   // the whole course is already laid out
+    if (save.ghost?.day === race.day && save.ghost.s != null) addGhost('Your best', save.ghost);
+    const day = race.day;
+    // only points-race ghosts (they carry a score); older time-race recordings were on a different track
+    fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) if (g.ghost?.s != null) addGhost(g.name, g.ghost); });
+  }
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
   state = 'play'; paused = false;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
@@ -1488,8 +1928,10 @@ function startRun(m = mode) {
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
-  if (save.runs < 3) { hintT = 9; hud.hint.style.opacity = 1; } else { hintT = 0; hud.hint.style.opacity = 0; }
-  hud.hint.innerHTML = isTouch ? HINT_TOUCH : HINT_DESKTOP;
+  if (save.runs < 3 || (mode === 'race' && !save.racedV2)) { hintT = 9; hud.hint.style.opacity = 1; } else { hintT = 0; hud.hint.style.opacity = 0; }
+  hud.hint.innerHTML = mode === 'race' ? HINT_RACE : isTouch ? HINT_TOUCH : HINT_DESKTOP;
+  if (mode === 'race') { save.racedV2 = true; persist(); }
+  show('minimap', mode === 'race');
   Platform.gameplayStart();
 }
 
@@ -1517,24 +1959,30 @@ function gameOver() {
 function finishRace() {
   state = 'over';
   Platform.gameplayStop();
-  const time = +(race.t + race.penalty).toFixed(2);
-  save.raceBest = save.raceBest || {};
-  const prev = save.raceBest[race.day];
-  const newBest = !prev || time < prev;
-  const ghost = { t: time, f: race.rec };
+  const time = +race.t.toFixed(2);
+  const timeBonus = Math.max(0, Math.round((RACE_PAR - time) * TIME_BONUS));
+  const score = p.trickScore + timeBonus;
+  save.racePts = save.racePts || {};
+  const prev = save.racePts[race.day];
+  const newBest = prev == null || score > prev;
+  const ghost = { t: time, s: score, f: race.rec };
   if (newBest) {
-    save.raceBest[race.day] = time;
+    save.racePts[race.day] = score;
     save.ghost = { day: race.day, ...ghost };
-    save.raceSplits = { [race.day]: race.splits };
-    for (const d of Object.keys(save.raceBest)) if (d < race.day) delete save.raceBest[d];
+    for (const d of Object.keys(save.racePts)) if (d < race.day) delete save.racePts[d];
   }
-  const beat = ghosts.filter(g => time < g.t).length;
-  const field = ghosts.map(g => ({ name: g.name, t: g.t })).concat([{ name: 'You', t: time, me: true }]).sort((a, b) => a.t - b.t);
-  const bonus = 40 + race.gates * 5 + beat * 25;
+  delete save.raceBest; delete save.raceSplits;   // old time-based race data
+  const ghostScore = g => g.s ?? 0;
+  const beat = ghosts.filter(g => score > ghostScore(g)).length;
+  const field = ghosts.map(g => ({ name: g.name, s: ghostScore(g) })).concat([{ name: 'You', s: score, me: true }]).sort((a, b) => b.s - a.s);
+  const bonus = 40 + race.gates * 4 + beat * 25;
   save.coins += bonus;
   const missions = endCommon();
   Sfx.perfect();
-  showResults({ mode: 'race', time, raw: race.t, penalty: race.penalty, gates: race.gates, gateTotal: checkpoints.length, field, ghost: newBest ? ghost : null, newBest, best: save.raceBest[race.day], day: race.day, coins: p.coins, bonus, missions });
+  showResults({
+    mode: 'race', score, time, timeBonus, tricks: p.trickScore - race.gatePts, gatePts: race.gatePts, gates: race.gates, gateTotal: race.gates + race.missed,
+    walls: race.walls, field, ghost: newBest ? ghost : null, newBest, best: save.racePts[race.day], day: race.day, coins: p.coins, bonus, missions,
+  });
 }
 
 async function restartWithAd() {
@@ -1546,7 +1994,7 @@ async function restartWithAd() {
 }
 
 function toMenu() {
-  state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
+  state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; course = null; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   clearWorld(); resetPlayer();
   decorZ = 30; while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
@@ -1581,9 +2029,25 @@ function frame(now) {
   const dt = Math.min(0.033, (now - last) / 1000); last = now;
   if (paused) return;
   time += dt;
-  if (state === 'play') { updatePlayer(dt); if (mode === 'race') race.t += dt; }
+  if (state === 'play' && race.cd > 0) {
+    // 3-2-1-GO before the race clock starts
+    race.cd -= dt;
+    const n = Math.ceil(race.cd);
+    if (n !== race.cdShown) {
+      race.cdShown = n;
+      showTrick(n > 0 ? String(n) : 'GO!', '', n <= 0);
+      Sfx.tone(n > 0 ? 520 : 1040, n > 0 ? 0.18 : 0.4, 'square', 0.12);
+    }
+    if (race.cd <= 0) { jumpQueued = false; p.speed = 22; }
+    else p.speed = 0;
+  } else if (state === 'play') {
+    const x0 = p.x, y0 = p.y, z0 = p.z;
+    updatePlayer(dt);
+    if (state === 'play') collectCoins(x0, y0, z0, dt);
+    if (mode === 'race') race.t += dt;
+  }
   else if (state === 'crash') { updateCrash(dt); if (mode === 'race') race.t += dt; }
-  if (mode === 'race' && (state === 'play' || state === 'crash')) {
+  if (mode === 'race' && (state === 'play' || state === 'crash') && race.cd <= 0) {
     race.recT += dt;
     const b = skier.body.rotation;
     while (race.recT >= 0.1) { race.recT -= 0.1; race.rec.push(...[p.x, p.y, p.z, b.x, b.y, b.z].map(v => Math.round(v * 100))); }
@@ -1609,14 +2073,16 @@ function frame(now) {
   animateAccessories(dt);
   Particles.update(dt);
   Snowfall.update(dt, camera);
+  aurora.update(time); if (clouds.group.visible) clouds.update(dt);
   updateSkierVisual(dt);
   updateCamera(dt);
   if (state === 'play' || state === 'crash') updateHUD(dt);
-  trees.flush(); rocks.flush(); coinPool.flush(); patches.flush();
+  for (const pl of allPools) pl.flush();
   renderer.render(scene, camera);
 }
 
 // ---------- boot ----------
+setTheme(pickTheme());
 resetPlayer();
 applyCosmetics();
 updateMuteBtn();
@@ -1630,4 +2096,4 @@ requestAnimationFrame(frame);
 Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v)); showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };
+window.__game = { p, race, get course() { return course; }, trackC, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics };

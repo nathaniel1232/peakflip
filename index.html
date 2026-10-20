@@ -30,6 +30,7 @@
   #score { position: absolute; top: 14px; left: 0; right: 0; text-align: center; font-size: 40px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
   #raceInfo { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); font-size: 14px; background: rgba(13,25,42,.55); padding: 5px 12px; border-radius: 99px; white-space: nowrap; text-shadow: none; font-variant-numeric: tabular-nums; }
   #coins { position: absolute; top: 16px; right: 16px; font-size: 20px; background: rgba(13,25,42,.45); padding: 6px 12px; border-radius: 99px; text-shadow: none; display: flex; gap: 6px; align-items: center; }
+  #minimap { position: absolute; inset: auto auto 14px 12px; width: 84px; height: 180px; border-radius: 12px; background: rgba(13,25,42,.35); }
   #speedo { position: absolute; bottom: 16px; right: 16px; font-size: 15px; font-variant-numeric: tabular-nums; opacity: .9; }
   #combo { position: absolute; top: 68px; left: 0; right: 0; text-align: center; font-size: 18px; color: var(--gold); }
   #raceInfo:not(.hidden) ~ #combo { top: 98px; }
@@ -80,11 +81,39 @@
   .mode .s { font-size: 13px; opacity: .8; display: block; margin-top: 1px; }
   .mode .go { opacity: .7; width: 18px; height: 18px; }
   .nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-  .nav button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px 10px; border-radius: var(--r); background: var(--ink-2); font-size: 12px; font-weight: 700; color: var(--muted); transition: background .15s; }
+  .nav button { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px 10px; border-radius: var(--r); background: var(--ink-2); font-size: 12px; font-weight: 700; color: var(--text); transition: background .15s; }
+  .nav small { color: var(--muted); }
   .nav button:hover { background: var(--ink-3); color: var(--text); }
   .nav button .ic { color: var(--text); }
   .nav small { font-size: 11px; font-weight: 600; opacity: .8; }
   .dot { position: absolute; top: 8px; right: calc(50% - 20px); width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px #13253b; }
+  .menuWrap { display: flex; gap: 14px; align-items: stretch; justify-content: center; width: 100%; max-width: 860px; margin: auto; }
+  .menuWrap .card { margin: 0; }
+  .mainCard { max-width: 420px; }
+  .lbCard { max-width: 340px; }
+  @media (max-width: 760px) { .menuWrap { flex-direction: column; align-items: center; } .lbCard { max-width: 420px; } }
+  .topRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .topRow .logo b { font-size: 28px; white-space: nowrap; }
+  @media (max-width: 760px) { #menu { padding-top: 66px; align-items: flex-start; } }
+  @media (max-width: 400px) { .topRow .logo b { font-size: 23px; } .topRow .logo .ic { width: 28px; height: 28px; } .profile { max-width: 140px; } }
+  .profile { display: flex; align-items: center; gap: 6px; background: var(--ink-2); border-radius: 99px; padding: 6px 12px 6px 8px; font-size: 13px; font-weight: 700; color: var(--muted); max-width: 170px; }
+  .profile b { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .profile .ic { width: 18px; height: 18px; color: var(--ice); }
+  .profile.claim { background: rgba(76,195,255,.18); color: var(--text); }
+  .profile:hover { background: var(--ink-3); }
+  .mode.race { background: linear-gradient(100deg, #1d4ed8, #3a0ca3); }
+  .mode.race:hover { filter: brightness(1.12); background: linear-gradient(100deg, #1d4ed8, #3a0ca3); }
+  .newPill { font-style: normal; font-size: 10px; font-weight: 900; letter-spacing: .08em; background: var(--gold); color: #2a1a00; border-radius: 99px; padding: 2px 7px; vertical-align: 3px; margin-left: 4px; }
+  .lbTop { display: flex; flex-direction: column; gap: 10px; }
+  .lbTitle { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 900; letter-spacing: -.02em; }
+  .lbTitle .ic { color: var(--gold); width: 24px; height: 24px; }
+  .tabs.mini .tab { padding: 6px; font-size: 12px; }
+  #miniLb { flex: 1; min-height: 150px; }
+  #miniLb .item { padding: 8px 10px; }
+  .help { display: flex; flex-direction: column; gap: 8px; }
+  .help .item { display: block; line-height: 1.9; font-weight: 600; }
+  .help h4 { margin: 4px 0 0; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .help kbd { background: var(--ink-3); color: var(--text); }
   .controls { font-size: 12px; color: var(--muted); text-align: center; line-height: 1.9; }
   .controls kbd { background: var(--ink-3); color: var(--text); }
   h2 { margin: 0; font-size: 30px; letter-spacing: -.02em; text-align: center; }
@@ -94,6 +123,9 @@
   .tag { align-self: center; background: var(--accent); border-radius: 99px; padding: 3px 10px; font-size: 12px; font-weight: 800; letter-spacing: .06em; }
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; }
+  .btnGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); }
+  .btnGrid .btn { padding: 12px 8px; font-size: 15px; gap: 6px; }
+  .btnGrid .btn .ic { width: 18px; height: 18px; }
   .list { display: flex; flex-direction: column; gap: 6px; }
   .item { display: flex; align-items: center; gap: 10px; background: var(--ink-2); border-radius: 12px; padding: 10px 12px; font-size: 14px; font-weight: 600; }
   .item .grow { flex: 1; }
@@ -154,6 +186,22 @@
   .tabs { flex-wrap: wrap; }
   .tabs .tab { min-width: 70px; }
   .sw.q { background: var(--ink-2); display: grid; place-items: center; color: var(--muted); }
+  .secHead { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
+  .secHead small { text-transform: none; letter-spacing: 0; font-weight: 600; opacity: .8; }
+  .chestCard { position: relative; }
+  .chestCard.themed { background: linear-gradient(180deg, color-mix(in srgb, var(--c) 22%, transparent), var(--ink-2)); }
+  .evTag { position: absolute; top: -7px; right: 8px; background: #ff7518; color: #1a0b00; font-size: 9px; font-weight: 900; letter-spacing: .08em; border-radius: 99px; padding: 2px 7px; }
+  .fits { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
+  .fit { background: linear-gradient(160deg, color-mix(in srgb, var(--c) 20%, transparent), var(--ink-2) 60%); border-radius: var(--r); padding: 12px; display: flex; flex-direction: column; gap: 10px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 30%, transparent); }
+  .fitHead { display: flex; flex-direction: column; gap: 1px; }
+  .fitHead b { font-size: 15px; }
+  .fitHead span { font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--c); }
+  .fitPieces { display: flex; flex-wrap: wrap; gap: 4px; }
+  .fp .sw { width: 32px; height: 32px; border-radius: 8px; }
+  .fp .sw.acc svg { width: 24px; height: 24px; }
+  .fp.miss { opacity: .3; filter: grayscale(1); }
+  .fit .btn { padding: 9px; font-size: 13px; }
+  .fit .btn .ic { width: 16px; height: 16px; }
   .sw.q .ic { width: 18px; height: 18px; }
 
   /* ---------- chest art (CSS, no images) ---------- */
@@ -222,26 +270,41 @@
   <div id="toast"></div>
   <div id="hint"></div>
   <div id="speedo"></div>
+  <canvas id="minimap" width="84" height="180" class="hidden"></canvas>
   <button id="pauseBtn" class="iconBtn" aria-label="Pause"></button>
   <button id="camBtn" class="iconBtn" aria-label="Change camera"></button>
 </div>
 
 <div id="menu" class="screen">
-  <div class="card">
-    <div class="logo"><span id="logoIc"></span><b>Peak Flip</b></div>
-    <div class="chips">
-      <div class="chip">Best <b id="menuBest">0</b></div>
-      <div class="chip"><span class="coin"></span><b id="menuCoins">0</b></div>
+  <div class="menuWrap">
+    <div class="card mainCard">
+      <div class="topRow">
+        <div class="logo"><span id="logoIc"></span><b>Peak Flip</b></div>
+        <button id="profileBtn" class="profile"></button>
+      </div>
+      <div class="chips">
+        <div class="chip">Best <b id="menuBest">0</b></div>
+        <div class="chip"><span class="coin"></span><b id="menuCoins">0</b></div>
+      </div>
+      <div class="secHead">Play</div>
+      <button id="playBtn" class="mode primary"><span id="icPlay"></span><span><span class="t">Endless</span><span class="s">Tricks, speed, how far can you go</span></span><span id="icGo1"></span></button>
+      <button id="raceBtn" class="mode race"><span id="icFlag"></span><span><span class="t">Daily Race <em class="newPill">NEW TRACK</em></span><span class="s" id="raceSub"></span></span><span id="icGo2"></span></button>
+      <div class="secHead">Your stuff</div>
+      <div class="nav">
+        <button id="lockerBtn"><span id="icSkis"></span>Locker<small id="lockerSub"></small></button>
+        <button id="chestsBtn"><span id="icChest"></span>Chests<small id="chestSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
+        <button id="missionsBtn"><span id="icTarget"></span>Missions<small id="missionSub"></small></button>
+        <button id="helpBtn"><span id="icHelp"></span>How to play<small>Controls</small></button>
+      </div>
     </div>
-    <button id="playBtn" class="mode primary"><span id="icPlay"></span><span><span class="t">Endless</span><span class="s">Tricks, speed, how far can you go</span></span><span id="icGo1"></span></button>
-    <button id="raceBtn" class="mode"><span id="icFlag"></span><span><span class="t">Daily Race</span><span class="s" id="raceSub"></span></span><span id="icGo2"></span></button>
-    <div class="nav">
-      <button id="chestsBtn"><span id="icChest"></span>Chests<small id="chestSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
-      <button id="lockerBtn"><span id="icSkis"></span>Locker<small id="lockerSub"></small></button>
-      <button id="missionsBtn"><span id="icTarget"></span>Missions<small id="missionSub"></small></button>
-      <button id="lbBtn"><span id="icTrophy"></span>Ranks<small>Leaderboard</small></button>
+    <div class="card lbCard">
+      <div class="lbTop">
+        <div class="lbTitle"><span id="icTrophy"></span>Leaderboard</div>
+        <div class="tabs mini"><button class="tab on" data-mlb="race">Today's race</button><button class="tab" data-mlb="endless">Endless</button></div>
+      </div>
+      <div id="miniLb" class="list"><div class="note">Loading…</div></div>
+      <button id="lbBtn" class="btn">See full leaderboard</button>
     </div>
-    <div class="controls" id="menuControls"></div>
   </div>
 </div>
 
@@ -267,6 +330,17 @@
 <button id="muteBtn" class="iconBtn" aria-label="Sound"></button>
 
 <script src="config.js"></script>
+<script>
+  // Vercel Web Analytics (static-site version of @vercel/analytics). Only loads on the Vercel deployment,
+  // so localhost and the CrazyGames build don't request a script that isn't there.
+  (function () {
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$|crazygames/.test(location.hostname) || location.protocol === 'file:') return;
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+    var s = document.createElement('script');
+    s.defer = true; s.src = '/_vercel/insights/script.js';
+    document.head.appendChild(s);
+  })();
+</script>
 <script type="module" src="game.js"></script>
 <script>
   // Optional side ads when self-hosted (never on CrazyGames, which forbids third-party ads).

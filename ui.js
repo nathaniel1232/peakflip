@@ -2,7 +2,7 @@
 //  Menus, chests, locker, missions, results, leaderboards
 // ============================================================
 import {
-  save, persist, CATALOG, RARITY, CHESTS, KIND_NAME, PITY,
+  save, persist, CATALOG, RARITY, CHESTS, KIND_NAME, PITY, SETS, FITS, fitOwned,
   openChest, collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
 } from './meta.js';
 import { icon } from './icons.js';
@@ -28,14 +28,17 @@ async function rpc(fn, args) {
   if (!r.ok) throw new Error(`${fn} ${r.status}`);
   return r.json();
 }
+// The Daily Race is scored in points since the winding-track update; it lives on its own board ('racepts')
+// so it never mixes with the old time-based 'race' rows.
+const DB = board => board === 'race' ? 'racepts' : board;
 const LB = {
   async get(board, day, limit = 20) {
-    try { return await rpc('get_leaderboard', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit }); }
+    try { return await rpc('get_leaderboard', { p_board: DB(board), p_day: day || '', p_pid: save.pid, p_limit: limit }); }
     catch { return null; }
   },
   async submit(board, value, day, ghost) {
     if (!save.name) return null;
-    try { return await rpc('submit_score', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
+    try { return await rpc('submit_score', { p_board: DB(board), p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
     catch { return null; }
   },
 };
@@ -60,7 +63,7 @@ function swatch(kind, it) {
     if (it.id === 'none') return '<div class="sw trail"><span>—</span></div>';
     return `<div class="sw acc" style="background:${it.color2 || 'rgba(255,255,255,.12)'}"><svg viewBox="0 0 24 24" fill="${it.color}" stroke="rgba(0,0,0,.35)" stroke-width="1.2">${ACC_SVG[kind]}</svg></div>`;
   }
-  if (kind === 'outfit') return `<div class="sw" style="background:${it.jacket}"><i style="background:${it.pants}"></i><b style="background:${it.helmet}"></b></div>`;
+  if (kind === 'outfit') return `<div class="sw" style="background:${it.sw || it.jacket}"><i style="background:${it.pants}"></i><b style="background:${it.helmet}"></b></div>`;
   if (kind === 'ski') {
     const c = it.color === 'rainbow' ? RAINBOW : it.color;
     return `<div class="sw ski"><i style="background:${c}"></i><i style="background:${c}"></i><em style="background:${it.tip}"></em></div>`;
@@ -84,15 +87,45 @@ const fmtCooldown = ms => { const m = Math.ceil(ms / 60000); return m >= 60 ? `$
 export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
-  $('menuControls').innerHTML = cfg.hints;
-  const rb = save.raceBest?.[today()];
-  $('raceSub').textContent = rb ? `Forest course · your best ${fmtTime(rb)}` : 'Forest course · new every day';
+  const rb = save.racePts?.[today()];
+  $('raceSub').textContent = rb != null ? `Winding track · your best ${rb.toLocaleString()} pts` : 'Gates, turns & jumps · score the most points';
+  const pb = $('profileBtn');
+  pb.classList.toggle('claim', !save.name);
+  pb.innerHTML = save.name ? `${icon('user')}<b>${esc(save.name)}</b>` : `${icon('user')}<b>Claim your name</b>`;
+  miniBoard();
   const ready = freeChestReady();
   $('chestBadge').classList.toggle('hidden', !ready);
   $('chestSub').textContent = ready ? 'Free chest!' : fmtCooldown(save.freeChestAt - Date.now());
   const { have, total } = collectionCount();
   $('lockerSub').textContent = `${have}/${total}`;
   $('missionSub').textContent = `${save.missions.length} active`;
+}
+
+// ---------- menu leaderboard preview ----------
+let miniTab = 'race', miniCache = {};
+async function miniBoard(force) {
+  const el = $('miniLb'); if (!el) return;
+  document.querySelectorAll('[data-mlb]').forEach(b => b.classList.toggle('on', b.dataset.mlb === miniTab));
+  const key = miniTab, c = miniCache[key];
+  if (c && !force && Date.now() - c.at < 60000) { el.innerHTML = c.html; return; }
+  if (!c) el.innerHTML = '<div class="note">Loading…</div>';
+  const data = await LB.get(key, key === 'race' ? today() : null, 5);
+  let html = lbRows(data, key, 5);
+  if (data && !data.me) html += `<div class="note">${key === 'race' ? "You haven't raced today." : 'Set a score to get on the board.'}</div>`;
+  miniCache[key] = { at: Date.now(), html };
+  if (miniTab === key) el.innerHTML = html;
+}
+
+// ---------- how to play ----------
+function renderHelp() {
+  openPanel('How to play', `<div class="help">
+    <h4>Controls</h4><div class="item">${cfg.hints}</div>
+    <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, coins buy chests. Landing upside down or hitting trees and rocks ends the run.</div>
+    <h4>Daily Race</h4><div class="item">A new winding track every day, the same for everyone. You race for <b>points</b>:
+      ride through the flag gates (each gate in a row is worth more), land tricks off the jumps, grab coins, and reach the finish fast for a time bonus.
+      Hitting the fence slows you down and breaks your combo, so brake (<kbd>S</kbd>) into the tight turns.</div>
+    <h4>Leaderboards</h4><div class="item">Claim a name once and your best Endless score and today's race score go on the world boards automatically.</div>
+  </div>`);
 }
 
 // ---------- chests ----------
@@ -107,7 +140,8 @@ function chestCard(key) {
     const can = save.coins >= c.price;
     btn = `<button class="btn ${can ? 'go' : ''}" data-chest="${key}" ${can ? '' : 'disabled'}>${coin} ${c.price}</button>`;
   }
-  return `<div class="chestCard"><div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
+  const tag = c.set === 'halloween' && new Date().getMonth() === 9 ? '<div class="evTag">HALLOWEEN</div>' : '';
+  return `<div class="chestCard ${c.set ? 'themed' : ''}" style="--c:${c.color}">${tag}<div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
     <div class="cname">${c.name}</div><div class="odds">${odds}</div>${btn}</div>`;
 }
 function renderChests() {
@@ -115,6 +149,8 @@ function renderChests() {
   openPanel('Chests', `
     <div class="chips"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>
     <div class="chestRow">${chestCard('free')}${chestCard('basic')}${chestCard('epic')}</div>
+    <div class="secHead">Themed chests <small>only drop items from their set</small></div>
+    <div class="chestRow">${chestCard('spooky')}${chestCard('agartha')}${chestCard('tradition')}</div>
     ${cfg.ads.available ? `<div class="row">
       <button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>
       <button class="btn" id="adChest" ${adUsesLeft('chest') > 0 ? '' : 'disabled'}>${icon('play')} Free Snow Chest <small style="opacity:.7">(${adUsesLeft('chest')})</small></button>
@@ -160,10 +196,26 @@ function doOpen(key, paidByAd) {
 }
 
 // ---------- locker ----------
-let lockerTab = 'outfit';
+let lockerTab = 'fits';
+function fitsGrid() {
+  return `<div class="fits">${FITS.map(f => {
+    const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length;
+    const worn = Object.entries(f.pieces).every(([k, id]) => save.eq[k] === id);
+    const pieces = Object.entries(f.pieces).filter(([, id]) => id !== 'none').map(([k, id]) => {
+      const it = CATALOG[k].find(i => i.id === id), own = save.inv[k].includes(id);
+      return `<div class="fp ${own ? '' : 'miss'}" title="${esc(it.name)}${own ? '' : ' (locked)'}">${swatch(k, it)}</div>`;
+    }).join('');
+    return `<div class="fit" style="--c:${set.color}">
+      <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name}</span></div>
+      <div class="fitPieces">${pieces}</div>
+      <button class="btn ${worn ? '' : have > 0 ? 'go' : ''}" data-fit="${f.id}" ${have > 0 && !worn ? '' : 'disabled'}>${worn ? `${icon('check')} Wearing` : `Wear fit · ${have}/${total}`}</button>
+    </div>`;
+  }).join('')}</div>`;
+}
 function renderLocker() {
-  const tabs = Object.keys(CATALOG).map(k => `<button class="tab ${k === lockerTab ? 'on' : ''}" data-tab="${k}">${KIND_NAME[k]} ${save.inv[k].length}/${CATALOG[k].length}</button>`).join('');
-  const grid = CATALOG[lockerTab].map(it => {
+  const tabs = `<button class="tab ${lockerTab === 'fits' ? 'on' : ''}" data-tab="fits">${icon('gift')} Fits</button>` +
+    Object.keys(CATALOG).map(k => `<button class="tab ${k === lockerTab ? 'on' : ''}" data-tab="${k}">${KIND_NAME[k]} ${save.inv[k].length}/${CATALOG[k].length}</button>`).join('');
+  const grid = lockerTab === 'fits' ? '' : CATALOG[lockerTab].map(it => {
     const owned = save.inv[lockerTab].includes(it.id), on = save.eq[lockerTab] === it.id;
     const rc = RARITY[it.rarity].color;
     if (it.ad && !owned) {
@@ -176,7 +228,15 @@ function renderLocker() {
       <div class="nm">${owned ? esc(it.name) : 'Locked'}</div><div class="rr" style="color:${rc}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
   }).join('');
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
-  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div><div class="grid">${grid}</div><div class="note">Unlock more from chests. Items with a ${icon('play')} button are exclusives: watch ads to unlock them.${cfg.ads.available ? '' : ' (Ads are not set up on this site yet.)'}</div>`, true);
+  const body = lockerTab === 'fits'
+    ? `${fitsGrid()}<div class="note">A fit puts on every piece you own from a themed set. Get the missing pieces from the <b>themed chests</b>.</div>`
+    : `<div class="grid">${grid}</div><div class="note">Unlock more from chests. Items with a ${icon('play')} button are exclusives: watch ads to unlock them.${cfg.ads.available ? '' : ' (Ads are not set up on this site yet.)'}</div>`;
+  openPanel('Locker', `${gear}<div class="tabs">${tabs}</div>${body}`, true);
+  $('panelBody').querySelectorAll('[data-fit]').forEach(b => b.onclick = () => {
+    const f = FITS.find(x => x.id === b.dataset.fit);
+    for (const [k, id] of Object.entries(f.pieces)) if (save.inv[k].includes(id)) save.eq[k] = id;
+    persist(); cfg.onCosmetics(); cfg.sfx.perfect(); renderLocker();
+  });
   $('panelBody').querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
   $('panelBody').querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
   $('panelBody').querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
@@ -238,15 +298,15 @@ function nameForm(slot, after, compact) {
     btn.disabled = false; btn.textContent = 'Claim';
     if (!res) { $('nameErr').textContent = "Couldn't reach the leaderboard. Try again in a moment."; return; }
     if (!res.ok) { $('nameErr').textContent = res.error === 'taken' ? 'That name is taken. Try another.' : 'Pick a longer name.'; return; }
-    save.name = res.name; persist();
+    save.name = res.name; persist(); miniCache = {};
     after && after();
   };
 }
 
 function lbRows(data, board, limit) {
-  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
+  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.racePts?.[today()] ?? '—').toLocaleString() : save.best.toLocaleString()}</b></div>`;
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
-  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
+  const fmt = v => Math.round(v).toLocaleString();
   const rows = data.top.slice(0, limit).map((r, i) => rowHtml(i + 1, r.name, fmt(r.value), r.isMe)).join('');
   const me = data.me && data.me.rank > limit ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true) : '';
   return rows + me;
@@ -267,11 +327,18 @@ function resultsCard(r) {
   let body;
   if (r.mode === 'race') {
     const field = r.field.length > 1
-      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, fmtTime(f.t), f.me)).join('')}</div>` : '';
+      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, f.s.toLocaleString(), f.me)).join('')}</div>` : '';
+    const line = (k, v) => `<div class="item"><span class="grow">${k}</span><span class="val">${v}</span></div>`;
     body = `
       ${r.newBest ? '<div class="tag">PERSONAL BEST</div>' : ''}
-      <div class="big-num"><small>FINISH TIME</small>${fmtTime(r.time)}</div>
-      <div class="sub">${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · best today ${fmtTime(r.best)}</div>
+      <div class="big-num"><small>RACE POINTS</small>${r.score.toLocaleString()}</div>
+      <div class="sub">${fmtTime(r.time)} · best today ${r.best.toLocaleString()} pts</div>
+      <div class="list">
+        ${line('Tricks, coins & close calls', r.tricks.toLocaleString())}
+        ${line(`Gates (${r.gates}/${r.gateTotal})`, r.gatePts.toLocaleString())}
+        ${line(`Time bonus (${fmtTime(r.time)})`, r.timeBonus.toLocaleString())}
+        ${r.walls ? line('Wall hits', r.walls) : ''}
+      </div>
       ${field}`;
   } else {
     body = `
@@ -288,8 +355,9 @@ function resultsCard(r) {
     ${missions}
     <div id="resLb"></div>
     <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : 'Ride again'}</button>
-    <div class="row">
+    <div class="row btnGrid">
       <button class="btn" id="menuBtn">${icon('home')}Menu</button>
+      <button class="btn" id="toLb">${icon('trophy')}Ranks</button>
       ${chestReady ? `<button class="btn" id="toChests">${icon('chest')}Chests</button>` : ''}
       <button class="btn" id="shareBtn">${icon('share')}Share</button>
     </div>
@@ -298,8 +366,10 @@ function resultsCard(r) {
   $('againBtn').onclick = () => cfg.onAgain();
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderChests(); };
+  $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
   if (save.name) rankRow(r);
+  miniCache = {};
 }
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
 async function rankRow(r) {
@@ -311,7 +381,7 @@ async function rankRow(r) {
   lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
   $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
 }
-const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, f: r.ghost.f } : undefined });
+const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, s: r.ghost.s, f: r.ghost.f } : undefined });
 
 function overlay() {
   document.getElementById('lbReveal')?.remove();
@@ -326,7 +396,7 @@ function overlay() {
 function recordMoment(r, done) {
   const el = overlay(), card = el.querySelector('#rvCard');
   const finish = () => { el.remove(); done(); };
-  const big = r.mode === 'race' ? fmtTime(r.time) : r.score.toLocaleString();
+  const big = r.score.toLocaleString();
   card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
     <div class="rv-score">${big}</div><div id="rvStep"></div>`;
   cfg.sfx.perfect();
@@ -352,7 +422,7 @@ function recordMoment(r, done) {
 
 function revealBoard(el, data, board, done) {
   const card = el.querySelector('#rvCard');
-  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
+  const fmt = v => Math.round(v).toLocaleString();
   const me = data.me, inTop = me.rank <= data.top.length;
   let rows = data.top.map((r, i) => ({ rank: i + 1, ...r }));
   if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, isMe: true }]);
@@ -401,7 +471,7 @@ function confetti(n) {
 async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
-    ? `I did today's Peak Flip race in ${fmtTime(r.time)}. Can you beat my ghost?`
+    ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race. Can you beat my ghost?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -415,7 +485,7 @@ export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
   put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
-  put('icChest', 'chest'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy');
+  put('icChest', 'chest'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
@@ -423,7 +493,10 @@ export function initUI(c) {
   $('chestsBtn').onclick = () => { c.sfx.init(); renderChests(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
-  $('lbBtn').onclick = () => { c.sfx.init(); renderLeaderboard(); };
+  $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; renderLeaderboard(); };
+  $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
+  $('profileBtn').onclick = () => { c.sfx.init(); renderLeaderboard(); };
+  document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };
   addEventListener('keydown', e => { if (e.key === 'Escape' && !$('panel').classList.contains('hidden')) closePanel(); });

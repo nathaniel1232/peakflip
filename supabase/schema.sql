@@ -12,16 +12,19 @@ alter table public.players enable row level security;
 revoke all on public.players from anon, authenticated;
 
 create table if not exists public.scores (
-  board      text not null check (board in ('endless', 'race')),
+  board      text not null,                      -- 'endless', 'racepts' (daily race, points) or the old 'race' (seconds)
   day        text not null default '',          -- '' for endless, 'YYYY-MM-DD' (UTC) for the daily race
   pid        text not null,                      -- random player id stored in the browser
   name       text not null,
-  value      double precision not null,          -- endless: score (higher is better) · race: seconds (lower is better)
-  ghost      jsonb,                              -- race only: { t, f: [x,y,z,rx,ry,rz, ...] }
+  value      double precision not null,          -- endless/racepts: points (higher is better) · old race: seconds (lower is better)
+  ghost      jsonb,                              -- racepts only: { t, s, f: [x,y,z,rx,ry,rz, ...] }
   updated_at timestamptz not null default now(),
   primary key (board, day, pid)
 );
 create index if not exists scores_rank_idx on public.scores (board, day, value);
+-- the daily race became a points race on its own board (the old check constraint only allowed 'endless'/'race')
+alter table public.scores drop constraint if exists scores_board_check;
+alter table public.scores add constraint scores_board_check check (board in ('endless', 'race', 'racepts'));
 
 -- The browser never touches the table directly; it only calls the functions below.
 alter table public.scores enable row level security;
@@ -51,7 +54,7 @@ declare
   v_name  text;
   v_today date := (now() at time zone 'utc')::date;
 begin
-  if p_board not in ('endless', 'race') then raise exception 'bad board'; end if;
+  if p_board not in ('endless', 'racepts') then raise exception 'bad board'; end if;
   if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
   select name into v_name from players where pid = p_pid;
   if v_name is null then raise exception 'register a name first'; end if;
@@ -60,7 +63,7 @@ begin
     if p_value is null or p_value < 0 or p_value > 3000000 then raise exception 'bad value'; end if;
     p_day := ''; p_ghost := null;
   else
-    if p_value is null or p_value < 25 or p_value > 900 then raise exception 'bad value'; end if;
+    if p_value is null or p_value < 0 or p_value > 2000000 then raise exception 'bad value'; end if;
     if p_day not in (to_char(v_today - 1, 'YYYY-MM-DD'), to_char(v_today, 'YYYY-MM-DD'), to_char(v_today + 1, 'YYYY-MM-DD')) then
       raise exception 'bad day';
     end if;
@@ -74,9 +77,9 @@ begin
   values (p_board, p_day, p_pid, v_name, p_value, p_ghost, now())
   on conflict (board, day, pid) do update set
     name  = excluded.name,   -- always the player's registered name
-    -- keep the ghost that belongs to the best time
-    ghost = case when excluded.ghost is not null and (excluded.value < s.value or s.ghost is null) then excluded.ghost else s.ghost end,
-    value = case when p_board = 'race' then least(s.value, excluded.value) else greatest(s.value, excluded.value) end,
+    -- keep the ghost that belongs to the best score
+    ghost = case when excluded.ghost is not null and (excluded.value > s.value or s.ghost is null) then excluded.ghost else s.ghost end,
+    value = greatest(s.value, excluded.value),
     updated_at = now();
 
   return json_build_object('ok', true);
@@ -105,8 +108,8 @@ language sql stable security definer set search_path = public as $$
   select coalesce(json_agg(json_build_object('name', name, 'ghost', ghost)), '[]'::json)
   from (
     select name, ghost from scores
-    where board = 'race' and day = p_day and pid <> p_pid and ghost is not null
-    order by value limit 3
+    where board = 'racepts' and day = p_day and pid <> p_pid and ghost is not null
+    order by value desc limit 3
   ) t;
 $$;
 
