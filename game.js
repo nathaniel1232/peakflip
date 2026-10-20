@@ -6,7 +6,7 @@ import * as THREE from './lib/three.module.min.js';
 
 // ---------- tuning ----------
 const G = 28;              // gravity (m/s^2)
-const SLOPE = 0.2;         // visual tilt of the mountain (rad)
+const SLOPES = { race: 0.2, endless: 0.27, agartha: 0.34 };   // visual tilt of the mountain (rad); the race keeps its original 0.2
 const FLIP_RATE = 8.5;     // rad/s
 const SPIN_RATE = 10.5;    // rad/s
 const STEER = 13;          // lateral m/s
@@ -16,7 +16,9 @@ const VIEW = 260;          // how far ahead we spawn
 const COMBO_WINDOW = 3.0;  // seconds on the ground before a combo banks
 const TAU = Math.PI * 2;
 
-const baseSpeed = d => Math.min(62, 22 + d * 0.0105);   // gets brutal past ~3 km
+// gets brutal past ~3 km; the steeper Endless slope (and Agartha) run a little faster, the race is unchanged
+const baseSpeed = d => Math.min(62, 22 + d * 0.0105) * speedK();
+const speedK = () => mode === 'race' ? 1 : zone === 'agartha' ? 1.15 : 1.07;
 
 // ---------- helpers ----------
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -130,7 +132,8 @@ const sun = new THREE.DirectionalLight(0xfff4e0, 2.2); sun.position.set(-30, 60,
 const headlamp = new THREE.PointLight(0xcfe0ff, 0, 40, 1.2); scene.add(headlamp);
 
 const world = new THREE.Group();
-world.rotation.x = -SLOPE;
+world.rotation.x = -SLOPES.race;
+function setSlope(a) { world.rotation.x = -a; world.updateMatrixWorld(true); }
 scene.add(world);
 world.updateMatrixWorld(true);
 
@@ -320,6 +323,11 @@ const THEMES = {
     top: 0x3d4f9a, horizon: 0xf6bf98, hemi: [0xffe2c8, 0x8f7fa8, 1.35], sun: [0xffb36b, 2.5], disc: [0xffc27a, -120, 25, -380, 170],
     mountains: [0xf1cfc0, 0xd6aeb4, 0xb294ad], cap: 0xffe9dc, cloud: 0xffcfb8, clouds: true,
   },
+  agartha: {
+    top: 0x0a0418, horizon: 0x4b1d7a, hemi: [0xc7a6ff, 0x1a0b2e, 1.25], sun: [0xffd27a, 1.7], disc: [0xffd166, 0, 45, -380, 300],
+    mountains: [0x2a1446, 0x1f0f38, 0x170a2b], cap: 0x7cf7d4, cloud: 0x3b2466, clouds: false, stars: true, aurora: true, lamp: 1.1,
+    snow: 0xd9ccff, patch: 0xb9a6f2,
+  },
   night: {
     top: 0x030817, horizon: 0x1d335f, hemi: [0x9ab8ff, 0x1c2848, 1.05], sun: [0xbcd4ff, 1.0], disc: [0xe8f0ff, 140, 170, -360, 55],
     mountains: [0x3a4d78, 0x2d3d63, 0x223052], cap: 0x8fa4cc, cloud: 0x3b4b70, clouds: false, stars: true, aurora: true, lamp: 1.4,
@@ -346,6 +354,7 @@ function setTheme(name) {
   clouds.group.visible = !!t.clouds; clouds.mat.color.set(t.cloud);
   stars.visible = !!t.stars; aurora.group.visible = !!t.aurora;
   headlamp.intensity = t.lamp || 0;
+  mat.snow.color.set(t.snow ?? 0xf5f9fc); mat.patch.color.set(t.patch ?? 0xdce9f3);
   lanternMat.emissiveIntensity = t.lamp ? 1 : 0.15;
   document.body.style.background = '#' + tmpCol.set(t.horizon).getHexString();
 }
@@ -933,6 +942,11 @@ function addTree(x, z, s, obstacle) {
 }
 function addRock(x, z, s) {
   x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, s)) return;
+  if (zone === 'agartha') {
+    const idx = crystals.add(x, 0, z, s * 1.1, rand(0, 6), s * 1.5);
+    obstacles.push({ kind: 'crystal', x, z, r: 0.75 * s, h: 3 * s, idx, pool: crystals });
+    return;
+  }
   const idx = rocks.add(x, 0.15 * s, z, s, rand(0, 6));
   obstacles.push({ kind: 'rock', x, z, r: 1.0 * s, h: 1.0 * s, idx, pool: rocks });
 }
@@ -1224,10 +1238,136 @@ function featureStepDown(z, sp) {
 }
 
 const RACE_LEN = 1500;
+
+// ---------- zones: the normal mountain, or the underground Agartha level (Endless only) ----------
+let zone = 'normal', zoneEndZ = 0, nextCaveD = 900, prevTheme = 'day', portal = null;
+const caves = [];
+const AGARTHA_LEN = 750;
+
+// polar bears: decoration beside the slope, and (in Endless) the odd one wandering across it
+const bearMat = lam(0xf4f1e6), bearDark = lam(0x1d1d1d);
+const animals = [];
+function makeBear() {
+  const g = new THREE.Group(), legs = [];
+  const part = (w, h, d, x, y, z, m = bearMat) => { const o = new THREE.Mesh(box(w, h, d), m); o.position.set(x, y, z); g.add(o); return o; };
+  part(1.3, 1.1, 2.2, 0, 1.2, 0); part(1.1, 0.4, 0.9, 0, 1.8, -0.4);                        // body, shoulder hump
+  part(0.75, 0.7, 0.8, 0, 1.5, -1.35); part(0.42, 0.36, 0.45, 0, 1.36, -1.9);               // head, snout
+  part(0.16, 0.12, 0.06, 0, 1.47, -2.13, bearDark);
+  for (const sx of [-1, 1]) { part(0.08, 0.08, 0.04, sx * 0.2, 1.66, -1.76, bearDark); part(0.18, 0.18, 0.1, sx * 0.27, 1.9, -1.2); }
+  part(0.25, 0.25, 0.2, 0, 1.4, 1.15);                                                      // tail
+  for (const [x, z] of [[-0.42, -0.75], [0.42, -0.75], [-0.42, 0.75], [0.42, 0.75]]) {
+    const pivot = new THREE.Group(); pivot.position.set(x, 1.0, z); g.add(pivot);
+    const leg = new THREE.Mesh(box(0.38, 1.0, 0.42), bearMat); leg.position.y = -0.5; pivot.add(leg);
+    legs.push(pivot);
+  }
+  return { g, legs };
+}
+function addBear(x, z, vx, vz, crossing) {
+  if (crossing && checkpoints.some(c => Math.abs(z - c.z) < 6)) return;
+  const { g, legs } = makeBear(); g.position.set(x, 0, z); g.scale.setScalar(1.15); world.add(g);
+  const a = { g, legs, vx, vz, ph: rand(0, 6) };
+  animals.push(a);
+  if (crossing) {
+    const o = { kind: 'bear', x, z, r: 1.4, h: 2.4, vx, mesh: g };
+    obstacles.push(o); movers.push(o); a.mover = o;
+  } else decor.push({ z: z - 3, mesh: g });
+}
+function updateAnimals(dt) {
+  for (const a of animals) {
+    if (!a.mover) { a.g.position.x += a.vx * dt; a.g.position.z += a.vz * dt; }
+    const vx = a.mover ? a.mover.vx : a.vx, vz = a.mover ? 0 : a.vz;
+    a.g.rotation.y = Math.atan2(-vx, -vz);   // face the way it's walking
+    const sw = Math.sin(time * 5 + a.ph) * 0.5;
+    a.legs.forEach((l, i) => { l.rotation.x = (i === 0 || i === 3) ? sw : -sw; });   // diagonal gait
+  }
+}
+function featureBear(z, d) {
+  const n = 1 + (d > 0.5 && crng() < 0.5 ? 1 : 0);
+  for (let i = 0; i < n; i++) addBear(wr(-10, 10), z - 10 - i * 22, (crng() < 0.5 ? -1 : 1) * wr(3, 4.5), 0, true);
+  return [n * 22 + 26, 0];
+}
+
+// Agartha crystals: decoration, and obstacles that replace rocks underground
+const crystalGeo = merged([
+  { geo: new THREE.OctahedronGeometry(0.5, 0), color: 0x3cf2ff, m: new THREE.Matrix4().makeScale(1, 2.4, 1).premultiply(T(0, 1.2, 0)) },
+  { geo: new THREE.OctahedronGeometry(0.35, 0), color: 0xc264ff, m: new THREE.Matrix4().makeRotationZ(0.5).multiply(new THREE.Matrix4().makeScale(1, 2, 1)).premultiply(T(0.45, 0.6, 0.1)) },
+  { geo: new THREE.OctahedronGeometry(0.3, 0), color: 0x7cf7d4, m: new THREE.Matrix4().makeRotationZ(-0.6).multiply(new THREE.Matrix4().makeScale(1, 2, 1)).premultiply(T(-0.4, 0.5, -0.15)) },
+  { geo: new THREE.OctahedronGeometry(0.25, 0), color: 0xe0aaff, m: new THREE.Matrix4().makeRotationX(0.5).multiply(new THREE.Matrix4().makeScale(1, 1.8, 1)).premultiply(T(0, 0.4, 0.4)) },
+]);
+const crystals = new Pool(crystalGeo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0x2a1650 }), 420);
+// big rocky mountains right beside the slope (and purple crystal-topped ones underground)
+const cliffParts = (base, dark, top) => merged([
+  { geo: new THREE.DodecahedronGeometry(5, 0), color: base, m: new THREE.Matrix4().makeScale(1, 1.5, 1).premultiply(T(0, 3, 0)) },
+  { geo: new THREE.DodecahedronGeometry(3.5, 0), color: dark, m: T(3.2, 2, 2) },
+  { geo: new THREE.DodecahedronGeometry(3, 0), color: dark, m: T(-3.2, 1.5, -2) },
+  { geo: new THREE.DodecahedronGeometry(3.4, 0), color: top, m: new THREE.Matrix4().makeScale(1, 0.45, 1).premultiply(T(0, 7.3, 0)) },
+]);
+const cliffs = new Pool(cliffParts(0x8a94a3, 0x6f7a8a, 0xf2f7fb), vcol, 140);
+const agCliffs = new Pool(cliffParts(0x3a2466, 0x2c1a52, 0x7cf7d4), vcol, 140);
+
+// the cave: a mountain beside the slope with a glowing mouth you can ride into
+const caveRock = lam(0x737d8c), caveSnow = lam(0xf2f7fb), caveDark = new THREE.MeshBasicMaterial({ color: 0x07020f });
+const caveGlow = lam(0x7b2cbf, { emissive: 0x9d4edd, emissiveIntensity: 1 }), caveCrystal = lam(0x3cf2ff, { emissive: 0x1aa6b8, emissiveIntensity: 1 });
+const caveSignTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96; const g = c.getContext('2d');
+  g.fillStyle = '#1b0b33'; g.fillRect(0, 0, 256, 96); g.strokeStyle = '#7cf7d4'; g.lineWidth = 5; g.strokeRect(4, 4, 248, 88);
+  g.fillStyle = '#7cf7d4'; g.font = '900 40px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('AGARTHA', 128, 50);
+  g.fillStyle = '#ffd166'; g.font = '800 20px system-ui, sans-serif'; g.fillText('x2 POINTS', 128, 80);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+function featureCave(z) {
+  const side = crng() < 0.5 ? -1 : 1, mz = z - 70, cx = side * 10.5;
+  const g = new THREE.Group(); g.position.set(0, 0, mz);
+  const R = (geo, m, x, y, zz, sx = 1, sy = 1, sz = 1) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, zz); o.scale.set(sx, sy, sz); g.add(o); return o; };
+  // the mountain stays outside the slope (|x| > 13.5) apart from the arch around the mouth
+  R(new THREE.ConeGeometry(26, 42, 7), caveRock, side * 38, 19, -22);
+  R(new THREE.ConeGeometry(10.5, 16, 7), caveSnow, side * 38, 33.2, -22);
+  R(new THREE.DodecahedronGeometry(8, 0), caveRock, side * 25, 6, -8, 1, 1.3, 1.2);
+  R(new THREE.DodecahedronGeometry(6, 0), caveRock, side * 18, 9, -18);
+  R(new THREE.DodecahedronGeometry(3.6, 0), caveSnow, side * 18, 14.5, -18, 1, 0.5, 1);
+  R(box(1.6, 7, 3.5), caveRock, side * 7, 3.5, -0.8);                     // inner pillar of the mouth
+  R(box(1.6, 7, 3.5), caveRock, side * 14, 3.5, -0.8);                    // outer pillar
+  R(box(8.6, 2.4, 4), caveRock, cx, 7.6, -0.8);                           // lintel
+  R(new THREE.DodecahedronGeometry(4, 0), caveRock, cx, 10.2, -2.5, 1.4, 0.8, 1);
+  R(new THREE.DodecahedronGeometry(2.6, 0), caveSnow, cx, 12.6, -2.5, 1.3, 0.4, 1);
+  R(box(5.6, 6.4, 0.4), caveDark, cx, 3.2, -2.6);                         // the dark mouth
+  R(box(4.2, 4.6, 0.1), caveGlow, cx, 2.6, -2.3);                          // purple glow deep inside
+  for (const [dx, y, s] of [[-2.2, 0.6, 1.4], [2.3, 0.5, 1.2], [-1.6, 6, 0.8], [1.8, 5.8, 0.9]]) {
+    const c = R(new THREE.OctahedronGeometry(0.5, 0), caveCrystal, cx + dx, y, -1.6, s, s * 2, s); c.rotation.z = dx * 0.15;
+  }
+  // sign and glowing arrows on the snow pointing into the mouth
+  const sign = new THREE.Group(); sign.position.set(side * 3.5, 0, 32); g.add(sign);
+  for (const sx of [-1.1, 1.1]) { const post = new THREE.Mesh(box(0.15, 2.6, 0.15), postMat); post.position.set(sx, 1.3, 0); sign.add(post); }
+  const board = new THREE.Mesh(box(3, 1.15, 0.1), [postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: caveSignTex }), postMat]); board.position.y = 2.7; sign.add(board);
+  for (const [t, zz] of [[0.25, 22], [0.55, 13], [0.85, 5]]) {
+    const ch = chevron(caveGlow, 1.6, 0.3); ch.rotation.x = -Math.PI / 2; ch.rotation.z = -side * 0.9; ch.position.set(cx * t, 0.06, zz); g.add(ch);
+  }
+  world.add(g); decor.push({ z: mz - 40, mesh: g });
+  caves.push({ x: cx, z: mz, used: false });
+  for (const sx of [7, 14]) obstacles.push({ kind: 'rock', x: side * sx, z: mz - 0.8, r: 0.9, h: 7, mesh: new THREE.Group() });
+  for (let i = 0; i < 12; i++) { const t = i / 11; addCoin(cx * (1 - Math.cos(Math.PI * t)) / 2, 1.2, mz + 40 - t * 40); }
+  return [90, 0];
+}
+// the way back out of Agartha: a ring of light across the whole slope
+function addPortal(z) {
+  const g = new THREE.Group(); g.position.set(0, 0, z);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(13.5, 0.7, 8, 40), lam(0xffd166, { emissive: 0xffb000, emissiveIntensity: 1 })); ring.position.y = 4; g.add(ring);
+  const disc = new THREE.Mesh(new THREE.CircleGeometry(13, 40), new THREE.MeshBasicMaterial({ color: 0xfff3c4, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  disc.position.y = 4; g.add(disc);
+  world.add(g); decor.push({ z: z - 5, mesh: g });
+  portal = { z, mesh: g, disc };
+}
+function pickAgartha() {
+  const w = [['ramp', 16], ['big', 12], ['rollers', 9], ['table', 9], ['stepdown', 6], ['mega', 6], ['line', 9], ['bounce', 8], ['boost', 8], ['rail', 9], ['railKick', 7], ['rocks', 12], ['snake', 7]];
+  let r = crng() * w.reduce((a, [, v]) => a + v, 0);
+  for (const [k, v] of w) if ((r -= v) < 0) return k;
+  return 'ramp';
+}
 function pickFeature(d) {
   const w = [
     ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 12 + 10 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
     ['crevasse', d > 0.05 ? 7 + 10 * d : 0], ['logs', d > 0.02 ? 6 + 10 * d : 0], ['balls', d > 0.12 ? 12 * d : 0], ['field', d > 0.2 ? 12 * d : 0],
+    ['bear', mode === 'race' ? 0 : d > 0.08 ? 6 : 0],
   ];
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of w) if ((r -= v) < 0) return k;
@@ -1236,13 +1376,18 @@ function pickFeature(d) {
 function spawnFeature() {
   const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
   if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
-  const k = pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d);
+  if (mode !== 'race') {
+    if (zone === 'agartha') { if (D > -zoneEndZ - 60) { if (!portal) addPortal(zoneEndZ); spawnZ -= 80; return; } }
+    else if (D > nextCaveD) { nextCaveD = Infinity; spawnZ -= featureCave(z)[0]; return; }
+  }
+  const k = zone === 'agartha' ? pickAgartha() : pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d);
   const f = {
     ramp: () => featureRamp(z, false, sp), big: () => featureRamp(z, true, sp), rail: () => featureRail(z, sp, false), railKick: () => featureRail(z, sp, true),
     rocks: () => featureRocks(z, d), slalom: () => featureSlalom(z, d), snake: () => featureCoinSnake(z), crevasse: () => featureCrevasse(z, d),
     logs: () => featureLogs(z, d), balls: () => featureBalls(z, d), field: () => featureField(z, d),
     rollers: () => featureRollers(z, d), table: () => featureTabletop(z, sp, d), stepdown: () => featureStepDown(z, sp),
     mega: () => featureMega(z, sp), line: () => featureKickerLine(z, sp), bounce: () => featureBounce(z), boost: () => featureBoost(z, d),
+    bear: () => featureBear(z, d),
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
@@ -1306,8 +1451,22 @@ function addLantern(x, z) {
   if (theme.lamp) { const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 })); gl.scale.set(3.2, 3.2, 1); gl.position.y = 2.75; g.add(gl); }
   world.add(g); decor.push({ z, mesh: g });
 }
+let decorN = 0;   // counts decor rows (4 m apart) for things that repeat every so often
 function spawnDecor(z) {
   const forest = mode === 'race';
+  decorN++;
+  if (zone === 'agartha') {
+    // underground: glowing crystal clusters, purple crystal-topped mountains, floating lights
+    for (const side of [-1, 1]) {
+      for (let i = 0, n = Math.random() < 0.6 ? 1 : 2; i < n; i++) decor.push({ z, idx: crystals.add(side * rand(15, 45), 0, z - rand(0, 4), rand(0.8, 2.6), rand(0, 6), rand(1, 3)), pool: crystals });
+      if (Math.random() < 0.34) decor.push({ z, idx: agCliffs.add(side * rand(26, 34), 0, z - rand(0, 4), rand(1.4, 2.6), rand(0, 6), rand(1.4, 2.4)), pool: agCliffs });
+    }
+    if (Math.random() < 0.12) {
+      const gl = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: Math.random() < 0.5 ? 0x7cf7d4 : 0xc264ff, transparent: true, depthWrite: false, opacity: 0.8 }));
+      gl.scale.setScalar(rand(1.5, 3)); gl.position.set(rand(-30, 30), rand(4, 14), z); world.add(gl); decor.push({ z, mesh: gl });
+    }
+    return;
+  }
   for (const side of [-1, 1]) {
     const n = forest ? 3 + (Math.random() < 0.5 ? 1 : 0) : Math.random() < 0.55 ? 1 : 2;
     for (let i = 0; i < n; i++) {
@@ -1315,11 +1474,16 @@ function spawnDecor(z) {
       addTree(x, z - rand(0, 4), forest ? rand(1, 2.1) : rand(0.8, 1.7), false);
     }
   }
-  if (!forest && Math.round(z) % 48 === 0) addLiftTower(z);
+  if (!forest) for (const side of [-1, 1]) if (Math.random() < 0.34) {
+    // rocky mountains right beside you
+    decor.push({ z, idx: cliffs.add(side * rand(25, 33), 0, z - rand(0, 4), rand(1.4, 2.6), rand(0, 6), rand(1.2, 2.2)), pool: cliffs });
+  }
+  if (!forest && Math.random() < 0.012) { const side = Math.random() < 0.5 ? -1 : 1; addBear(side * rand(17, 24), z, 0, (Math.random() < 0.5 ? -1 : 1) * rand(1, 1.6), false); }
+  if (!forest && decorN % 12 === 0) addLiftTower(z);
   if (!forest && Math.random() < 0.025) addCabin((Math.random() < 0.5 ? -1 : 1) * rand(19, 34), z);
   if (!forest && Math.random() < 0.02) addSnowman((Math.random() < 0.5 ? -1 : 1) * rand(16.5, 24), z);
   if (!forest && Math.random() < 0.01) addIgloo((Math.random() < 0.5 ? -1 : 1) * rand(22, 36), z);
-  if (!forest && theme.lamp && Math.round(z) % 32 === 0) for (const sx of [-1, 1]) addLantern(sx * (X_LIMIT + 1.8), z);
+  if (!forest && theme.lamp && decorN % 8 === 0) for (const sx of [-1, 1]) addLantern(sx * (X_LIMIT + 1.8), z);
   if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-40, 40), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
 }
 
@@ -1336,6 +1500,8 @@ function cleanup(pz) {
   keep(coins, c => c.z, c => { if (!c.taken) coinPool.remove(c.idx); });
   keep(decor, o => o.z, o => o.pool ? o.pool.remove(o.idx) : world.remove(o.mesh));
   keep(shapes, q => q.z0 - q.L, q => world.remove(q.mesh));
+  keep(caves, c => c.z, () => {});
+  keep(animals, a => a.g.position.z - 4, a => { if (a.mover) world.remove(a.g); });   // decor bears are removed with the decor
 }
 function clearWorld() {
   cleanup(-1e9);
@@ -1503,7 +1669,7 @@ function award(name, pts, perfect) {
   if (p.comboTimer > 0) p.combo++; else { p.combo = 1; p.comboTotal = 0; }
   p.comboTimer = COMBO_WINDOW;
   const mult = Math.min(1 + 0.5 * (p.combo - 1), 8);
-  const total = Math.round(pts * mult);
+  const total = Math.round(pts * mult * (zone === 'agartha' ? 2 : 1));   // Agartha pays double
   p.trickScore += total; p.comboTotal += total;
   showTrick(name, `+${total.toLocaleString()}${mult > 1 ? `  x${mult}` : ''}`, perfect);
   missionToast(track('combo', p.combo, 'max'));
@@ -1606,20 +1772,44 @@ function crash(reason) {
   Platform.gameplayStop();
 }
 
+// ---------- Agartha: in through a cave, out through the ring of light ----------
+function fadeScreen(color) {
+  const f = $('fade'); f.style.transition = 'none'; f.style.background = color; f.style.opacity = 1;
+  void f.offsetWidth; f.style.transition = 'opacity 1.2s ease-out'; f.style.opacity = 0;
+}
+function switchZone(z) {
+  zone = z;
+  clearWorld(); portal = null;
+  spawnZ = p.z - 40; decorZ = p.z + 30; p.lastRail = null;
+}
+function enterAgartha() {
+  prevTheme = theme.id || 'day';
+  switchZone('agartha'); zoneEndZ = p.z - AGARTHA_LEN;
+  setTheme('agartha'); setSlope(SLOPES.agartha);
+  scene.fog.near = 45; scene.fog.far = 200;
+  fadeScreen('#000'); p.speed += 6;
+  showTrick('AGARTHA', 'Double points!', true);
+  [110, 165, 220, 330].forEach((f, i) => Sfx.tone(f, 1.8, 'sine', 0.16, null, i * 0.14)); Sfx.perfect();
+}
+function exitAgartha() {
+  switchZone('normal'); nextCaveD = -p.z + rand(1400, 2200);
+  setTheme(prevTheme); setSlope(SLOPES.endless);
+  scene.fog.near = 70; scene.fog.far = 230;
+  fadeScreen('#fff'); showTrick('Back on the mountain', '', false); Sfx.perfect();
+}
+
 // ---------- per-frame player update ----------
 function updatePlayer(dt) {
   const inp = readInput();
   const [gh0, gs0] = groundAt(p.x, p.z);
-  p.distScore += p.speed * dt * Math.max(1, p.speed / 25);   // going faster scores faster
+  p.distScore += p.speed * dt * Math.max(1, p.speed / 25) * (zone === 'agartha' ? 2 : 1);   // going faster scores faster
 
   // --- speed: gravity pulls you downhill, drag caps it (cap rises with distance) ---
   if (p.grounded) {
-    const brake = inp.v < -0.3;   // you're always tucked; S slows you down
-    const vt = baseSpeed(-p.z) * 1.1 * (brake ? 0.55 : 1);
+    const vt = baseSpeed(-p.z) * 1.1;   // you're always tucked
     let acc = 12 * (1 - (p.speed / vt) ** 2);              // downhill pull vs drag
     acc -= 0.35 * G * gs0 / Math.sqrt(1 + gs0 * gs0);      // climbing a kicker costs a bit of speed
     acc -= (isBoard() ? 4.5 : 7) * Math.abs(Math.sin(p.heading));   // carving scrubs speed (a board holds its edge better)
-    if (brake) { acc -= 10; if (p.speed > 10 && Math.random() < 0.7) Particles.emit(p.x, 0.05, p.z - 0.6, 2, 2, 2.5, 0xffffff, -2); }
     p.speed = Math.max(8, p.speed + acc * dt);
   } else if (!p.grinding) {
     p.speed = Math.max(8, p.speed - 0.6 * dt);
@@ -1742,12 +1932,16 @@ function updatePlayer(dt) {
       continue;
     }
     if (Math.abs(dz) < o.r + 0.5 && Math.abs(dx) < o.r + 0.32 && p.y < o.h)
-      return crash({ tree: 'Hugged a tree', rock: 'Hit a rock', ball: 'Flattened by a snowball' }[o.kind]);
+      return crash({ tree: 'Hugged a tree', rock: 'Hit a rock', ball: 'Flattened by a snowball', bear: 'Mauled by a polar bear', crystal: 'Impaled on a crystal' }[o.kind]);
+    if (o.kind === 'bear' && !o.roared && dz < 0 && dz > -28) { o.roared = true; Sfx.tone(120, 0.7, 'sawtooth', 0.16, 70); Sfx.noise(0.6, 0.35, 500); }
     if (!o.passed && p.z < o.z - o.r) {
       o.passed = true;
       if (Math.abs(dx) < o.r + 1.1 && p.y < o.h + 0.8) { p.trickScore += 50; showTrick('Close call!', '+50', false); Sfx.near(); missionToast(track('near', 1)); }
     }
   }
+  // the cave mouth (ride in to go underground) and the way back out
+  for (const c of caves) if (!c.used && p.z < c.z - 1.5) { c.used = true; if (Math.abs(p.x - c.x) < 3.2 && p.y < 6) return enterAgartha(); }
+  if (zone === 'agartha' && portal && p.z < portal.z) return exitAgartha();
   for (const c of crevasses) {
     if (!c.passed && p.z < c.z0 - c.L) { c.passed = true; p.trickScore += 300; showTrick('Crevasse cleared!', '+300', false); Sfx.trick(1); missionToast(track('crevasse', 1)); }
   }
@@ -1997,6 +2191,9 @@ function updateHUD(dt) {
   } else {
     const s = totalScore();
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
+    const ag = zone === 'agartha';
+    hud.race.classList.toggle('hidden', !ag);
+    if (ag) hud.race.textContent = `AGARTHA  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
   }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
   hud.speed.textContent = `${Math.round(p.speed * 3.6)} km/h`;
@@ -2008,7 +2205,7 @@ function updateHUD(dt) {
   }
   if (hintT > 0) { hintT -= dt; if (hintT <= 0) hud.hint.style.opacity = 0; }
 }
-const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> jump &nbsp; <kbd>S</kbd> slow down<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; hold <kbd>G</kbd> grab, tap <kbd>G</kbd> again to switch grab<br><kbd>C</kbd> camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
+const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> jump<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; hold <kbd>G</kbd> grab, tap <kbd>G</kbd> again to switch grab<br><kbd>C</kbd> camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
 const HINT_TOUCH = 'Drag to steer, tap to jump<br>In the air: drag up/down to flip, sideways to spin, diagonally to sideflip, hold still to grab';
 
 // ---------- game flow ----------
@@ -2019,6 +2216,8 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 function startRun(m = mode) {
   mode = m;
+  zone = 'normal'; portal = null; nextCaveD = 900 + rand(0, 400);
+  setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
   Sfx.init();
@@ -2107,6 +2306,7 @@ async function restartWithAd() {
 }
 
 function toMenu() {
+  zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
@@ -2164,7 +2364,8 @@ function frame(now) {
     for (const o of movers) {
       o.x += o.vx * dt;
       if (Math.abs(o.x) > 12.5) { o.x = Math.sign(o.x) * 12.5; o.vx = -o.vx; }
-      o.mesh.position.x = o.x; o.mesh.rotation.z -= o.vx * dt / 1.15;
+      o.mesh.position.x = o.x;
+      if (o.kind === 'ball') o.mesh.rotation.z -= o.vx * dt / 1.15;
     }
     if (state === 'play') {
       missionToast(track('score', totalScore(), 'max'));
@@ -2184,6 +2385,8 @@ function frame(now) {
   Particles.update(dt);
   Debris.update(dt);
   updatePads(dt);
+  updateAnimals(dt);
+  if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (p.boostT > 0) {
     p.boostT = Math.max(0, p.boostT - dt * 0.9);
     if (state === 'play') Particles.emit(p.x + rand(-0.4, 0.4), p.y + rand(0.2, 1.4), p.z + 0.8, 2, 0.3, 0.2, Math.random() < 0.5 ? 0x22d3ee : 0x9bf6ff, 14);
@@ -2215,4 +2418,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad };
+window.__game = { p, race, camera, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, enterAgartha, get zone() { return zone; }, get caves() { return caves; }, caveSoon() { nextCaveD = -p.z + 20; } };
