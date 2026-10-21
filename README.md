@@ -8,6 +8,10 @@ python3 -m http.server 8123
 ```
 Open http://localhost:8123
 
+The alpine landscape uses broad snow-covered foothills, layered distant ridges, and deterministic
+groves with irregular clearings. `landscape.js` keeps scenery placement separate from the course RNG,
+so the daily race layout stays consistent. Run `npm test` for terrain continuity and scatter checks.
+
 ## Deploy to Vercel (free)
 1. Import the GitHub repo on vercel.com → **Add New → Project** → **Deploy** (static site, no settings needed).
 2. Every push to `main` redeploys automatically.
@@ -17,10 +21,24 @@ Open http://localhost:8123
 Turn it on once in Vercel → your project → **Analytics** → **Enable**. It only loads on the deployed site, not on localhost or CrazyGames.
 
 ## Global leaderboards (Supabase)
-1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes
-   (the points-based Daily Race needs the `racepts` board added in this version).
-2. The project URL and publishable key live in `config.js`. The browser can only call the validated
-   `submit_score`, `get_leaderboard` and `get_ghosts` functions — it has no direct table access.
+1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes.
+   Then run `supabase/points-and-chat.sql` for the score-based races, period leaderboards, and global chat.
+   Both files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
+2. The project URL and publishable key live in `config.js`. The browser can only call the
+   validated score and chat functions — it has no direct table access.
+
+Endless opens first and has All time, Weekly, and Daily rankings. Weekly resets Monday at 00:00 UTC;
+Daily resets at 00:00 UTC. Each period uses the best run earned during that period, even when it is below
+a player's lifetime best. Period tracking starts with this update; old lifetime scores stay on All time.
+Daily Race awards riding/trick points plus 500 per checkpoint. Highest points wins; faster elapsed time
+breaks equal scores. Scored race records are stored separately from the old timed records.
+Leading any active board displays a temporary golden crown above your rider, refreshed every 30 seconds.
+
+Global chat shares the latest 50 messages from the last seven days. Players claim a name before sending,
+messages are limited to 240 characters and one per five seconds, and chat identity tokens travel with cloud saves.
+Players can mute others on their device and report messages. Reports are stored in `public.chat_reports` for
+owner review; hide a message by setting `chat_messages.hidden = true`, or mute a sender with
+`chat_sessions.muted = true` in the Supabase dashboard. These tables are not browser-accessible.
 
 ## Cloud saves & moving to a new domain
 Every change to a player's progress (coins, items, missions, name) is backed up to Supabase automatically
@@ -66,9 +84,11 @@ Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). 
 
 ## Files
 - `game.js` — rendering, physics, controls, world generation, sky themes, 3D closet, race mode
+- `landscape.js` — alpine heightfield and world-space tree groves
 - `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), chests & odds, missions
 - `ui.js` — menus, shop (all items + 3D preview + chests), locker (owned items), profile, leaderboards, results
 - `cloud.js` — automatic cloud saves, domain hand-off · `net.js` — Supabase RPC helper
+- `chat.js` — shared chat, reconnect/polling, mute and report controls
 - `icons.js` — the hand-made SVG icon set
 - `ads.js` — rewarded / between-run ads (CrazyGames, Google H5, dev fake)
 - `supabase/schema.sql` — leaderboard table + functions

@@ -113,6 +113,13 @@
   .lbTitle { display: flex; align-items: center; gap: 8px; font-size: 20px; font-weight: 900; letter-spacing: -.02em; }
   .lbTitle .ic { color: var(--gold); width: 24px; height: 24px; }
   .tabs.mini .tab { padding: 6px; font-size: 12px; }
+  .tabs.mini .tab { min-width: 0; }
+  .lbPeriods { margin-top: -6px; }
+  .lbPeriods .tab { padding: 6px; font-size: 12px; }
+  .lbPeriods .tab:disabled { opacity: .4; }
+  .rowTime { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .item.first { background: linear-gradient(90deg, rgba(255,201,60,.19), rgba(255,255,255,.07)); box-shadow: inset 0 0 0 1px rgba(255,201,60,.24); }
+  .item.first .rank .ic { color: var(--gold); fill: rgba(255,201,60,.22); }
   #miniLb { flex: 1; min-height: 150px; }
   #miniLb .item { padding: 8px 10px; }
   .saveBox { display: flex; flex-direction: column; gap: 8px; background: var(--ink-2); border-radius: var(--r); padding: 12px; }
@@ -342,9 +349,11 @@
     <div class="card lbCard">
       <div class="lbTop">
         <div class="lbTitle"><span id="icTrophy"></span>Leaderboard</div>
-        <div class="tabs mini"><button class="tab on" data-mlb="race">Today's race</button><button class="tab" data-mlb="endless">Endless</button></div>
+        <div class="tabs mini"><button class="tab on" data-mlb="endless">Endless</button><button class="tab" data-mlb="race">Today's race</button></div>
+        <div class="tabs mini lbPeriods miniPeriod"><button class="tab on" data-ml-period="all">All time</button><button class="tab" data-ml-period="weekly">Weekly</button><button class="tab" data-ml-period="daily">Daily</button></div>
       </div>
       <div id="miniLb" class="list"><div class="note">Loading…</div></div>
+      <button id="globalChatBtn" class="btn">Global chat</button>
       <button id="lbBtn" class="btn">See full leaderboard</button>
     </div>
   </div>

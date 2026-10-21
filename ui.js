@@ -8,6 +8,7 @@ import {
 import { icon } from './icons.js';
 import { rpc } from './net.js';
 import { Cloud } from './cloud.js';
+import { initChat } from './chat.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -20,13 +21,13 @@ if (!save.pid) { save.pid = (crypto.randomUUID ? crypto.randomUUID() : String(Ma
 
 // ---------- leaderboard / ghost client (Supabase RPC over plain fetch) ----------
 const LB = {
-  async get(board, day, limit = 20) {
-    try { return await rpc('get_leaderboard', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit }); }
+  async get(board, day, limit = 20, period = 'all') {
+    try { return await rpc('get_leaderboard_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit, p_period: period }); }
     catch { return null; }
   },
-  async submit(board, value, day, ghost) {
+  async submit(board, value, day, time, ghost) {
     if (!save.name) return null;
-    try { return await rpc('submit_score', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_ghost: ghost || null }); }
+    try { return await rpc('submit_score_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_time: time ?? null, p_ghost: ghost || null }); }
     catch { return null; }
   },
 };
@@ -40,7 +41,7 @@ LB.rename = async name => {
   catch (e) { return /\b404\b/.test(e.message) ? undefined : null; }
 };
 export async function fetchGhosts(day) {
-  try { return (await rpc('get_ghosts', { p_day: day, p_pid: save.pid })) || []; }
+  try { return (await rpc('get_ghosts_v2', { p_day: day, p_pid: save.pid })) || []; }
   catch { return []; }
 }
 
@@ -90,8 +91,8 @@ const fmtCooldown = ms => { const m = Math.ceil(ms / 60000); return m >= 60 ? `$
 export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
-  const rb = save.raceBest?.[today()];
-  $('raceSub').textContent = rb ? `Forest course · your best ${fmtTime(rb)}` : 'Forest course · new every day';
+  const rs = save.raceScores?.[today()];
+  $('raceSub').textContent = rs ? `Forest course · ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
   pb.innerHTML = save.name ? `${icon('user')}<b>${esc(save.name)}</b>` : `${icon('user')}<b>Claim your name</b>`;
@@ -105,18 +106,44 @@ export function showMenuUI() {
 }
 
 // ---------- menu leaderboard preview ----------
-let miniTab = 'race', miniCache = {};
+let miniTab = 'endless', miniPeriod = 'all', miniCache = {}, miniRequest = 0, leaderRequest = 0;
+let leaderPromise = null, leaderFetchedAt = 0;
 async function miniBoard(force) {
   const el = $('miniLb'); if (!el) return;
   document.querySelectorAll('[data-mlb]').forEach(b => b.classList.toggle('on', b.dataset.mlb === miniTab));
-  const key = miniTab, c = miniCache[key];
+  document.querySelectorAll('[data-ml-period]').forEach(b => b.classList.toggle('on', b.dataset.mlPeriod === miniPeriod));
+  document.querySelector('.miniPeriod')?.classList.toggle('hidden', miniTab === 'race');
+  const key = `${today()}:${miniTab}:${miniPeriod}`, token = ++miniRequest, c = miniCache[key];
   if (c && !force && Date.now() - c.at < 60000) { el.innerHTML = c.html; return; }
   if (!c) el.innerHTML = '<div class="note">Loading…</div>';
-  const data = await LB.get(key, key === 'race' ? today() : null, 5);
-  let html = lbRows(data, key, 5);
-  if (data && !data.me) html += `<div class="note">${key === 'race' ? "You haven't raced today." : 'Set a score to get on the board.'}</div>`;
+  const board = miniTab === 'race' ? 'racepts' : 'endless', period = board === 'racepts' ? 'all' : miniPeriod;
+  const data = await LB.get(board, board === 'racepts' ? today() : null, 5, period);
+  let html = lbRows(data, board, 5);
+  if (data && !data.me) html += `<div class="note">${board === 'racepts' ? "You haven't raced today." : 'Set a score to get on the board.'}</div>`;
   miniCache[key] = { at: Date.now(), html };
-  if (miniTab === key) el.innerHTML = html;
+  if (token === miniRequest && miniTab === (board === 'racepts' ? 'race' : 'endless') && (board === 'racepts' || miniPeriod === period)) el.innerHTML = html;
+}
+
+async function refreshLeader(force = false) {
+  if (!save.name) {
+    window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: false } }));
+    return;
+  }
+  if (leaderPromise) {
+    if (!force) return leaderPromise;
+    ++leaderRequest;
+    await leaderPromise;
+  }
+  if (!force && Date.now() - leaderFetchedAt < 25000) return;
+  const token = ++leaderRequest;
+  leaderPromise = Promise.all([
+    LB.get('endless', null, 1, 'all'), LB.get('endless', null, 1, 'weekly'),
+    LB.get('endless', null, 1, 'daily'), LB.get('racepts', today(), 1, 'all'),
+  ]).then(results => {
+    leaderFetchedAt = Date.now();
+    if (token === leaderRequest) window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: results.some(data => data?.me?.rank === 1) } }));
+  }).finally(() => { leaderPromise = null; });
+  return leaderPromise;
 }
 
 // ---------- profile ----------
@@ -138,9 +165,9 @@ function renderHelp() {
   openPanel('How to play', `<div class="help">
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
     <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, coins buy chests. Landing upside down or hitting trees and rocks ends the run.</div>
-    <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Ride through all 11 checkpoints and reach the finish as fast as you can.
-      Missing a checkpoint costs 3 seconds. Race against other players' ghosts.</div>
-    <h4>Leaderboards</h4><div class="item">Claim a name once and your best Endless score and today's race score go on the world boards automatically.</div>
+    <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
+      </div>
+    <h4>Leaderboards</h4><div class="item">Claim a name once to save your Endless scores and daily race results. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
   </div>`);
 }
 
@@ -358,14 +385,19 @@ function nextToast() {
 }
 
 // ---------- leaderboards ----------
-let lbTab = 'race';
+let lbTab = 'endless', lbPeriod = 'all', lbRequest = 0;
 async function renderLeaderboard() {
-  const tabs = `<div class="tabs"><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button></div>`;
-  openPanel('Leaderboard', `${tabs}<div id="nameSlot"></div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
+  const token = ++lbRequest;
+  const tabs = `<div class="tabs"><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button></div>`;
+  const periods = `<div class="tabs lbPeriods ${lbTab === 'race' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button><button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button><button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
+  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : 'Leaders earn a golden crown while they hold first place. Weekly resets Monday at 00:00 UTC; daily resets at 00:00 UTC.'}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
+  $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
-  const data = await LB.get(lbTab, lbTab === 'race' ? today() : null);
-  const el = $('lbList'); if (el) el.innerHTML = lbRows(data, lbTab, 20);
+  const board = lbTab === 'race' ? 'racepts' : 'endless';
+  const data = await LB.get(board, board === 'racepts' ? today() : null, 20, board === 'racepts' ? 'all' : lbPeriod);
+  if (token !== lbRequest || !$('lbList')) return;
+  $('lbList').innerHTML = lbRows(data, lbTab, 20);
 }
 
 // Claim a leaderboard name, or (with a name already) change it. Names are unique; renames are limited to one
@@ -377,7 +409,7 @@ const NAME_ERR = {
 function nameForm(slot, after, compact, editing = false) {
   if (!slot) return;
   if (save.name && !editing) {
-    slot.innerHTML = compact ? '' : `<div class="nameChip">Playing as <b>${esc(save.name)}</b><button class="btn" id="nameEdit">Change</button></div>`;
+    slot.innerHTML = compact ? '' : `<div class="nameChip">Playing as <b>${esc(save.name)}</b><button class="btn" id="nameEdit">Change</button></div><div class="note">A golden crown marks the current leaderboard leader.</div>`;
     if (!compact) $('nameEdit').onclick = () => nameForm(slot, after, compact, true);
     return;
   }
@@ -400,41 +432,47 @@ function nameForm(slot, after, compact, editing = false) {
     btn.disabled = false; btn.textContent = renaming ? 'Save' : 'Claim';
     if (!res) { $('nameErr').textContent = res === undefined && renaming ? "Name changes aren't switched on yet." : "Couldn't reach the leaderboard. Try again in a moment."; return; }
     if (!res.ok) { $('nameErr').textContent = NAME_ERR[res.error] || 'Something went wrong. Try another name.'; return; }
-    save.name = res.name; persist(); miniCache = {};
+    save.name = res.name; persist(); miniCache = {}; refreshLeader(true);
     if (renaming) nameForm(slot, after, compact);
     after && after();
   };
 }
 
 function lbRows(data, board, limit) {
-  if (!data) return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' ? (save.raceBest?.[today()] ? fmtTime(save.raceBest[today()]) : '—') : save.best.toLocaleString()}</b></div>`;
+  if (!data) {
+    const raceScore = save.raceScores?.[today()]?.score;
+    return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' || board === 'racepts' ? (Number.isFinite(raceScore) ? `${raceScore.toLocaleString()} points` : '—') : save.best.toLocaleString()}</b></div>`;
+  }
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
-  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
-  const rows = data.top.slice(0, limit).map((r, i) => rowHtml(i + 1, r.name, fmt(r.value), r.isMe)).join('');
-  const me = data.me && data.me.rank > limit ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true) : '';
+  const race = board === 'race' || board === 'racepts';
+  const fmt = v => Math.round(v).toLocaleString();
+  const rows = data.top.slice(0, limit).map((r, i) => rowHtml(r.rank ?? i + 1, r.name, fmt(r.value), r.isMe, '', race ? fmtTime(r.time) : '')).join('');
+  const me = data.me && !data.top.slice(0, limit).some(r => r.isMe) ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true, '', race ? fmtTime(data.me.time) : '') : '';
   return rows + me;
 }
-const rowHtml = (rank, name, val, me, extra = '') =>
-  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span><span class="val">${val}</span></div>`;
+const rowHtml = (rank, name, val, me, extra = '', time = '') =>
+  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
 
 // ---------- results ----------
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
 export function showResults(r) {
-  if (r.newBest) recordMoment(r, () => resultsCard(r));
-  else resultsCard(r);
+  const token = ++resultToken;
+  if (r.newBest) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
+  else resultsCard(r, token);
 }
 
-function resultsCard(r) {
+let resultToken = 0;
+function resultsCard(r, token = resultToken) {
   const el = $('over');
   const earned = r.coins + r.bonus + r.missions.total;
   let body;
   if (r.mode === 'race') {
     const field = r.field.length > 1
-      ? `<div class="list">${r.field.map((f, i) => rowHtml(i + 1, f.name, fmtTime(f.t), f.me)).join('')}</div>` : '';
+      ? `<div class="list">${r.field.map((f, i) => rowHtml(f.rank ?? i + 1, f.name, Math.round(f.score).toLocaleString(), f.me, '', fmtTime(f.t))).join('')}</div>` : '';
     body = `
       ${r.newBest ? '<div class="tag">PERSONAL BEST</div>' : ''}
-      <div class="big-num"><small>FINISH TIME</small>${fmtTime(r.time)}</div>
-      <div class="sub">${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · best today ${fmtTime(r.best)}</div>
+      <div class="big-num"><small>RACE POINTS</small>${r.score.toLocaleString()}</div>
+      <div class="sub">${fmtTime(r.time)} elapsed · ${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · points rank first, time breaks ties</div>
       ${field}`;
   } else {
     body = `
@@ -465,20 +503,27 @@ function resultsCard(r) {
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
-  if (save.name) rankRow(r);
+  if (save.name) rankRow(r, token);
   miniCache = {};
 }
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
-async function rankRow(r) {
-  const { board, day, value, ghost } = lbArgs(r);
-  if (!r.submitted) { r.submitted = !!(await LB.submit(board, value, day, ghost)); if (!r.submitted) return; }
-  const data = await LB.get(board, day, 10);
+async function rankRow(r, token) {
+  const { board, day, value, time, ghost } = lbArgs(r);
+  if (!r.submitted) {
+    const res = await LB.submit(board, value, day, time, ghost);
+    r.submitted = !!res?.ok;
+    if (!r.submitted) return;
+    refreshLeader(true);
+  }
+  if (token !== resultToken) return;
+  const data = await LB.get(board, day, 10, 'all');
+  if (token !== resultToken) return;
   const lb = $('resLb');
   if (!lb || !data?.me) return;
-  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'race' ? "Today's rank" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
+  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'racepts' ? "Today's race rank · points first" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
   $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
 }
-const lbArgs = r => ({ board: r.mode, day: r.mode === 'race' ? r.day : null, value: r.mode === 'race' ? r.best : save.best, ghost: r.ghost ? { t: r.ghost.t, f: r.ghost.f } : undefined });
+const lbArgs = r => ({ board: r.mode === 'race' ? 'racepts' : 'endless', day: r.mode === 'race' ? r.day : null, value: r.score, time: r.mode === 'race' ? r.time : null, ghost: r.mode === 'race' && r.newBest && r.ghost ? { t: r.ghost.t, score: r.score, f: r.ghost.f } : undefined });
 
 function overlay() {
   document.getElementById('lbReveal')?.remove();
@@ -498,20 +543,25 @@ function arm(el) {
 }
 
 // The new-record moment: big number → (claim a name) → animated leaderboard with your row flying into place.
-function recordMoment(r, done) {
+function recordMoment(r, done, token) {
   const el = overlay(), card = el.querySelector('#rvCard');
   const finish = () => { el.remove(); done(); };
   el._done = finish;
-  const big = r.mode === 'race' ? fmtTime(r.time) : r.score.toLocaleString();
+  const big = r.score.toLocaleString();
   card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
-    <div class="rv-score">${big}</div><div id="rvStep"></div>`;
+    <div class="rv-score">${big}</div>${r.mode === 'race' ? `<div class="rv-sub">RACE POINTS · ${fmtTime(r.time)} elapsed · time breaks ties</div>` : ''}<div id="rvStep"></div>`;
   cfg.sfx.perfect();
   const step = $('rvStep');
   const go = async () => {
+    if (token !== resultToken || !document.body.contains(el)) return;
     step.innerHTML = '<div class="note">Checking the leaderboard…</div>';
-    const { board, day, value, ghost } = lbArgs(r);
-    r.submitted = !!(await LB.submit(board, value, day, ghost));
-    const data = r.submitted ? await LB.get(board, day, 7) : null;
+    const { board, day, value, time, ghost } = lbArgs(r);
+    const res = await LB.submit(board, value, day, time, ghost);
+    r.submitted = !!res?.ok;
+    if (r.submitted) refreshLeader(true);
+    if (token !== resultToken || !document.body.contains(el)) return;
+    const data = r.submitted ? await LB.get(board, day, 7, 'all') : null;
+    if (token !== resultToken || !document.body.contains(el)) return;
     if (!data?.me) {
       step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now.</div><button class="btn primary" id="rvOk">Continue</button>`;
       $('rvOk').onclick = finish; return;
@@ -529,18 +579,18 @@ function recordMoment(r, done) {
 function revealBoard(el, data, board, done) {
   el._done = done;
   const card = el.querySelector('#rvCard');
-  const fmt = v => board === 'race' ? fmtTime(v) : Math.round(v).toLocaleString();
-  const me = data.me, inTop = me.rank <= data.top.length;
+  const fmt = v => Math.round(v).toLocaleString();
+  const me = data.me, inTop = data.top.some(r => r.isMe);
   let rows = data.top.map((r, i) => ({ rank: i + 1, ...r }));
-  if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, isMe: true }]);
+  if (!inTop) rows = rows.slice(0, 5).concat([{ gap: true }, { rank: me.rank, name: save.name, value: me.value, time: me.time, isMe: true }]);
   const from = Math.min(data.total, me.rank + 40);
   card.innerHTML = `
-    <div class="rv-kicker">${board === 'race' ? "TODAY'S RACE" : 'WORLD LEADERBOARD'}</div>
+    <div class="rv-kicker">${board === 'race' || board === 'racepts' ? "TODAY'S RACE · POINTS FIRST" : 'WORLD LEADERBOARD'}</div>
     ${me.rank === 1 ? `<div class="rv-crown">${icon('crown')}</div>` : ''}
     <div class="rv-rank">#<span id="rvRank">${from}</span></div>
     <div class="rv-sub">${me.rank === 1 ? 'You are number one!' : `out of ${data.total} player${data.total === 1 ? '' : 's'}`}</div>
     <div class="list">${rows.map((r, i) => r.gap ? '<div class="rv-gap">···</div>'
-      : rowHtml(r.rank, r.name, fmt(r.value), r.isMe, r.isMe ? 'rv-row rv-me' : 'rv-row').replace('class="item', `style="animation-delay:${r.isMe ? 1.0 : 0.15 + i * 0.06}s" class="item`)).join('')}</div>
+      : rowHtml(r.rank, r.name, fmt(r.value), r.isMe, r.isMe ? 'rv-row rv-me' : 'rv-row', board === 'racepts' ? fmtTime(r.time) : '').replace('class="item', `style="animation-delay:${r.isMe ? 1.0 : 0.15 + i * 0.06}s" class="item`)).join('')}</div>
     <button class="btn primary" id="rvOk">Continue</button>`;
   $('rvOk').onclick = done;
   const start = performance.now(), D = 1150;
@@ -578,7 +628,7 @@ function confetti(n) {
 async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
-    ? `I did today's Peak Flip race in ${fmtTime(r.time)}. Can you beat my ghost?`
+    ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race in ${fmtTime(r.time)}. Race points rank first, with elapsed time as the tiebreak. Can you beat my ghost?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -600,10 +650,13 @@ export function initUI(c) {
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(freeChestReady() ? 'chests' : shopTab); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
-  $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; renderLeaderboard(); };
+  $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
+  document.querySelectorAll('[data-ml-period]').forEach(b => b.onclick = () => { miniPeriod = b.dataset.mlPeriod; miniBoard(true); });
+  const chat = initChat({ openPanel, nameForm });
+  $('globalChatBtn').onclick = () => chat.openChat();
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };
   addEventListener('keydown', e => {
@@ -611,5 +664,10 @@ export function initUI(c) {
     if ($('lbReveal')) $('rvClose').click();
     else if (!$('panel').classList.contains('hidden')) closePanel();
   });
-  setInterval(() => { if (!$('menu').classList.contains('hidden')) showMenuUI(); }, 30000);
+  refreshLeader();
+  setInterval(() => {
+    if (document.hidden) return;
+    if (!$('menu').classList.contains('hidden')) showMenuUI();
+    refreshLeader();
+  }, 30000);
 }

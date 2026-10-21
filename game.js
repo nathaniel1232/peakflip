@@ -1,4 +1,5 @@
 import * as THREE from './lib/three.module.min.js';
+import { terrainHeight, landscapeTrees } from './landscape.js';
 
 // ============================================================
 //  PEAK FLIP — low-poly ski trick runner
@@ -197,6 +198,18 @@ const treeGeo = merged([
   { geo: new THREE.ConeGeometry(0.7, 1.3, 7), color: 0x2f6b4f, m: T(0, 3.35, 0) },
   { geo: new THREE.ConeGeometry(0.33, 0.5, 7), color: 0xf5f9fc, m: T(0, 3.9, 0) },
 ]);
+// Scenery spruces have uneven, snow-heavy branches; course hazards retain their familiar silhouette.
+function spruceGeometry(tall) {
+  const parts = [{ geo: new THREE.CylinderGeometry(0.12, 0.23, 1.25, 5), color: 0x66554a, m: T(0, 0.6, 0) }];
+  const tiers = tall ? [[1.22, 1.8, 1.45], [1.0, 1.7, 2.35], [0.72, 1.6, 3.25], [0.4, 1.3, 4.05]]
+    : [[1.5, 1.8, 1.4], [1.15, 1.7, 2.3], [0.77, 1.4, 3.1], [0.4, 1.0, 3.75]];
+  tiers.forEach(([radius, height, y], i) => {
+    const offset = Math.sin(i * 2.7) * 0.13;
+    parts.push({ geo: new THREE.ConeGeometry(radius, height, 6), color: tall ? 0x294b48 : 0x355e57, m: T(offset, y, 0) });
+    parts.push({ geo: new THREE.ConeGeometry(radius * 0.89, height * 0.76, 6), color: i % 2 ? 0xe0edf2 : 0xf4f8fa, m: T(offset, y + height * 0.16, -0.025) });
+  });
+  return merged(parts);
+}
 const rockGeo = merged([
   { geo: new THREE.DodecahedronGeometry(1, 0), color: 0x7f8a99, m: new THREE.Matrix4().makeScale(1.1, 0.75, 1) },
   { geo: new THREE.DodecahedronGeometry(0.75, 0), color: 0xf2f7fb, m: new THREE.Matrix4().makeScale(1.1, 0.35, 1).premultiply(T(0, 0.55, 0)) },
@@ -248,31 +261,44 @@ class Pool {
   }
 }
 const trees = new Pool(treeGeo, vcol, 520);
+const sceneryTrees = [new Pool(spruceGeometry(false), vcol, 260), new Pool(spruceGeometry(true), vcol, 260)];
 const rocks = new Pool(rockGeo, vcol, 90);
 const coinPool = new Pool(coinGeo, coinMat, 420);
 const patches = new Pool(patchGeo, mat.patch, 260);
 
 // ---------- ground ----------
-const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 600).rotateX(-Math.PI / 2), mat.snow);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(380, 600).rotateX(-Math.PI / 2), mat.snow);
 world.add(ground);
 
 // ---------- sky & horizon (not tilted, follow the camera so they always sit on the horizon) ----------
 const mountains = new THREE.Group();
-const mountMats = [lam(0xe6eef5, { fog: false }), lam(0xcdd9e5, { fog: false }), lam(0xb7c7d8, { fog: false })];
-const capMatSky = lam(0xffffff, { fog: false });
+// Hazy distant ranges keep their atmospheric tint rather than becoming dark, unlit cliff faces.
+const mountMats = [0xe6eef5, 0xcdd9e5, 0xb7c7d8].map(color => new THREE.MeshBasicMaterial({ color, fog: false, side: THREE.DoubleSide }));
+const capMatSky = new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false, side: THREE.DoubleSide });
 {
-  // two rings of peaks: a far pale range and a nearer one with snow caps
-  for (const [n, dist, hMin, hMax, rMin, rMax, y0] of [[16, 400, 90, 170, 70, 120, -170], [12, 330, 60, 120, 50, 90, -150]]) {
-    for (let i = 0; i < n; i++) {
-      const h = rand(hMin, hMax), r = rand(rMin, rMax);
-      const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 6), mountMats[dist < 350 ? 1 : 0]);   // one shade per range
-      const a = (i / n - 0.5) * 2.6 + rand(-0.05, 0.05);
-      m.position.set(Math.sin(a) * dist, h / 2 + y0, -Math.cos(a) * dist);
-      m.rotation.y = rand(0, 3);
-      // the cap is a bit wider than the peak where they meet, so the two surfaces never share depth (that flickered)
-      const cap = new THREE.Mesh(new THREE.ConeGeometry(r * 0.42, h * 0.38, 6), capMatSky); cap.position.y = h * 0.31 + 0.5; m.add(cap);
-      mountains.add(m);
+  // Continuous overlapping ranges give the valley depth, with a low central pass and irregular ridgelines.
+  for (let layer = 0; layer < 3; layer++) {
+    const pos = [], snow = [], rows = [], dist = 420 - layer * 48;
+    for (let i = 0; i <= 32; i++) {
+      const a = -1.52 + i / 32 * 3.04;
+      const ridge = Math.sin(i * 0.69 + layer * 1.9) * 23 + Math.sin(i * 1.57 + layer * 0.7) * 12;
+      const pass = 34 * Math.exp(-Math.pow((i - 16 - layer * 2) / 4.8, 2));
+      const h = -27 - layer * 15 + ridge - pass;
+      const x = Math.sin(a) * dist, z = -Math.cos(a) * dist;
+      rows.push([[x, h, z], [x, h - 9 - 7 * (0.5 + 0.5 * Math.sin(i * 0.8)), z + 2], [x, -175, z + 32]]);
     }
+    for (let i = 0; i < 32; i++) {
+      const [a, b, c] = rows[i], [d, e, f] = rows[i + 1];
+      for (const q of [b, c, e, e, c, f]) pos.push(...q);
+      for (const q of [a, b, d, d, b, e]) snow.push(...q);
+    }
+    const mesh = (positions, material) => {
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3)); geo.computeVertexNormals();
+      const m = new THREE.Mesh(geo, material); m.material.side = THREE.DoubleSide; mountains.add(m);
+    };
+    mesh(pos, mountMats[layer]);
+    // The nearest crest catches light; distant snow blends into its own hazy range.
+    mesh(snow, layer === 2 ? capMatSky : mountMats[layer]);
   }
 }
 scene.add(mountains);
@@ -471,6 +497,21 @@ const slots = {
 };
 slots.hat.position.set(0, 1.02, 0.01); slots.face.position.set(0, 0.82, -0.15); slots.back.position.set(0, 0.36, 0.17);
 for (const k in slots) skier.upper.add(slots[k]);
+// Leader crown is a separate, temporary marker so cosmetic refreshes cannot remove it.
+const leaderCrown = new THREE.Group();
+const leaderGold = lam(0xffd33d, { emissive: 0x7a4b00, emissiveIntensity: 0.7 });
+leaderCrown.add(new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.22, 0.09, 10), leaderGold));
+for (let i = 0; i < 5; i++) {
+  const a = i / 5 * TAU;
+  const point = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.18, 5), leaderGold);
+  point.position.set(Math.cos(a) * 0.17, 0.12, Math.sin(a) * 0.17);
+  leaderCrown.add(point);
+}
+leaderCrown.position.set(0, 1.31, 0.01);
+leaderCrown.name = 'leader-crown';
+leaderCrown.visible = false;
+skier.upper.add(leaderCrown);
+addEventListener('peakflip-leader', e => { leaderCrown.visible = !!e.detail?.active; });
 const accAnim = { prop: null, cape: null, wings: [], jet: false, lasers: null, sun: null, crystal: null };
 function accMesh(geo, color, x = 0, y = 0, z = 0, extra) {
   const m = new THREE.Mesh(geo, lam(color, extra)); m.position.set(x, y, z); return m;
@@ -1056,10 +1097,11 @@ const blocked = (x, z, pad = 1.5) => checkpoints.some(c => Math.abs(z - c.z) < 5
 let laneSeed = [0, 0];
 const laneX = z => clamp(Math.sin(z * 0.02 + laneSeed[0]) * 7 + Math.sin(z * 0.05 + laneSeed[1]) * 2.5, -X_LIMIT + 2.5, X_LIMIT - 2.5);
 const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < 2.2 + r;
-function addTree(x, z, s, obstacle) {
+function addTree(x, z, s, obstacle, ry = rand(0, 6), variant = 0) {
   if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, 0.55 * s)) return; }
-  const pool = zone === 'xmas' ? xmasTrees : trees;   // decorated trees at the North Pole
-  const idx = pool.add(x, obstacle ? 0 : wallH(x, z), z, s, rand(0, 6));
+  const pool = zone === 'xmas' ? xmasTrees : !obstacle && zone === 'normal' ? sceneryTrees[variant % 2] : trees;
+  // A small buried base follows the faceted hillside without leaving trunks hanging above it.
+  const idx = pool.add(x, obstacle ? 0 : Math.max(0, wallH(x, z) - 0.18), z, s, ry);
   if (obstacle) obstacles.push({ kind: 'tree', x, z, r: 0.55 * s, h: 3.8 * s, idx, pool });
   else decor.push({ z, idx, pool });
 }
@@ -1623,9 +1665,10 @@ function addReindeer(x, z, vz) {
   animals.push({ g, legs, vx: 0, vz, ph: rand(0, 6) }); decor.push({ z: z - 3, mesh: g });
 }
 
-// ---------- valley walls: one continuous mountainside on each side of the Endless slope ----------
-// A deterministic height field, built in 40 m chunks that share their edge rows, so there are no gaps or seams.
+// ---------- alpine terrain: broad snowfields and asymmetric ridges around the playable piste ----------
+// Adjacent chunks sample the same world coordinates, so ridges and groves continue without seams.
 const WALL_IN = 19, WALL_CHUNK = 40, WALL_COLS = [-1.5, 0, 1.5, 3.5, 6, 9, 13, 18, 25, 34, 46, 62];
+const ALPINE_COLS = [-1.5, 0, 4, 10, 18, 29, 43, 60, 81, 106, 138];
 const WALL_COLORS = {
   normal: { rock: [0x8a94a3, 0x77818f], snow: 0xf2f7fb, snowLine: 22 },
   agartha: { rock: [0x3a2466, 0x2c1a52], snow: 0x7cf7d4, vein: 0x3cf2ff, snowLine: 30 },
@@ -1635,6 +1678,7 @@ let wallZ = 30;
 function wallH(x, z) {
   const ax = Math.abs(x);
   if (mode === 'race' || ax <= WALL_IN) return 0;
+  if (zone === 'normal') return terrainHeight(x, z);
   const sd = x < 0 ? 0 : 1.7, u = ax - WALL_IN;
   const ridge = 34 + 10 * Math.sin(z * 0.013 + sd) + 6 * Math.sin(z * 0.041 + 2 * sd);
   const rise = 1 - Math.exp(-u / 13);                       // steep near the slope, flattening toward the ridge
@@ -1647,21 +1691,32 @@ const wallMats = {
 };
 function addWallChunk(z0) {
   const pal = WALL_COLORS[zone] || WALL_COLORS.normal, pos = [], col = [], c = new THREE.Color();
+  const alpine = zone === 'normal', cols = alpine ? ALPINE_COLS : WALL_COLS;
   const rows = WALL_CHUNK / 4 + 1, a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3();
   for (const side of [-1, 1]) {
     const P = [];
     for (let r = 0; r < rows; r++) {
       const z = z0 - r * 4;
-      P.push(WALL_COLS.map(o => { const x = side * (WALL_IN + o); return [x, o < 0 ? -0.3 : wallH(x, z), z]; }));
+      P.push(cols.map((o, k) => {
+        const shift = alpine && k > 1 ? Math.sin(z * 1.713 + k * 8.37 + side) * Math.min(1.4, o * 0.08) : 0;
+        const x = side * (WALL_IN + o + shift);
+        return [x, o < 0 ? -0.15 : wallH(x, z), z];
+      }));
     }
-    for (let r = 0; r < rows - 1; r++) for (let k = 0; k < WALL_COLS.length - 1; k++) {
+    for (let r = 0; r < rows - 1; r++) for (let k = 0; k < cols.length - 1; k++) {
       for (let [p0, p1, p2] of [[P[r][k], P[r + 1][k], P[r][k + 1]], [P[r][k + 1], P[r + 1][k], P[r + 1][k + 1]]]) {
         a.set(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]); b.set(p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]);
         n.crossVectors(a, b); if (n.y < 0) { [p1, p2] = [p2, p1]; n.negate(); }   // always face up / into the valley
         n.normalize();
         const h = (p0[1] + p1[1] + p2[1]) / 3, hash = Math.sin(p0[0] * 12.9 + p0[2] * 78.2) * 43758.5 % 1;
         // flat-ish or high faces hold snow; steep faces show rock (with glowing veins underground)
-        if (n.y > 0.82 || h > pal.snowLine + hash * 6) c.set(pal.snow);
+        if (alpine) {
+          // Snow blankets the foothills; only steep faces on the upper ridges expose pale slate.
+          if (n.y > 0.69 || h < 13 || h > 64) c.set(0xedf4f8);
+          else c.set(0xa1b1c0);
+          c.multiplyScalar(0.985 + Math.abs(hash) * 0.025);
+        }
+        else if (n.y > 0.82 || h > pal.snowLine + hash * 6) c.set(pal.snow);
         else if (pal.vein && Math.abs(hash) < 0.06) c.set(pal.vein);
         else c.set(pal.rock[Math.abs(hash) < 0.5 ? 0 : 1]);
         for (const q of [p0, p1, p2]) { pos.push(q[0], q[1], q[2]); col.push(c.r, c.g, c.b); }
@@ -1834,11 +1889,12 @@ const liftGeo = (() => {
   return merged(parts);
 })();
 function addLiftTower(z) {
-  const m = new THREE.Mesh(liftGeo, vcol); m.position.set(-21, wallH(-21, z), z);
+  // Keep the lift on the flat shoulder just outside the run so its supports and cable follow the same slope.
+  const m = new THREE.Mesh(liftGeo, vcol); m.position.set(-17.5, 0, z);
   world.add(m); decor.push({ z: z - 50, mesh: m });
 }
-function addCabin(x, z) {
-  const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = rand(-0.4, 0.4);
+function addCabin(x, z, rotation = rand(-0.4, 0.4)) {
+  const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = rotation;
   const w = new THREE.Mesh(box(4, 2.6, 3.4), cabinWall); w.position.y = 1.3; g.add(w);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.8, 4), cabinRoof); roof.position.y = 3.5; roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.8); g.add(roof);
   const snow = new THREE.Mesh(new THREE.ConeGeometry(3.1, 0.7, 4), mat.snow); snow.position.y = 4.15; snow.rotation.y = Math.PI / 4; snow.scale.set(1, 1, 0.8); g.add(snow);
@@ -1926,21 +1982,17 @@ function spawnDecor(z) {
     if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-18, 18), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
     return;
   }
-  for (const side of [-1, 1]) {
-    const n = forest ? 3 + (Math.random() < 0.5 ? 1 : 0) : Math.random() < 0.55 ? 1 : 2;
-    for (let i = 0; i < n; i++) {
-      const x = forest ? side * (X_LIMIT + 1.6 + Math.pow(Math.random(), 1.6) * 30) : side * rand(15.5, 40), zz = z - rand(0, 4);
-      if (!forest && wallH(x, zz) > 20) continue;   // no trees up on the snowfields
-      addTree(x, zz, forest ? rand(1, 2.1) : rand(0.8, 1.7), false);
-    }
+  // World-space groves have their own deterministic scatter, independent of course generation.
+  // A strip owns only its actual tree positions, rather than placing a row at the strip boundary.
+  for (const tree of landscapeTrees(z, 4, forest)) {
+    addTree(tree.x, tree.z, tree.scale, false, tree.rotation, tree.variant);
   }
-  if (!forest && Math.random() < 0.012) { const side = Math.random() < 0.5 ? -1 : 1; addBear(side * rand(17, 24), z, 0, (Math.random() < 0.5 ? -1 : 1) * rand(1, 1.6), false); }
   if (!forest && decorN % 12 === 0) addLiftTower(z);
-  if (!forest && Math.random() < 0.025) addCabin((Math.random() < 0.5 ? -1 : 1) * rand(19, 34), z);
-  if (!forest && Math.random() < 0.02) addSnowman((Math.random() < 0.5 ? -1 : 1) * rand(16.5, 24), z);
-  if (!forest && Math.random() < 0.01) addIgloo((Math.random() < 0.5 ? -1 : 1) * rand(22, 36), z);
-  if (!forest && theme.lamp && decorN % 8 === 0) for (const sx of [-1, 1]) addLantern(sx * (X_LIMIT + 1.8), z);
-  if (Math.random() < 0.85) decor.push({ z, idx: patches.add(forest ? rand(-40, 40) : rand(-18, 18), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
+  if (!forest && decorN % 160 === 57) {
+    addCabin(16.5, z, -0.12);
+    if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
+  }
+
 }
 
 function cleanup(pz) {
@@ -2042,7 +2094,7 @@ const GAME_KEYS = ['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
 const MAX_CHARGE = 0.45;
 const popFromCharge = t => 7.5 + 6 * clamp(t / MAX_CHARGE, 0, 1);
 const JUMP_POP = 11;
-const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA');
+const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
 addEventListener('keydown', e => {
   if (typing(e)) return;
   if (GAME_KEYS.includes(e.code)) e.preventDefault();
@@ -2423,15 +2475,14 @@ function updatePlayer(dt) {
     for (const g of gates) {
       if (g.passed || p.z > g.z) continue;
       g.passed = true;
-      const t = race.t + race.penalty;
+      const t = race.t;
       if (Math.abs(p.x - g.x) < g.w / 2 + 0.3) {
         race.gates++; race.splits[g.n - 1] = t;
-        const pb = save.raceSplits?.[race.day]?.[g.n - 1];
-        showTrick(`Checkpoint ${g.n}/${checkpoints.length}`, pb != null ? `${t - pb <= 0 ? '−' : '+'}${Math.abs(t - pb).toFixed(2)}s` : fmtTime(t), pb != null && t <= pb);
+        showTrick(`Checkpoint ${g.n}/${checkpoints.length}`, '+500 pts', true);
         Sfx.tone(988, 0.1, 'triangle', 0.14); Sfx.tone(1319, 0.14, 'triangle', 0.14, null, 0.08);
       } else {
-        race.penalty += 3; race.splits[g.n - 1] = t + 3;
-        showTrick('Missed checkpoint', '+3.0s', false); Sfx.tone(180, 0.25, 'square', 0.1);
+        race.splits[g.n - 1] = t;
+        showTrick('Missed checkpoint', '500 pt bonus missed', false); Sfx.tone(180, 0.25, 'square', 0.1);
       }
     }
     if (p.z < -RACE_LEN) return finishRace();
@@ -2615,14 +2666,18 @@ function nameTag(text, color) {
   s.scale.set(2.6, 0.65, 1); s.position.y = 2.7; return s;
 }
 function addGhost(name, data) {
-  if (!data || !Array.isArray(data.f) || data.f.length < 60 || ghosts.length >= 4) return;
+  if (!data || !Number.isFinite(data.score) || !Number.isFinite(data.t) || data.t <= 0
+    || !Array.isArray(data.f) || data.f.length < 60 || data.f.length > 54000 || data.f.length % 6
+    || !data.f.every(Number.isFinite) || ghosts.length >= 4) return;
   const color = GHOST_COLORS[ghosts.length % GHOST_COLORS.length];
   const root = skier.root.clone(true);
+  const clonedCrown = root.getObjectByName('leader-crown');
+  if (clonedCrown) clonedCrown.visible = false;
   const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, depthWrite: false });
   root.traverse(o => { if (o.isMesh) o.material = m; });
   root.add(nameTag(name, color));
   world.add(root);
-  ghosts.push({ name, t: data.t, f: data.f, n: Math.floor(data.f.length / 6), root, body: root.children[0] });
+  ghosts.push({ name, score: data.score, t: data.t, f: data.f, n: Math.floor(data.f.length / 6), root, body: root.children[0] });
 }
 function clearGhosts() { for (const g of ghosts) world.remove(g.root); ghosts.length = 0; }
 function ghostState(g) {
@@ -2638,12 +2693,6 @@ function updateGhosts() {
     g.root.visible = !s.done;
   }
 }
-function racePosition() {
-  let ahead = 0;
-  for (const g of ghosts) { const s = ghostState(g); if (s.done || s.z < p.z) ahead++; }
-  return ahead + 1;
-}
-const ordinal = n => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 
 // ---------- HUD ----------
 const hud = { score: $('score'), coins: $('coinCount'), combo: $('combo'), comboText: $('comboText'), comboFill: $('comboFill'), trick: $('trick'), trickName: $('trickName'), trickPts: $('trickPts'), hint: $('hint'), race: $('raceInfo'), speed: $('speedo') };
@@ -2658,9 +2707,8 @@ function showTrick(name, pts, perfect) {
 const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 function updateHUD(dt) {
   if (mode === 'race') {
-    const t = race.t + race.penalty;
-    hud.score.textContent = fmtTime(t);
-    hud.race.textContent = `${ghosts.length ? ordinal(racePosition()) + ' of ' + (ghosts.length + 1) + '  ·  ' : ''}${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}${race.penalty ? `  ·  +${race.penalty}s` : ''}`;
+    hud.score.textContent = (totalScore() + race.gates * 500).toLocaleString();
+    hud.race.textContent = `${fmtTime(race.t)} elapsed  ·  ${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}`;
   } else {
     const s = totalScore();
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
@@ -2711,6 +2759,7 @@ function startRun(m = mode) {
   setTheme(mode === 'race' ? 'day' : pickTheme());   // the Daily Race keeps its original daytime look
   crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : Math.random;
   laneSeed = [crng() * 6.28, crng() * 6.28];
+  decorN = 0;
   spawnZ = -55; decorZ = 30; wallZ = 40;
   checkpoints.forEach((c, i) => addCheckpointArch(c, i + 1));
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
@@ -2749,24 +2798,26 @@ function gameOver() {
 function finishRace() {
   state = 'over';
   Platform.gameplayStop();
-  const time = +(race.t + race.penalty).toFixed(2);
-  save.raceBest = save.raceBest || {};
-  const prev = save.raceBest[race.day];
-  const newBest = !prev || time < prev;
-  const ghost = { t: time, f: race.rec };
+  const time = +race.t.toFixed(2);
+  const score = totalScore() + race.gates * 500;
+  save.raceScores = save.raceScores || {};
+  const prev = save.raceScores[race.day];
+  const newBest = !prev || score > prev.score || (score === prev.score && time < prev.time);
+  const ghost = { t: time, score, f: race.rec };
   if (newBest) {
-    save.raceBest[race.day] = time;
     save.ghost = { day: race.day, ...ghost };
-    save.raceSplits = { [race.day]: race.splits };
-    for (const d of Object.keys(save.raceBest)) if (d < race.day) delete save.raceBest[d];
+    save.raceScores[race.day] = { score, time };
   }
-  const beat = ghosts.filter(g => time < g.t).length;
-  const field = ghosts.map(g => ({ name: g.name, t: g.t })).concat([{ name: 'You', t: time, me: true }]).sort((a, b) => a.t - b.t);
+  const field = ghosts.map(g => ({ name: g.name, score: g.score, t: g.t }))
+    .concat([{ name: 'You', score, t: time, me: true }])
+    .sort((a, b) => b.score - a.score || a.t - b.t);
+  field.forEach((row, i) => { row.rank = i > 0 && row.score === field[i - 1].score && row.t === field[i - 1].t ? field[i - 1].rank : i + 1; });
+  const beat = ghosts.filter(g => score > g.score || (score === g.score && time < g.t)).length;
   const bonus = 40 + race.gates * 5 + beat * 25;
   save.coins += bonus;
   const missions = endCommon();
   Sfx.perfect();
-  showResults({ mode: 'race', time, raw: race.t, penalty: race.penalty, gates: race.gates, gateTotal: checkpoints.length, field, ghost: newBest ? ghost : null, newBest, best: save.raceBest[race.day], day: race.day, coins: p.coins, bonus, missions });
+  showResults({ mode: 'race', score, time, raw: race.t, penalty: 0, gates: race.gates, gateTotal: checkpoints.length, field, ghost: newBest ? ghost : null, newBest, best: save.raceScores[race.day].score, bestTime: save.raceScores[race.day].time, day: race.day, coins: p.coins, bonus, missions });
 }
 
 async function restartWithAd() {
@@ -2783,7 +2834,7 @@ function toMenu() {
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   clearWorld(); resetPlayer();
-  decorZ = 30; wallZ = 40; spawnWalls(-VIEW); while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
+  decorZ = 30; decorN = 0; wallZ = 40; spawnWalls(-VIEW); while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
   show('over', false); show('pause', false); show('hud', false); show('menu', true);
   showMenuUI();
   Sfx.wind(0, 300);
@@ -2897,4 +2948,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, camera, renderer, get quality() { return Quality.ratio; }, LITE, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, applyCosmetics, crash, addPad, addBear, addCrevasse, Dragon, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addPad, addBear, addCrevasse, Dragon, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

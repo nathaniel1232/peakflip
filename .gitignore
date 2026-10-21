@@ -3,3 +3,5 @@
 *.zip
 .claude
 .cg/
+
+supabase/.temp/

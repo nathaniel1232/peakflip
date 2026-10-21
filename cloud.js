@@ -40,7 +40,12 @@ function merge(inc) {
   for (const k of ['coins', 'best', 'runs', 'chestsOpened', 'missionsDone']) save[k] = Math.max(+save[k] || 0, +inc[k] || 0);
   for (const [k, v] of Object.entries(inc.adProgress || {})) save.adProgress[k] = Math.max(save.adProgress[k] || 0, v);
   for (const [d, t] of Object.entries(inc.raceBest || {})) if (!save.raceBest?.[d] || t < save.raceBest[d]) (save.raceBest ||= {})[d] = t;
+  for (const [d, result] of Object.entries(inc.raceScores || {})) {
+    const prev = save.raceScores?.[d];
+    if (!prev || result.score > prev.score || (result.score === prev.score && result.time < prev.time)) (save.raceScores ||= {})[d] = result;
+  }
   if (!save.name && inc.name) { save.pid = inc.pid; save.name = inc.name; save.code = inc.code || save.code; }
+  if (save.pid === inc.pid && inc.chatToken && !save.chatToken) save.chatToken = inc.chatToken;
   normalizeSave(); ensureMissions();
   persist();   // a real change: back it up
 }
