@@ -4,6 +4,7 @@
 import {
   save, persist, CATALOG, RARITY, CHESTS, KIND_NAME, PITY, SETS, FITS, fitOwned,
   openChest, collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
+  isLimited, setDaysLeft, setAvailable, grantScoreRewards, grantSecret,
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
@@ -225,7 +226,7 @@ function chestCard(key) {
     const can = save.coins >= c.price;
     btn = `<button class="btn ${can ? 'go' : ''}" data-chest="${key}" ${can ? '' : 'disabled'}>${coin} ${c.price}</button>`;
   }
-  const tag = c.set === 'halloween' && new Date().getMonth() === 9 ? '<div class="evTag">HALLOWEEN</div>' : '';
+  const tag = c.set && SETS[c.set].until ? `<div class="evTag">LIMITED · ${daysText(setDaysLeft(c.set))}</div>` : '';
   return `<div class="chestCard ${c.set ? 'themed' : ''}" style="--c:${c.color}">${tag}<div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
     <div class="cname">${c.name}</div><div class="odds">${odds}</div>${btn}</div>`;
 }
@@ -244,17 +245,38 @@ function note(text) {
 let shopTab = 'chests', shopSel = null;   // shopSel: { kind, id } the item shown in the detail bar
 const KINDS = Object.keys(CATALOG);
 const chestFor = it => it.set ? Object.keys(CHESTS).find(k => CHESTS[k].set === it.set) : it.rarity === 'common' ? 'basic' : 'epic';
+const daysText = d => d <= 0 ? 'last day' : d === 1 ? '1 day left' : `${d} days left`;
+const shortNum = n => n >= 1e6 ? `${n / 1e6}M` : n >= 1e3 ? `${n / 1e3}k` : String(n);
 function sourceText(it) {
   if (it.ad) return `Watch ${it.ad} ad${it.ad > 1 ? 's' : ''} to unlock`;
+  if (it.score) return `Reach a score of ${it.score.toLocaleString()} (your best: ${save.best.toLocaleString()})`;
+  if (it.secret) return 'A secret. Keep exploring…';
+  if (isLimited(it)) return setAvailable(it.set) ? `Limited: ${CHESTS[chestFor(it)].name} only · ${daysText(setDaysLeft(it.set))}` : 'Limited edition, no longer available';
   if (it.set) return `${CHESTS[chestFor(it)].name}, or any chest`;
   return it.rarity === 'common' ? 'Free & Snow Chests' : 'Snow & Epic Chests';
+}
+// the label under an item in the Shop grid
+function itemTag(kind, it) {
+  if (it.ad) return `<div class="rr" style="color:${RARITY[it.rarity].color}">Ad exclusive</div>`;
+  if (it.score) return `<div class="rr" style="color:var(--gold)">Score ${shortNum(it.score)}</div>`;
+  if (it.secret) return `<div class="rr" style="color:#ff4fd8">Secret</div>`;
+  if (isLimited(it)) return `<div class="rr limited">${setAvailable(it.set) ? 'Limited' : 'Retired'}</div>`;
+  return `<div class="rr" style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name}</div>`;
+}
+// score rewards unlocked by the run that just ended (or a best that came from the cloud)
+export function checkRewards() {
+  for (const { it } of grantScoreRewards()) note(`Unlocked ${it.name} for scoring ${it.score.toLocaleString()}!`);
+}
+export function findSecret(kind, id, text) {
+  if (!grantSecret(kind, id)) return;
+  note(text); cfg.sfx.perfect(); if (!$('menu').classList.contains('hidden')) showMenuUI();
 }
 function chestsHtml() {
   const pityLeft = Math.max(1, PITY - (save.pity || 0));
   return `
     <div class="chestRow">${chestCard('free')}${chestCard('basic')}${chestCard('epic')}</div>
-    <div class="secHead">Themed chests <small>only drop items from their set</small></div>
-    <div class="chestRow">${chestCard('spooky')}${chestCard('agartha')}${chestCard('tradition')}</div>
+    <div class="secHead">Themed chests <small>only drop items from their set · limited sets leave the Shop</small></div>
+    <div class="chestRow">${Object.keys(CHESTS).filter(k => CHESTS[k].set && setAvailable(CHESTS[k].set)).map(chestCard).join('')}</div>
     ${cfg.ads.available ? `<div class="row">
       <button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>
       <button class="btn" id="adChest" ${adUsesLeft('chest') > 0 ? '' : 'disabled'}>${icon('play')} Free Snow Chest <small style="opacity:.7">(${adUsesLeft('chest')})</small></button>
@@ -262,25 +284,26 @@ function chestsHtml() {
     <div class="note">Epic or better guaranteed within <b>${pityLeft}</b> Free/Snow chest${pityLeft > 1 ? 's' : ''}. Duplicates turn into coins.<br>Coins are earned only by playing. No real money involved.</div>`;
 }
 function shopItemsHtml(kind) {
-  return `<div class="grid">${CATALOG[kind].filter(it => it.id !== 'none').map(it => {
+  // secrets stay hidden until found
+  return `<div class="grid">${CATALOG[kind].filter(it => it.id !== 'none' && (!it.secret || save.inv[kind].includes(it.id))).map(it => {
     const owned = save.inv[kind].includes(it.id), on = tryOn?.[kind] === it.id || (shopSel?.kind === kind && shopSel.id === it.id);
-    return `<button class="skin ${on ? 'trying' : ''}" data-shop="${kind}:${it.id}">
+    return `<button class="skin ${on ? 'trying' : ''} ${isLimited(it) ? 'lim' : ''}" data-shop="${kind}:${it.id}">
       <div class="swWrap">${swatch(kind, it)}${owned ? `<span class="lockBadge own">${icon('check')}</span>` : ''}</div>
-      <div class="nm">${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${it.ad ? 'Ad exclusive' : RARITY[it.rarity].name}</div></button>`;
+      <div class="nm">${esc(it.name)}</div>${itemTag(kind, it)}</button>`;
   }).join('')}</div>`;
 }
 function shopFitsHtml() {
-  return `<div class="fits">${FITS.map(f => {
+  return `<div class="fits">${FITS.filter(f => setAvailable(f.set) || fitOwned(f)).map(f => {
     const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length, ck = Object.keys(CHESTS).find(k => CHESTS[k].set === f.set);
     const pieces = Object.entries(f.pieces).filter(([, id]) => id !== 'none').map(([k, id]) => {
       const it = CATALOG[k].find(i => i.id === id);
       return `<div class="fp" title="${esc(it.name)}">${swatch(k, it)}</div>`;
     }).join('');
     return `<div class="fit" style="--c:${set.color}">
-      <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name} · ${have}/${total} owned</span></div>
+      <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name}${set.until ? ` · limited, ${setAvailable(f.set) ? daysText(setDaysLeft(f.set)) : 'retired'}` : ''} · ${have}/${total} owned</span></div>
       <div class="fitPieces">${pieces}</div>
       <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
-      <button class="btn go" data-chest="${ck}" ${save.coins >= CHESTS[ck].price ? '' : 'disabled'}>${coin} ${CHESTS[ck].price}</button></div>
+      <button class="btn go" data-chest="${ck}" ${save.coins >= CHESTS[ck].price && setAvailable(f.set) ? '' : 'disabled'}>${coin} ${CHESTS[ck].price}</button></div>
     </div>`;
   }).join('')}</div><div class="note">The coin button opens that set's themed chest.</div>`;
 }
@@ -290,8 +313,10 @@ function detailBar() {
   let action;
   if (owned) action = save.eq[kind] === id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="shopEquip">Wear</button>`;
   else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`;
+  else if (it.score) action = `<button class="btn" disabled>${shortNum(save.best)} / ${shortNum(it.score)}</button>`;
+  else if (it.secret || (isLimited(it) && !setAvailable(it.set))) action = `<button class="btn" disabled>${icon('lock')}</button>`;
   else { const ck = chestFor(it), c = CHESTS[ck]; action = `<button class="btn go" data-chest="${ck}" ${save.coins >= c.price ? '' : 'disabled'}>${c.name.replace(' Chest', '')} ${coin} ${c.price}</button>`; }
-  return `<div class="tryBar"><span><b>${esc(it.name)}</b> <small style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small><br>
+  return `<div class="tryBar"><span><b>${esc(it.name)}</b> <small style="color:${RARITY[it.rarity].color}">${isLimited(it) ? 'Limited ' : ''}${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small><br>
     <small>${owned ? 'In your locker' : `Get it: ${sourceText(it)}`}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
 }
 function renderShop(tab) {
@@ -365,7 +390,7 @@ function preview(t) { tryOn = t && Object.keys(t).length ? t : null; cfg.preview
 function lockerFitsHtml() {
   // a fit shows up once you own at least one of its pieces, listing just the pieces you have
   const mine = FITS.filter(f => Object.entries(f.pieces).some(([k, id]) => id !== 'none' && save.inv[k].includes(id)));
-  if (!mine.length) return emptyLocker('No fits yet. Themed chests in the Shop drop Agartha, Halloween and Shabbat pieces.');
+  if (!mine.length) return emptyLocker('No fits yet. Themed chests in the Shop drop Agartha, Christmas, Halloween and Shabbat pieces.');
   return `<div class="fits">${mine.map(f => {
     const set = SETS[f.set], owned = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && save.inv[k].includes(id));
     const worn = owned.every(([k, id]) => save.eq[k] === id);
@@ -503,6 +528,7 @@ const rowHtml = (rank, name, val, me, extra = '', time = '') =>
 let skippedName = false;
 export function showResults(r) {
   const token = ++resultToken;
+  setTimeout(checkRewards, 1200);
   if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
   else { resultsCard(r, token); }
 }
@@ -701,11 +727,26 @@ export function initUI(c) {
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(freeChestReady() ? 'chests' : shopTab); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
-  $('lbBtn').onclick = $('seeMoreBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
+  $('lbBtn').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = 'all'; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   document.querySelectorAll('[data-ml-period]').forEach(b => b.onclick = () => { miniPeriod = b.dataset.mlPeriod; miniBoard(true); });
+  // Easter eggs: the Konami code, and tapping the title seven times in a row
+  const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
+  let konami = 0;
+  addEventListener('keydown', e => {
+    konami = e.code === KONAMI[konami] ? konami + 1 : e.code === KONAMI[0] ? 1 : 0;
+    if (konami === KONAMI.length) { konami = 0; findSecret('outfit', 'arcade', 'Secret found! The Arcade outfit is in your Locker.'); }
+  });
+  let taps = 0, tapT = 0;
+  const brand = document.querySelector('.brand');
+  brand.onclick = () => {
+    taps = performance.now() - tapT < 1500 ? taps + 1 : 1; tapT = performance.now();
+    brand.classList.remove('flip'); void brand.offsetWidth; brand.classList.add('flip');
+    c.sfx.tone(500 + taps * 90, 0.08, 'triangle', 0.08);
+    if (taps >= 7) { taps = 0; findSecret('hat', 'bunny', 'Secret found! Bunny Ears are in your Locker.'); }
+  };
   const chat = initChat({ openPanel, nameForm });
   $('globalChatBtn').onclick = () => chat.openChat();
   $('panelClose').onclick = closePanel;
@@ -716,6 +757,7 @@ export function initUI(c) {
     else if (!$('panel').classList.contains('hidden')) closePanel();
   });
   refreshLeader();
+  setTimeout(checkRewards, 1500);   // a best score from before this update (or another device) earns its rewards
   flushScores().then(() => { miniCache = {}; if (!$('menu').classList.contains('hidden')) miniBoard(true); });
   addEventListener('online', () => flushScores());
   setInterval(() => {

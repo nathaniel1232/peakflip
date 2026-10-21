@@ -79,7 +79,7 @@
 
   /* ---------- screens & cards ---------- */
   .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; background: linear-gradient(180deg, rgba(13,25,42,.05), rgba(13,25,42,.45)); z-index: 3; overflow-y: auto; }
-  .card { width: 100%; max-width: 420px; background: var(--ink); border-radius: 22px; padding: 22px; box-shadow: 0 20px 60px rgba(5,15,30,.35); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: flex; flex-direction: column; gap: 14px; margin: auto; }
+  .card { width: 100%; max-width: 420px; background: var(--ink); border-radius: 22px; padding: 22px; box-shadow: 0 20px 60px rgba(5,15,30,.35); display: flex; flex-direction: column; gap: 14px; margin: auto; }
   .logo { display: flex; align-items: center; gap: 10px; justify-content: center; }
   .logo .ic { width: 36px; height: 36px; color: var(--accent); }
   .logo b { font-size: 34px; letter-spacing: -.03em; font-weight: 900; }
@@ -199,17 +199,21 @@
     pointer-events: none;
   }
   .brand { margin: 0; display: flex; align-items: baseline; gap: 2px; }
+  .brand { cursor: pointer; }
+  .brand.flip { animation: titleFlip .6s cubic-bezier(.3,1.4,.5,1); }
+  @keyframes titleFlip { from { transform: rotateX(360deg) scale(.9); } }
   .brand > .snowy { font-size: clamp(44px, 6.4vw, 92px); }
   .brand small.snowy { font-size: clamp(26px, 3.4vw, 50px); }
   .brand #logoIc .ic { width: clamp(30px, 4vw, 56px); height: clamp(30px, 4vw, 56px); color: #fff; filter: drop-shadow(0 3px 0 #4a8fc4); margin-right: 8px; align-self: center; }
   .homeStats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
-  .homeStats .chip, .homeStats .profile { background: rgba(10,32,64,.5); color: #d6e9fb; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .homeStats .chip, .homeStats .profile { background: rgba(10,32,64,.62); color: #d6e9fb;  }
   .homeStats .profile.claim { background: rgba(76,195,255,.45); color: #fff; animation: claimPulse 2s ease-in-out infinite; }
   @keyframes claimPulse { 50% { box-shadow: 0 0 0 4px rgba(76,195,255,.3); } }
-  .homeNav { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 1vh; }
+  .homeNav { display: flex; flex-direction: column; align-items: center; gap: clamp(6px, 1.4vh, 14px); margin-top: 1vh; }
   .homeNav .hl { display: flex; flex-direction: column; align-items: center; text-align: center; }
   .homeNav .hl > span:first-child:not(.snowy) { display: none; }
-  .homeNav .hl small { margin-top: 0; }
+  .homeNav .hl small { margin-top: 6px; line-height: 1.2; position: relative; z-index: 1; }
+  .homeNav .hl .snowy { line-height: .95; }
   .hl { position: relative; display: grid; grid-template-columns: clamp(26px, 3vw, 38px) auto; grid-template-rows: auto auto; align-items: center; column-gap: 12px; text-align: left; padding: 4px 6px; border-radius: 16px; transition: transform .18s cubic-bezier(.2,1.6,.4,1); }
   .hl > span:first-child:not(.snowy) { grid-row: 1 / 3; display: grid; place-items: center; }
   .hl .ic { width: clamp(26px, 3vw, 38px); height: clamp(26px, 3vw, 38px); color: #fff; filter: drop-shadow(0 3px 0 #4a8fc4); }
@@ -221,7 +225,7 @@
   .hl.play:hover .snowy { --ice2: #ffe08a; --ice3: #e5551a; }
   .hl .dot { top: 6px; right: -10px; }
   .homeMinor { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-  .homeMinor button { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 99px; background: rgba(10,32,64,.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); font-size: 13px; font-weight: 700; }
+  .homeMinor button { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 99px; background: rgba(10,32,64,.5);  font-size: 13px; font-weight: 700; }
   .homeMinor button:hover { background: rgba(10,32,64,.7); }
   .homeMinor .ic { width: 16px; height: 16px; }
   .homeMinor small { color: var(--muted); font-weight: 600; }
@@ -230,7 +234,7 @@
   .lbHead .ic { width: clamp(26px, 3vw, 40px); height: clamp(26px, 3vw, 40px); color: var(--gold); filter: drop-shadow(0 3px 0 #a86a00); }
   .lbHead:hover .snowy { --ice2: #ffe08a; --ice3: #d99a00; }
   .lbTabs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
-  .lbTabs .tabs { background: rgba(10,32,64,.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); margin: 0; }
+  .lbTabs .tabs { background: rgba(10,32,64,.45);  margin: 0; }
   .lbTabs .tab { color: #c9def2; }
   /* menu leaderboard rows are big snowy names, no cards */
   #menu #miniLb { width: 100%; min-height: 0; gap: 2px; }
@@ -248,7 +252,7 @@
   .lbFoot { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
   .hl.small { display: block; }
   .hl.small .snowy { font-size: clamp(30px, 3.4vw, 48px); }
-  .lbFoot .btn { padding: 9px 16px; font-size: 14px; border-radius: 99px; background: rgba(10,32,64,.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .lbFoot .btn { padding: 9px 16px; font-size: 14px; border-radius: 99px; background: rgba(10,32,64,.5);  }
   .spaceHint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 13px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(8,30,62,.8); opacity: .85; animation: breathe 2.4s ease-in-out infinite; pointer-events: none; }
   @keyframes breathe { 50% { opacity: .4; } }
   body:has(#menu:not(.hidden)) #muteBtn { left: auto; right: 14px; top: auto; bottom: 14px; }
@@ -333,6 +337,8 @@
   .tabs .tab small { opacity: .7; }
   .tabs .tab .ic { width: 15px; height: 15px; vertical-align: -3px; }
   .skin.locked .nm { color: var(--muted); }
+  .rr.limited { display: inline-block; margin-top: 2px; padding: 1px 6px; border-radius: 99px; background: linear-gradient(90deg, #ffd23f, #ff7b00); color: #2a1500; }
+  .skin.lim { box-shadow: inset 0 0 0 1px rgba(255,210,63,.45); }
   .skin.trying { box-shadow: inset 0 0 0 2px var(--ice); background: rgba(76,195,255,.14); }
   .fit .row .btn { padding: 9px 6px; }
   .secHead { font-size: 13px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; gap: 8px; align-items: baseline; }
@@ -500,7 +506,6 @@
       </div>
       <div id="miniLb" class="list"><div class="note">Loading…</div></div>
       <div class="lbFoot">
-        <button id="seeMoreBtn" class="hl small"><span class="snowy" data-text="see more">see more</span></button>
         <button id="globalChatBtn" class="btn">Global chat</button>
       </div>
     </section>

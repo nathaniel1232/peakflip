@@ -119,17 +119,24 @@ const Sfx = {
   near() { this.tone(660, 0.1, 'sine', 0.1, 990); },
 };
 
-// ---------- music: a soft looping synth tune, scheduled ahead on the audio clock (no audio files) ----------
-// 100 bpm in D major: four bars of pads (D · A · Bm · G), a walking bass, a plucked arpeggio, a soft kick,
-// and a pentatonic melody that comes in every other time round.
+// ---------- music: soft looping synth songs, scheduled ahead on the audio clock (no audio files) ----------
+// Each world has its own song; a change waits for the next bar so the beat never stumbles.
+// TUNE has one entry per eighth note over the four bars (null = rest); `every` = melody on every Nth loop.
+const SONGS = {
+  // the mountain: 100 bpm in D major (D · A · Bm · G)
+  mountain: { bpm: 100, chords: [[62, 66, 69], [61, 64, 69], [59, 62, 66], [59, 62, 67]], bass: [38, 33, 35, 31], every: 2, arp: 2, kick: [0, 8],
+    tune: [74, null, 76, 78, null, 76, 74, null, 76, null, 73, null, 69, null, null, null, 71, null, 74, 76, null, 74, 71, null, 74, null, 78, 76, 74, null, null, null] },
+  // Agartha: slow and mysterious, D minor (Dm · Bb · F · C), bell melody, no drums
+  agartha: { bpm: 76, chords: [[62, 65, 69], [58, 62, 65], [60, 65, 69], [60, 64, 67]], bass: [38, 34, 41, 36], every: 1, arp: 4, kick: [], bell: true,
+    tune: [81, null, null, 77, null, 76, 74, null, 72, null, 74, null, 69, null, null, null, 81, null, 84, null, 81, 77, null, 76, 74, null, null, 72, 74, null, null, null] },
+  // North Pole: bright and bouncy in C (C · F · G · C) with sleigh bells; the melody is the traditional "Jingle Bells" chorus
+  xmas: { bpm: 132, chords: [[60, 64, 67], [60, 65, 69], [59, 62, 67], [60, 64, 67]], bass: [36, 41, 43, 36], every: 1, arp: 2, kick: [0, 8], sleigh: true,
+    tune: [76, null, 76, null, 76, null, null, null, 76, null, 76, null, 76, null, null, null, 76, null, 79, null, 72, null, 74, null, 76, null, null, null, null, null, null, null] },
+};
 const Music = (() => {
-  const STEP = 60 / 100 / 4;   // a sixteenth note
   const midi = n => 440 * 2 ** ((n - 69) / 12);
-  const CHORDS = [[62, 66, 69], [61, 64, 69], [59, 62, 66], [59, 62, 67]], BASS = [38, 33, 35, 31];
-  // one entry per eighth note over the four bars (null = rest)
-  const TUNE = [74, null, 76, 78, null, 76, 74, null, 76, null, 73, null, 69, null, null, null,
-    71, null, 74, 76, null, 74, 71, null, 74, null, 78, 76, 74, null, null, null];
-  let ctx, bus, step = 0, next = 0;
+  let ctx, bus, step = 0, next = 0, song = SONGS.mountain, pending = null;
+  const STEP = () => 60 / song.bpm / 4;   // a sixteenth note
   function note(f, t, dur, type, vol, attack = 0.005) {
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = type; o.frequency.value = f;
@@ -137,18 +144,19 @@ const Music = (() => {
     o.connect(g).connect(bus); o.start(t); o.stop(t + dur + 0.05);
   }
   function play(i, t) {
-    const s = i % 16, bar = (i >> 4) % 4, chord = CHORDS[bar], second = (i >> 6) % 2 === 1;
-    if (s === 0) for (const n of chord) { note(midi(n), t, STEP * 16, 'sine', 0.035, 0.5); note(midi(n) * 1.004, t, STEP * 16, 'triangle', 0.02, 0.6); }
-    if (s === 0 || s === 6 || s === 8 || s === 14) note(midi(BASS[bar] + (s === 14 ? 7 : 0)), t, STEP * 3, 'triangle', 0.16, 0.01);
-    if (s % 2 === 0) note(midi(chord[[0, 1, 2, 1, 0, 2, 1, 2][s / 2]] + 12), t, STEP * 2.5, 'triangle', 0.035);
-    if (s === 0 || s === 8) {   // soft kick: a quick sine drop
+    const S = song, st = STEP(), s = i % 16, bar = (i >> 4) % 4, chord = S.chords[bar], loop = i >> 6;
+    if (s === 0) for (const n of chord) { note(midi(n), t, st * 16, 'sine', 0.035, S.bell ? 0.9 : 0.5); note(midi(n) * 1.004, t, st * 16, 'triangle', 0.02, 0.6); }
+    if (S.bell ? s === 0 || s === 8 : s === 0 || s === 6 || s === 8 || s === 14) note(midi(S.bass[bar] + (s === 14 ? 7 : 0)), t, st * (S.bell ? 8 : 3), 'triangle', 0.15, 0.01);
+    if (s % S.arp === 0) note(midi(chord[[0, 1, 2, 1, 0, 2, 1, 2][(s / S.arp) % 8]] + 12), t, st * 2.5, 'triangle', 0.032);
+    if (S.kick.includes(s)) {   // soft kick: a quick sine drop
       const o = ctx.createOscillator(), g = ctx.createGain();
       o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.18);
-      g.gain.setValueAtTime(0.22, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+      g.gain.setValueAtTime(0.2, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
       o.connect(g).connect(bus); o.start(t); o.stop(t + 0.25);
     }
-    const m = TUNE[(i >> 1) % 32];
-    if (second && s % 2 === 0 && m) note(midi(m), t, STEP * 3.5, 'sine', 0.07, 0.02);
+    if (S.sleigh && s % 2 === 1) note(2350 + (s % 4) * 90, t, 0.06, 'triangle', 0.012);   // little sleigh-bell ticks
+    const m = S.tune[(i >> 1) % 32];
+    if (loop % S.every === S.every - 1 && s % 2 === 0 && m) note(midi(m), t, st * (S.bell ? 7 : 3.5), 'sine', S.bell ? 0.06 : 0.07, 0.02);
   }
   return {
     on: save.music !== false,
@@ -157,16 +165,21 @@ const Music = (() => {
       ctx = c; bus = ctx.createGain(); bus.gain.value = this.on ? 1 : 0;
       const tone = ctx.createBiquadFilter(); tone.type = 'lowpass'; tone.frequency.value = 3200;
       const echo = ctx.createDelay(1), fb = ctx.createGain(), wet = ctx.createGain();
-      echo.delayTime.value = STEP * 3; fb.gain.value = 0.3; wet.gain.value = 0.22;
+      echo.delayTime.value = 0.42; fb.gain.value = 0.3; wet.gain.value = 0.22;
       const level = ctx.createGain(); level.gain.value = 0.5;
       bus.connect(tone).connect(level).connect(out);
       tone.connect(echo); echo.connect(fb).connect(echo); echo.connect(wet).connect(out);
       setInterval(() => {
         if (ctx.state !== 'running') return;
         if (next < ctx.currentTime) next = ctx.currentTime + 0.05;   // after a pause, pick up the beat instead of rushing
-        while (next < ctx.currentTime + 0.3) { play(step++, next); next += STEP; }
+        while (next < ctx.currentTime + 0.3) {
+          if (pending && step % 16 === 0) { song = pending; pending = null; step = 0; }
+          play(step++, next); next += STEP();
+        }
       }, 60);
     },
+    // switch to another world's song at the next bar
+    play(name) { const S = SONGS[name] || SONGS.mountain; if (S !== song) pending = S; else pending = null; },
     toggle() {
       this.on = !this.on; save.music = this.on; persist();
       if (bus) bus.gain.setTargetAtTime(this.on ? 1 : 0, ctx.currentTime, 0.1);
@@ -187,7 +200,8 @@ const Quality = {
   max: Math.min(window.devicePixelRatio, isTouch ? 1.5 : 1.75), min: 0.6,
   ratio: Math.min(window.devicePixelRatio, LITE ? 1 : 1.5),
   t: 0, frames: 0, good: 0,
-  apply() { renderer.setPixelRatio(this.ratio); renderer.setSize(innerWidth, innerHeight); },
+  cap: Infinity,
+  apply() { renderer.setPixelRatio(Math.min(this.ratio, this.cap)); renderer.setSize(innerWidth, innerHeight); },
   sample(ms) {
     if (ms > 250) return;   // tab was in the background
     this.t += ms; this.frames++;
@@ -643,7 +657,32 @@ function buildAccessory(kind, it) {
       { const pr = new THREE.Group(); pr.position.y = 0.16; g.add(pr); for (const r of [0, Math.PI / 2]) { const bl = accMesh(B(0.42, 0.012, 0.06), c2); bl.rotation.y = r; pr.add(bl); } accAnim.prop = pr; } break;
     case 'banana': { const t = add(new THREE.TorusGeometry(0.24, 0.075, 6, 12, Math.PI * 0.85), c, 0, -0.05); t.rotation.set(0, Math.PI / 2, Math.PI * 0.075);
       add(C(0.03, 0.02, 0.06), c2, 0, 0.17, 0.21); } break;
+    case 'beret': { const b = add(C(0.2, 0.17, 0.06, 12), c, 0.03, 0.02); b.rotation.z = -0.15; add(S(0.025), c2, 0.03, 0.06); } break;
+    case 'wizard': add(C(0.3, 0.3, 0.025, 14), c, 0, 0); { const t = add(new THREE.ConeGeometry(0.16, 0.55, 10), c, 0, 0.28); t.rotation.z = 0.12; }
+      for (const [x, y, z] of [[0.08, 0.12, -0.12], [-0.06, 0.25, -0.08], [0.03, 0.4, -0.05]]) add(new THREE.OctahedronGeometry(0.03, 0), c2, x, y, z, glow(0x664400)); break;
+    case 'sombrero': add(C(0.42, 0.42, 0.03, 16), c, 0, 0); add(C(0.13, 0.17, 0.2, 10), c, 0, 0.1); add(C(0.172, 0.172, 0.04, 10), c2, 0, 0.03);
+      add(new THREE.TorusGeometry(0.4, 0.02, 4, 20), c2, 0, 0.01).rotation.x = Math.PI / 2; break;
+    case 'headphones': { const band = add(new THREE.TorusGeometry(0.17, 0.025, 5, 14, Math.PI), c, 0, -0.07); band.rotation.y = Math.PI / 2;
+      for (const sx of [-1, 1]) { add(C(0.07, 0.07, 0.06, 10), c, sx * 0.17, -0.13).rotation.z = Math.PI / 2; add(C(0.055, 0.055, 0.062, 10), c2, sx * 0.172, -0.13).rotation.z = Math.PI / 2; } } break;
+    case 'goldhelm': { const d = add(S(0.19, 10, 6, ), c, 0, -0.03, 0, glow(0x3a2a00)); d.scale.y = 0.75; add(B(0.05, 0.12, 0.34), c2, 0, 0.12, 0.02, glow(0x3a2a00)); } break;
+    case 'peakcrown': add(C(0.16, 0.16, 0.08, 8), c, 0, 0.04, 0, glow(0x1a6a8a));
+      for (let i = 0; i < 8; i++) { const a = i / 8 * TAU, sp = add(new THREE.OctahedronGeometry(0.05, 0), i % 2 ? c2 : c, Math.sin(a) * 0.15, 0.15 + (i % 2) * 0.05, Math.cos(a) * 0.15, glow(0x1aa6b8)); sp.scale.y = 2.4; } break;
+    case 'bunny': for (const sx of [-1, 1]) { const e = add(B(0.07, 0.34, 0.035), c, sx * 0.07, 0.17, 0.02); e.rotation.z = -sx * 0.18; const i = add(B(0.035, 0.26, 0.01), c2, sx * 0.07, 0.17, -0.0); i.rotation.z = -sx * 0.18; } break;
+    case 'santahat': add(C(0.185, 0.185, 0.07, 12), c2, 0, 0.0); { const t = add(new THREE.ConeGeometry(0.16, 0.36, 10), c, 0.03, 0.2); t.rotation.z = -0.5; } add(S(0.05), c2, 0.19, 0.29); break;
+    case 'elfhat': { const t = add(new THREE.ConeGeometry(0.17, 0.42, 8), c, 0, 0.2); t.rotation.x = 0.35; } add(C(0.18, 0.18, 0.05, 10), '#d62839', 0, 0.01); add(S(0.035), c2, 0, 0.38, 0.13); break;
+    case 'antlers': for (const sx of [-1, 1]) {
+        const a = add(B(0.035, 0.24, 0.035), c, sx * 0.1, 0.1, 0); a.rotation.z = -sx * 0.4;
+        const b = add(B(0.035, 0.14, 0.035), c, sx * 0.19, 0.22, 0); b.rotation.z = -sx * 1.1;
+        const d = add(B(0.035, 0.12, 0.035), c, sx * 0.13, 0.27, 0.03); d.rotation.z = sx * 0.2;
+      } add(S(0.025), c2, 0.1, 0.02, -0.12); break;
     // ---- face ----
+    case 'monocle': add(new THREE.TorusGeometry(0.045, 0.01, 5, 14), c, 0.06, 0.01, -0.012); add(C(0.04, 0.04, 0.005, 12), c2, 0.06, 0.01, -0.012).rotation.x = Math.PI / 2;
+      add(B(0.006, 0.12, 0.006), c, 0.1, -0.06, -0.012); break;
+    case 'eyepatch': add(B(0.07, 0.06, 0.02), c, -0.06, 0.01, -0.012); { const st = add(B(0.33, 0.015, 0.33), c2, 0, 0.02, 0.15); st.rotation.z = 0.25; } break;
+    case 'nerd': for (const sx of [-1, 1]) { add(B(0.12, 0.1, 0.012), c, sx * 0.07, 0.01, -0.01); add(B(0.09, 0.07, 0.014), c2, sx * 0.07, 0.01, -0.012); add(B(0.02, 0.015, 0.3), c, sx * 0.152, 0.03, 0.14); } break;
+    case 'scarf': add(C(0.19, 0.19, 0.09, 8), c, 0, -0.16, 0.0); add(C(0.192, 0.192, 0.025, 8), c2, 0, -0.16, 0.0);
+      { const tail = add(B(0.07, 0.22, 0.04), c, 0.08, -0.27, -0.16); tail.rotation.z = 0.15; } break;
+    case 'rudolph': add(S(0.055), c, 0, -0.045, -0.03, { emissive: 0xff1010, emissiveIntensity: 1 }); break;
     case 'aviators': for (const sx of [-1, 1]) { add(B(0.12, 0.08, 0.025), c, sx * 0.07, 0.01, -0.012); add(B(0.04, 0.012, 0.3), c2, sx * 0.152, 0.03, 0.14); } add(B(0.06, 0.014, 0.02), c2, 0, 0.035, -0.012); break;
     case 'mustache': for (const sx of [-1, 1]) { const m = add(B(0.11, 0.035, 0.03), c, sx * 0.05, -0.08, -0.01); m.rotation.z = sx * 0.3; } break;
     case 'clown': add(S(0.055), c, 0, -0.04, -0.03); break;
@@ -654,6 +693,16 @@ function buildAccessory(kind, it) {
     case 'lasers': { const lg = new THREE.Group(); g.add(lg); accAnim.lasers = lg;
       for (const sx of [-1, 1]) { const l = new THREE.Mesh(B(0.025, 0.025, 6), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85 })); l.position.set(sx * 0.07, 0, -3); lg.add(l); add(S(0.025), c2, sx * 0.07, 0, -0.01, glow(0xff0000)); } } break;
     // ---- back ----
+    case 'guitar': { const gt = new THREE.Group(); gt.position.set(0, -0.05, 0.1); gt.rotation.z = 0.5; g.add(gt);
+      gt.add(accMesh(S(0.17, 10, 6), c, 0, -0.18, 0)); gt.add(accMesh(S(0.13, 10, 6), c, 0, 0.02, 0)); gt.children.forEach(m => m.scale.z = 0.35);
+      gt.add(accMesh(C(0.04, 0.04, 0.012, 10), '#111111', 0, -0.1, -0.06));
+      gt.add(accMesh(B(0.05, 0.5, 0.03), c2, 0, 0.35, 0)); gt.add(accMesh(B(0.08, 0.1, 0.035), '#3b2416', 0, 0.62, 0)); } break;
+    case 'shield': { const sh = add(C(0.24, 0.24, 0.04, 6), c, 0, 0, 0.1); sh.rotation.x = Math.PI / 2; sh.scale.set(1, 1, 1.25);
+      add(B(0.06, 0.4, 0.045), c2, 0, 0, 0.12); add(B(0.3, 0.06, 0.045), c2, 0, 0.05, 0.12); } break;
+    case 'trophy': add(C(0.13, 0.06, 0.2, 10), c, 0, 0.08, 0.12, glow(0x3a2a00)); add(C(0.02, 0.02, 0.1, 6), c, 0, -0.06, 0.12, glow(0x3a2a00)); add(B(0.16, 0.06, 0.1), c2, 0, -0.13, 0.12);
+      for (const sx of [-1, 1]) add(new THREE.TorusGeometry(0.05, 0.012, 4, 8), c, sx * 0.14, 0.1, 0.12, glow(0x3a2a00)); break;
+    case 'giftsack': { const sk = add(S(0.24, 8, 6), c, 0, -0.02, 0.17); sk.scale.set(1, 1.15, 0.8); add(C(0.05, 0.08, 0.1, 6), c, 0, 0.26, 0.17); add(C(0.06, 0.06, 0.03, 6), c2, 0, 0.21, 0.17);
+      add(B(0.12, 0.12, 0.12), '#2a9d4f', 0.04, 0.32, 0.17); add(B(0.1, 0.1, 0.1), '#ffd23f', -0.06, 0.3, 0.12); } break;
     case 'backpack': add(B(0.32, 0.38, 0.16), c, 0, 0, 0.06); add(B(0.33, 0.12, 0.17), c2, 0, 0.14, 0.06); break;
     case 'cape': { const cp = new THREE.Group(); cp.position.set(0, 0.2, 0.02); g.add(cp); const m = accMesh(B(0.46, 0.75, 0.02), c); m.position.y = -0.37; cp.add(m); accAnim.cape = cp; } break;
     case 'baguette': { const b = add(C(0.055, 0.05, 0.85, 7), c, 0, 0, 0.06); b.rotation.z = 0.7; for (let i = -1; i <= 1; i++) { const sl = add(B(0.02, 0.1, 0.02), c2, i * 0.18 * Math.cos(0.7), i * 0.18 * Math.sin(0.7), 0.11); sl.rotation.z = 0.7 + 0.9; } } break;
@@ -740,7 +789,7 @@ function buildAccessory(kind, it) {
 let preview = null;
 const worn = kind => preview?.[kind] ? item(kind, preview[kind]) : equipped(kind);
 // face items that cover the eyes replace the goggles, so they're never hidden inside them
-const EYE_ITEMS = new Set(['aviators', 'hearts', 'pixel', 'mask', 'lasers', 'thirdeye']);
+const EYE_ITEMS = new Set(['aviators', 'hearts', 'pixel', 'mask', 'lasers', 'thirdeye', 'monocle', 'eyepatch', 'nerd']);
 function applyAccessories() {
   accAnim.prop = accAnim.cape = accAnim.lasers = accAnim.sun = accAnim.crystal = null; accAnim.wings = []; accAnim.jet = false;
   for (const kind of ['hat', 'face', 'back']) {
@@ -1673,6 +1722,32 @@ function addRuneArch(z) {
   world.add(g); decor.push({ z: z - 2, mesh: g });
 }
 
+// ---------- Easter egg: a shy Yeti now and then beside the run, waving. Ride past it for a bonus ----------
+const yetiFur = lam(0xf4f8fb), yetiFace = lam(0x8fa3b8), yetis = [];
+function addYeti(x, z) {
+  const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = x < 0 ? -0.6 : 0.6;
+  const part = (w, h, d, px, py, pz, m = yetiFur, parent = g) => { const o = new THREE.Mesh(box(w, h, d), m); o.position.set(px, py, pz); parent.add(o); return o; };
+  part(1.7, 2.2, 1.2, 0, 2.3, 0); part(1.1, 1.0, 1.0, 0, 3.85, -0.05);
+  part(0.75, 0.55, 0.1, 0, 3.75, -0.58, yetiFace);
+  for (const sx of [-1, 1]) { part(0.14, 0.14, 0.05, sx * 0.18, 3.85, -0.64, bearDark); part(0.55, 1.2, 0.6, sx * 0.45, 0.6, 0); }
+  part(0.4, 0.12, 0.05, 0, 3.58, -0.64, bearDark);
+  const arms = [];
+  for (const sx of [-1, 1]) {
+    const pivot = new THREE.Group(); pivot.position.set(sx * 1.0, 3.1, 0); g.add(pivot);
+    part(0.45, 1.5, 0.5, 0, -0.7, 0, yetiFur, pivot); arms.push(pivot);
+  }
+  world.add(g); decor.push({ z: z - 2, mesh: g });
+  yetis.push({ g, arm: arms[x < 0 ? 1 : 0], z, seen: false });
+}
+function updateYetis() {
+  for (let i = yetis.length - 1; i >= 0; i--) {
+    const y = yetis[i];
+    if (!y.g.parent) { yetis.splice(i, 1); continue; }
+    y.arm.rotation.z = (y.g.position.x < 0 ? 1 : -1) * (2.4 + Math.sin(time * 7) * 0.4);   // waving
+    if (!y.seen && state === 'play' && p.z < y.z) { y.seen = true; p.trickScore += 1000; showTrick('YETI SPOTTED!', '+1,000', true); Sfx.perfect(); }
+  }
+}
+
 // ---------- Agartha city: snowy stepped pyramids, carved spires and stone blocks in pale lavender stone ----------
 const STONE = [0xddd5f2, 0xc9bfe8], STONE_DARK = 0x51457f, SNOWCAP = 0xffffff, TEMPLE_GOLD = 0xffd98a;
 const agPyramid = new Pool(merged((() => {
@@ -2269,6 +2344,7 @@ function spawnDecor(z) {
     addTree(tree.x, tree.z, tree.scale, false, tree.rotation, tree.variant);
   }
   if (!forest && decorN % 12 === 0) addLiftTower(z);
+  if (!forest && decorN > 20 && Math.random() < 0.004) addYeti((Math.random() < 0.5 ? -1 : 1) * rand(20, 25), z);
   if (!forest && decorN % 160 === 57) {
     addCabin(16.5, z, -0.12);
     if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
@@ -2628,7 +2704,7 @@ function crash(reason) {
   if (p.grounded) p.vy = 8;
   p.grounded = false;
   state = 'crash';
-  Sfx.crash(); Sfx.tone(90, 0.5, 'sawtooth', 0.22, 30); Sfx.noise(0.3, 0.8, 2400, 'highpass'); shake = 1.2;
+  Sfx.crash(); Sfx.tone(90, 0.5, 'sawtooth', 0.22, 30); Sfx.noise(0.3, 0.8, 2400, 'highpass'); shake = 0.3;
   Particles.emit(p.x, p.y + 0.5, p.z, 80, 6, 8, 0xffffff, -4);
   breakRider();
   Platform.gameplayStop();
@@ -2640,7 +2716,7 @@ function fadeScreen(color) {
   void f.offsetWidth; f.style.transition = 'opacity 1.2s ease-out'; f.style.opacity = 0;
 }
 function switchZone(z, clear = 40) {
-  zone = z;
+  zone = z; Music.play(z === 'normal' ? 'mountain' : z);
   clearWorld(); portal = null;
   spawnZ = p.z - clear; decorZ = p.z + 30; wallZ = Math.round(p.z) + 40; p.lastRail = null;
 }
@@ -2648,7 +2724,7 @@ function enterWorld(w) {
   const W = WORLDS[w];
   if (zone === 'normal') prevTheme = theme.id || 'day';
   switchZone(w); zoneEndZ = p.z - W.len;
-  setTheme(W.theme); setSlope(W.slope);
+  setTheme(W.theme); setSlope(W.slope); Music.play(w);
   scene.fog.near = W.fog[0]; scene.fog.far = W.fog[1];
   fadeScreen(W.fade); p.speed += 6;
   showTrick(W.name, 'Double points!', true);
@@ -3088,7 +3164,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 function startRun(m = mode) {
-  mode = m; demo = false; Sfx.quiet = false; clearTouch();
+  mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
+  Quality.cap = Infinity; Quality.apply();
   zone = 'normal'; portal = null; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
@@ -3202,7 +3279,8 @@ function menuStill() {
 // ---------- attract mode: a bot rides forever behind the menu ----------
 const bot = { trick: null, hopT: 2, wipeouts: 0 };
 function startDemo() {
-  demo = true;
+  demo = true; Music.play('mountain');
+  Quality.cap = 1; Quality.apply();   // the menu backdrop doesn't need full resolution
   zone = 'normal'; portal = null; nextCaveD = Infinity;
   setSlope(SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
@@ -3325,7 +3403,7 @@ function frame(now) {
   requestAnimationFrame(frame);
   const rawMs = now - last;
   let dt = Math.min(0.033, rawMs / 1000); last = now;
-  if (!paused && (state === 'play' || state === 'crash')) Quality.sample(rawMs);
+  if (!paused && (state === 'play' || state === 'crash' || (state === 'menu' && demo))) Quality.sample(rawMs);
   if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
   if (paused) return;
   time += dt;
@@ -3375,7 +3453,7 @@ function frame(now) {
   updateAnimals(dt);
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
-  sleigh.update(time); agarthaSky.update(time);
+  sleigh.update(time); agarthaSky.update(time); updateYetis();
   if (p.boostT > 0) {
     p.boostT = Math.max(0, p.boostT - dt * 0.9);
     if (state === 'play') Particles.emit(p.x + rand(-0.4, 0.4), p.y + rand(0.2, 1.4), p.z + 0.8, 2, 0.3, 0.2, Math.random() < 0.5 ? 0x22d3ee : 0x9bf6ff, 14);

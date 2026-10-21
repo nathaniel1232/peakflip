@@ -66,9 +66,26 @@ export const CATALOG = {
     O('king', 'Shadow King', 'legendary', '#0b0b0b', '#000000', '#ffd700'),
     O('banana', 'Banana Suit', 'epic', '#ffe135', '#ffe135', '#6b4a2f'),
     O('tux', 'Tuxedo', 'epic', '#111111', '#111111', '#ffffff', 2),
-    O('santa', 'Santa', 'legendary', '#d00000', '#d00000', '#ffffff'),
     O('ninja', 'Ninja', 'rare', '#1b1b1b', '#1b1b1b', '#1b1b1b', 0, { tex: 'ninja', sw: 'linear-gradient(#1b1b1b 70%,#d00000 70% 80%,#1b1b1b 80%)' }),
     O('astronaut', 'Astronaut', 'legendary', '#f1f1f1', '#d9d9d9', '#ffffff', 0, { tex: 'astro', sw: 'linear-gradient(135deg,#fff,#cfd6dd)' }),
+    O('ocean', 'Ocean', 'common', '#0077b6', '#03045e', '#90e0ef'),
+    O('sand', 'Desert Sand', 'common', '#d4a373', '#6b4f2a', '#fefae0'),
+    O('grape', 'Grape', 'common', '#7b2cbf', '#240046', '#e0aaff'),
+    O('teal', 'Teal Team', 'common', '#14b8a6', '#134e4a', '#f0fdfa'),
+    O('coral', 'Coral', 'common', '#ff6f59', '#254441', '#fff1e6'),
+    O('olive', 'Field Olive', 'common', '#6b705c', '#3a3a2c', '#ddbea9'),
+    O('retro', 'Retro 80s', 'rare', '#06d6a0', '#7209b7', '#ff4fa3'),
+    O('police', 'Ski Patrol', 'rare', '#d62828', '#1d3557', '#ffffff'),
+    O('sakura', 'Sakura', 'rare', '#ffb7c5', '#6d2e46', '#ffffff'),
+    O('storm', 'Storm', 'rare', '#495867', '#1b2631', '#ffd60a'),
+    O('emerald', 'Emerald', 'rare', '#2a9d8f', '#0b3d36', '#e9c46a'),
+    O('royal', 'Royal Blue', 'rare', '#1d4ed8', '#0b1d51', '#ffd23f'),
+    O('frost', 'Frostbite', 'epic', '#caf0f8', '#48cae4', '#0077b6'),
+    O('toxic', 'Toxic Waste', 'epic', '#b5ff5c', '#1a1a1a', '#39ff14'),
+    O('ruby', 'Ruby', 'epic', '#9b111e', '#2b0007', '#ff8fa3'),
+    O('midnight', 'Midnight', 'epic', '#14213d', '#000000', '#fca311'),
+    O('aurora', 'Aurora', 'legendary', '#3cf2a6', '#3a0ca3', '#c77dff'),
+    O('phoenix', 'Phoenix', 'legendary', '#ff4800', '#6a040f', '#ffd60a'),
     ...inSet('agartha', [
       O('agartha', 'Agartha Guardian', 'legendary', '#3b1f6e', '#1a0f33', '#ffd166', 0, { tex: 'runes', glow: '#3cf2ff', sw: 'repeating-linear-gradient(45deg,#3b1f6e 0 6px,#3cf2ff 6px 8px)' }),
       O('hollow', 'Hollow Earth', 'epic', '#0f5e5a', '#062a28', '#7cf7d4', 0, { tex: 'crystal', glow: '#7cf7d4', sw: 'conic-gradient(#0f5e5a,#7cf7d4,#0f5e5a,#1c8c84,#0f5e5a)' }),
@@ -79,6 +96,19 @@ export const CATALOG = {
       O('vampire', 'Vampire', 'epic', '#14070a', '#0b0b0b', '#8b0000', 0, { tex: 'vampire', sw: 'linear-gradient(90deg,#14070a 35%,#b3001b 35% 65%,#14070a 65%)' }),
       O('witch', 'Witch', 'rare', '#4b1d6b', '#111111', '#3ddc84'),
     ]),
+    ...inSet('xmas', [
+      O('santa', 'Santa', 'legendary', '#d00000', '#d00000', '#ffffff'),
+      O('elf', 'Workshop Elf', 'rare', '#2a9d4f', '#d62839', '#2a9d4f'),
+      O('reindeer', 'Reindeer', 'epic', '#8b5a2b', '#5a3d22', '#e8d5b5'),
+      O('gingerbread', 'Gingerbread', 'epic', '#b5651d', '#7a3e12', '#fff5f8'),
+      O('snowman', 'Snowman', 'rare', '#f8fbff', '#e2ebf5', '#111111'),
+    ]),
+    // score rewards: unlocked by reaching a best score, never from chests
+    O('medalist', 'Medalist', 'rare', '#cd7f32', '#3b2416', '#ffe0b3', 0, { score: 10000 }),
+    O('champion', 'Champion', 'epic', '#c0c0c0', '#2b2d42', '#ffd23f', 0, { score: 100000 }),
+    O('legend', 'Peak Legend', 'legendary', '#ffd23f', '#111111', '#ffffff', 0, { score: 500000 }),
+    // secret: found, not bought
+    O('arcade', 'Arcade', 'legendary', '#ff00e6', '#00f0ff', '#39ff14', 0, { secret: true }),
     ...inSet('tradition', [
       O('shabbat', 'Shabbat Best', 'rare', '#111111', '#111111', '#ffffff', 0, { tex: 'suit', sw: 'linear-gradient(90deg,#111 38%,#fff 38% 62%,#111 62%)' }),
       O('tallit', 'Tallit', 'epic', '#f6f3ea', '#1d2b4a', '#ffffff', 0, { tex: 'tallit', sw: 'linear-gradient(#f6f3ea 20%,#1d4ed8 20% 28%,#f6f3ea 28% 34%,#1d4ed8 34% 42%,#f6f3ea 42%)' }),
@@ -101,6 +131,13 @@ export const CATALOG = {
     A('halo', 'Halo', 'legendary', '#fff3b0', '#ffffff'),
     A('propeller', 'Propeller Cap', 'epic', '#3a86ff', '#ffd60a', 2),
     A('banana', 'Banana Head', 'epic', '#ffe135', '#6b4a2f', 3),
+    A('beret', 'Beret', 'common', '#d62839', '#111111'),
+    A('wizard', 'Wizard Hat', 'epic', '#3a0ca3', '#ffd23f'),
+    A('sombrero', 'Sombrero', 'rare', '#e9c46a', '#d62839'),
+    A('headphones', 'Headphones', 'rare', '#111111', '#ff4fa3'),
+    A('goldhelm', 'Golden Helmet', 'epic', '#ffd23f', '#fff3b0', 0), A('peakcrown', 'Ice Crown', 'legendary', '#bfe8ff', '#3cf2ff', 0),
+    A('bunny', 'Bunny Ears', 'legendary', '#ffffff', '#ffb7c5', 0),
+    ...inSet('xmas', [A('santahat', 'Santa Hat', 'rare', '#d62839', '#ffffff'), A('antlers', 'Antlers', 'epic', '#6b4a2f', '#d62839'), A('elfhat', 'Elf Hat', 'common', '#2a9d4f', '#ffd23f')]),
     ...inSet('agartha', [A('crystal', 'Crystal Crown', 'legendary', '#3cf2ff', '#c264ff')]),
     ...inSet('halloween', [A('pumpkinhead', 'Pumpkin Head', 'legendary', '#ff7518', '#ffd23f'), A('witchhat', 'Witch Hat', 'epic', '#2b1240', '#3ddc84')]),
     ...inSet('tradition', [A('kippah', 'Kippah', 'common', '#1d4ed8', '#ffffff'), A('fedora', 'Black Fedora', 'rare', '#111111', '#3a3a3a'), A('shtreimel', 'Shtreimel', 'epic', '#5a3a1e', '#111111')]),
@@ -115,6 +152,11 @@ export const CATALOG = {
     A('pixel', 'Deal-With-It', 'epic', '#111111', '#ffffff'),
     A('mask', 'Hero Mask', 'epic', '#3a0ca3'),
     A('lasers', 'Laser Eyes', 'legendary', '#ff1e1e', '#ffb3b3', 3),
+    A('monocle', 'Monocle', 'rare', '#ffd23f', '#bde0fe'),
+    A('eyepatch', 'Eye Patch', 'common', '#111111', '#111111'),
+    A('scarf', 'Cozy Scarf', 'common', '#e63946', '#ffffff'),
+    A('nerd', 'Big Glasses', 'rare', '#111111', '#bde0fe'),
+    ...inSet('xmas', [A('rudolph', 'Rudolph Nose', 'epic', '#ff2020', '#ffb3b3')]),
     ...inSet('agartha', [A('thirdeye', 'Third Eye', 'epic', '#3cf2ff', '#ffd166')]),
     ...inSet('halloween', [A('fangs', 'Vampire Fangs', 'rare', '#ffffff', '#8b0000')]),
     ...inSet('tradition', [A('payot', 'Payot', 'rare', '#3b2416')]),
@@ -128,6 +170,10 @@ export const CATALOG = {
     A('wings', 'Angel Wings', 'epic', '#ffffff', '#e0fbfc'),
     A('dragon', 'Dragon Wings', 'legendary', '#2b9348', '#80b918'),
     A('jetpack', 'Jetpack', 'legendary', '#9aa9b8', '#ff7b00', 4),
+    A('guitar', 'Guitar', 'rare', '#c1121f', '#f1e3c8'),
+    A('shield', 'Knight Shield', 'epic', '#1d4ed8', '#ffd23f'),
+    A('trophy', 'Trophy', 'legendary', '#ffd23f', '#8a5a35', 0),
+    ...inSet('xmas', [A('giftsack', "Santa's Sack", 'epic', '#8b5a2b', '#d62839')]),
     ...inSet('agartha', [A('innersun', 'Inner Sun', 'legendary', '#ffd166', '#3cf2ff')]),
     ...inSet('halloween', [A('batwings', 'Bat Wings', 'epic', '#1b1b1b', '#5a0f2e'), A('scythe', 'Reaper Scythe', 'legendary', '#c9d3dc', '#3b2416')]),
     ...inSet('tradition', [A('tallitshawl', 'Tallit Shawl', 'rare', '#f6f3ea', '#1d4ed8')]),
@@ -147,6 +193,15 @@ export const CATALOG = {
     S('banana', 'Banana', 'rare', '#ffe135', '#6b4a2f'),
     S('pizza', 'Pizza Slice', 'epic', '#f4a261', '#e63946'),
     S('lava', 'Lava Flow', 'legendary', '#ff4800', '#ffd60a', true),
+    S('ocean', 'Ocean', 'common', '#0077b6', '#90e0ef'),
+    S('grape', 'Grape', 'common', '#7b2cbf', '#e0aaff'),
+    S('sakura', 'Sakura', 'rare', '#ffb7c5', '#ffffff'),
+    S('carbon', 'Carbon', 'rare', '#2b2d42', '#ef233c'),
+    S('ice', 'Ice Blade', 'epic', '#bfe8ff', '#ffffff', true),
+    S('ruby', 'Ruby', 'epic', '#9b111e', '#ff8fa3', true),
+    S('silver', 'Silver Medal', 'epic', '#c0c0c0', '#ffffff', true),
+    S('void', 'Void', 'legendary', '#240046', '#c77dff', true),
+    ...inSet('xmas', [S('candycane', 'Candy Cane', 'rare', '#d62839', '#ffffff')]),
     ...inSet('agartha', [S('crystal', 'Crystal', 'epic', '#7cf7d4', '#3cf2ff', true)]),
     ...inSet('halloween', [S('bone', 'Bone', 'rare', '#f1f1f1', '#111111')]),
   ],
@@ -162,17 +217,54 @@ export const CATALOG = {
     Tr('hearts', 'Love Trail', 'rare', ['#ff4fa3', '#ff8fab', '#ffffff']),
     Tr('bubbles', 'Bubbles', 'rare', ['#bde0fe', '#a2d2ff', '#ffffff']),
     Tr('money', 'Make It Rain', 'epic', ['#2b9348', '#80b918', '#d8f3dc'], 3),
+    Tr('sakura', 'Petals', 'rare', ['#ffb7c5', '#ffe5ec', '#ffffff']),
+    Tr('ocean', 'Sea Spray', 'common', ['#0077b6', '#90e0ef', '#ffffff']),
+    Tr('ember', 'Embers', 'epic', ['#ff4800', '#2b0a00', '#ffba08']),
+    Tr('matrix', 'Matrix', 'epic', ['#00ff41', '#008f11', '#003b00']),
+    Tr('stardust', 'Stardust', 'legendary', ['#ffffff', '#ffd23f', '#c77dff', '#4cc3ff']),
+    Tr('comet', 'Comet', 'legendary', ['#ffffff', '#bfe8ff', '#4cc3ff']),
+    ...inSet('xmas', [Tr('tinsel', 'Tinsel', 'epic', ['#d62839', '#2a9d4f', '#ffd23f', '#ffffff'])]),
     ...inSet('agartha', [Tr('aurora', 'Inner Aurora', 'legendary', ['#3cf2ff', '#c264ff', '#7cf7d4'])]),
     ...inSet('halloween', [Tr('spooky', 'Spooky', 'epic', ['#ff7518', '#8a2be2', '#3ddc84'])]),
   ],
 };
+// score rewards and secrets that aren't outfits (the A/S/Tr helpers don't take extras)
+const tag = (kind, id, extra) => Object.assign(CATALOG[kind].find(i => i.id === id), extra);
+tag('hat', 'goldhelm', { score: 50000 }); tag('hat', 'peakcrown', { score: 1000000 }); tag('back', 'trophy', { score: 250000 });
+tag('ski', 'silver', { score: 25000 }); tag('trail', 'comet', { score: 750000 });
+tag('hat', 'bunny', { secret: true });
 
 // Full looks for the Locker's Fits tab. Wearing a fit equips every piece you own; missing pieces stay as they are.
+// Limited sets: their chest is only in the Shop until `until` (UTC, inclusive), and their items never drop
+// from ordinary chests. Anything you got stays yours forever. Change the dates to run a set again.
 export const SETS = {
   agartha:   { name: 'Agartha',   color: '#3cf2ff', blurb: 'Glowing crystals from the inner earth' },
-  halloween: { name: 'Halloween', color: '#ff7518', blurb: 'Pumpkins, bones and bats' },
-  tradition: { name: 'Shabbat',   color: '#9db8ff', blurb: 'Traditional Jewish dress' },
+  halloween: { name: 'Halloween', color: '#ff7518', blurb: 'Pumpkins, bones and bats', until: '2026-11-08' },
+  tradition: { name: 'Shabbat',   color: '#9db8ff', blurb: 'Traditional Jewish dress', until: '2026-11-30' },
+  xmas:      { name: 'Christmas', color: '#2a9d4f', blurb: 'Santa, elves and reindeer', until: '2027-01-06' },
 };
+const utcToday = () => new Date().toISOString().slice(0, 10);
+export const isLimited = it => !!SETS[it?.set]?.until;
+// days left (0 = last day) for a limited set, or -1 once it's gone; Infinity for sets that never leave
+export function setDaysLeft(set) {
+  const until = SETS[set]?.until; if (!until) return Infinity;
+  return Math.round((Date.parse(until) - Date.parse(utcToday())) / 864e5);
+}
+export const setAvailable = set => setDaysLeft(set) >= 0;
+// score rewards: everything whose `score` your best has reached. Returns the items that were just unlocked.
+export function grantScoreRewards() {
+  const fresh = [];
+  for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) {
+    if (it.score && save.best >= it.score && !save.inv[kind].includes(it.id)) { save.inv[kind].push(it.id); fresh.push({ kind, it }); }
+  }
+  if (fresh.length) persist();
+  return fresh;
+}
+// secrets (Easter eggs): returns true the first time
+export function grantSecret(kind, id) {
+  if (save.inv[kind].includes(id)) return false;
+  save.inv[kind].push(id); persist(); return true;
+}
 export const FITS = [
   { id: 'agartha', name: 'Agartha Guardian', set: 'agartha', pieces: { outfit: 'agartha', hat: 'crystal', face: 'thirdeye', back: 'innersun', ski: 'crystal', trail: 'aurora' } },
   { id: 'hollow', name: 'Hollow Earth Explorer', set: 'agartha', pieces: { outfit: 'hollow', hat: 'none', face: 'thirdeye', back: 'none', ski: 'crystal', trail: 'aurora' } },
@@ -180,6 +272,9 @@ export const FITS = [
   { id: 'jack', name: "Jack-o'-Lantern", set: 'halloween', pieces: { outfit: 'pumpkin', hat: 'pumpkinhead', face: 'none', back: 'none', trail: 'spooky' } },
   { id: 'count', name: 'The Count', set: 'halloween', pieces: { outfit: 'vampire', hat: 'none', face: 'fangs', back: 'batwings', trail: 'spooky' } },
   { id: 'witch', name: 'Witch', set: 'halloween', pieces: { outfit: 'witch', hat: 'witchhat', face: 'none', back: 'none', trail: 'spooky' } },
+  { id: 'santa', name: 'Santa Claus', set: 'xmas', pieces: { outfit: 'santa', hat: 'santahat', face: 'none', back: 'giftsack', ski: 'candycane', trail: 'tinsel' } },
+  { id: 'elf', name: 'Workshop Elf', set: 'xmas', pieces: { outfit: 'elf', hat: 'elfhat', face: 'none', back: 'none', ski: 'candycane' } },
+  { id: 'rudolph', name: 'Rudolph', set: 'xmas', pieces: { outfit: 'reindeer', hat: 'antlers', face: 'rudolph', back: 'none', trail: 'tinsel' } },
   { id: 'shabbat', name: 'Shabbat Best', set: 'tradition', pieces: { outfit: 'shabbat', hat: 'shtreimel', face: 'payot', back: 'tallitshawl' } },
   { id: 'shul', name: 'Tallit & Kippah', set: 'tradition', pieces: { outfit: 'tallit', hat: 'kippah', face: 'none', back: 'none' } },
   { id: 'mensch', name: 'Fedora Classic', set: 'tradition', pieces: { outfit: 'shabbat', hat: 'fedora', face: 'none', back: 'none' } },
@@ -209,6 +304,7 @@ export const CHESTS = {
   spooky:    { name: 'Spooky Chest',  price: 350, set: 'halloween', odds: { common: 0, rare: 50, epic: 38, legendary: 12 }, color: '#ff7518' },
   agartha:   { name: 'Agartha Chest', price: 450, set: 'agartha',   odds: { common: 0, rare: 0, epic: 70, legendary: 30 }, color: '#3cf2ff' },
   tradition: { name: 'Shabbat Chest', price: 250, set: 'tradition', odds: { common: 30, rare: 45, epic: 25, legendary: 0 }, color: '#9db8ff' },
+  xmas:      { name: 'Christmas Chest', price: 400, set: 'xmas',  odds: { common: 0, rare: 45, epic: 40, legendary: 15 }, color: '#2a9d4f' },
 };
 export const FREE_CHEST_COOLDOWN = 3 * 60 * 60 * 1000;
 export const PITY = 10; // a Snow/Free chest is guaranteed Epic+ after this many without one
@@ -222,13 +318,15 @@ function rollRarity(chest) {
 }
 export function openChest(chest, paidByAd = false) {
   const c = CHESTS[chest];
+  if (c.set && !setAvailable(c.set)) return null;   // a limited chest that has left the Shop
   if (paidByAd) { /* the player watched a rewarded ad */ }
   else if (chest === 'free') { if (Date.now() < save.freeChestAt) return null; save.freeChestAt = Date.now() + FREE_CHEST_COOLDOWN; }
   else { if (save.coins < c.price) return null; save.coins -= c.price; }
   let rarity = rollRarity(chest);
   if (chest === 'free' || chest === 'basic') save.pity = (rarity === 'epic' || rarity === 'legendary') ? 0 : save.pity + 1;
   // pick a kind weighted by how many items it has in that rarity; prefer unowned items
-  const inPool = it => it.id !== 'none' && !it.ad && (!c.set || it.set === c.set);
+  // score rewards and secrets never drop; limited items only come from their own chest
+  const inPool = it => it.id !== 'none' && !it.ad && !it.score && !it.secret && (c.set ? it.set === c.set : !isLimited(it));
   let pool = [];
   for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (it.rarity === rarity && inPool(it)) pool.push({ kind, it });
   if (!pool.length) {   // a themed set may have nothing at this rarity: fall back to anything in the set
