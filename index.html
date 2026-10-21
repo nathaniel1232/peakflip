@@ -12,6 +12,9 @@
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#0f1c2e">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f1c2e'/%3E%3Cpath d='M8 50 L26 20 L36 34 L44 24 L58 50Z' fill='%23fff'/%3E%3Cpath d='M22 27 L26 20 L30 26 L26 25Z' fill='%23ff6b2c'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&display=swap" rel="stylesheet">
 <style>
   :root {
     --ink: rgba(13, 25, 42, .9); --ink-2: rgba(255,255,255,.07); --ink-3: rgba(255,255,255,.12);
@@ -57,6 +60,20 @@
   .iconBtn { position: fixed; top: 14px; width: 42px; height: 42px; border-radius: 12px; background: rgba(13,25,42,.45); color: #fff; display: grid; place-items: center; pointer-events: auto; z-index: 6; }
   .iconBtn:hover { background: rgba(13,25,42,.65); }
   #pauseBtn { left: 14px; }
+  /* ---------- touch controls (phones/tablets only) ---------- */
+  #tStick, #tJump { display: none; }
+  body.touch #tStick { display: block; position: absolute; left: 0; top: 0; width: 112px; height: 112px; border-radius: 50%; border: 2px solid rgba(255,255,255,.5); background: rgba(13,25,42,.22);
+    transform: translate(28px, calc(100vh - 150px)); opacity: .45; transition: opacity .15s; }
+  body.touch #tStick.on { opacity: 1; transition: none; }
+  #tKnob { position: absolute; left: 31px; top: 31px; width: 50px; height: 50px; border-radius: 50%; background: rgba(255,255,255,.85); box-shadow: 0 3px 10px rgba(0,0,0,.25); }
+  body.touch #tJump { display: flex; flex-direction: column; align-items: center; justify-content: center; position: absolute; right: 26px; bottom: 34px; width: 112px; height: 112px; border-radius: 50%;
+    background: rgba(255,107,44,.55); border: 2px solid rgba(255,255,255,.55); text-shadow: none; transition: transform .08s, background .08s; }
+  #tJump b { font-size: 20px; letter-spacing: .04em; }
+  #tJump small { font-size: 10px; font-weight: 700; opacity: .85; }
+  #tJump.down { transform: scale(.9); background: rgba(255,107,44,.85); }
+  body.touch #speedo { bottom: auto; top: 64px; right: 16px; }
+  body.touch #hint { bottom: auto; top: 110px; max-width: calc(100% - 32px); font-size: 12px; }
+  body.touch, body.touch * { -webkit-touch-callout: none; }
   #muteBtn { left: 64px; }
   #camBtn { left: 114px; }
 
@@ -99,7 +116,6 @@
   @media (max-width: 760px) { .menuWrap { flex-direction: column; align-items: center; } .lbCard { max-width: 420px; } }
   .topRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
   .topRow .logo b { font-size: 28px; white-space: nowrap; }
-  @media (max-width: 760px) { #menu { padding-top: 66px; align-items: flex-start; } }
   @media (max-width: 400px) { .topRow .logo b { font-size: 23px; } .topRow .logo .ic { width: 28px; height: 28px; } .profile { max-width: 140px; } }
   .profile { display: flex; align-items: center; gap: 6px; background: var(--ink-2); border-radius: 99px; padding: 6px 12px 6px 8px; font-size: 13px; font-weight: 700; color: var(--muted); max-width: 170px; }
   .profile b { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -159,6 +175,97 @@
   .nameChip .btn { padding: 6px 12px; font-size: 13px; border-radius: 99px; }
   .nameRow input { flex: 1; min-width: 0; border: 0; border-radius: 12px; padding: 12px; font: 700 15px system-ui, sans-serif; background: #fff; color: #0f1c2e; }
 
+
+  /* ---------- home: snowy text over the attract-mode run ---------- */
+  #menu { display: block; padding: 0; background:
+      radial-gradient(ellipse 40% 60% at 50% 32%, rgba(10,32,64,.32), transparent 70%),
+      linear-gradient(90deg, transparent 70%, rgba(10,32,64,.42)),
+      linear-gradient(180deg, rgba(10,32,64,.18), transparent 30%); }
+  /* the main menu sits in the middle; the leaderboard keeps the right-hand column */
+  .home { position: relative; display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px; min-height: 100%; padding: max(28px, env(safe-area-inset-top)) clamp(18px, 4vw, 56px) 28px; }
+  .homeLeft, .homeRight { display: flex; flex-direction: column; gap: 14px; }
+  .homeLeft { grid-column: 2; align-items: center; text-align: center; }
+  .homeRight { grid-column: 3; justify-self: end; align-items: flex-end; width: min(340px, 26vw); }
+  .snowy {
+    --ice1: #d9f1ff; --ice2: #8fc8ee; --ice3: #4a8fc4;
+    position: relative; display: inline-block; font-family: 'Lilita One', system-ui, sans-serif; font-weight: 400; color: #cfe8fa; line-height: 1; letter-spacing: .01em;
+    white-space: nowrap;
+    text-shadow: 0 1px 0 var(--ice1), 0 2px 0 var(--ice2), 0 3px 0 var(--ice2), 0 4px 0 var(--ice3), 0 5px 0 var(--ice3), 0 8px 14px rgba(8,30,62,.45), 0 0 22px rgba(160,220,255,.35);
+  }
+  /* a drift of fresh snow sitting on top of each letter, with little drips */
+  .snowy::after {
+    content: attr(data-text); position: absolute; left: 0; top: 0; color: #fff; text-shadow: none;
+    clip-path: polygon(0 0, 100% 0, 100% 34%, 94% 40%, 88% 33%, 81% 44%, 74% 35%, 66% 41%, 59% 32%, 52% 46%, 45% 36%, 38% 42%, 31% 33%, 24% 45%, 17% 36%, 10% 42%, 4% 34%, 0 40%);
+    pointer-events: none;
+  }
+  .brand { margin: 0; display: flex; align-items: baseline; gap: 2px; }
+  .brand > .snowy { font-size: clamp(44px, 6.4vw, 92px); }
+  .brand small.snowy { font-size: clamp(26px, 3.4vw, 50px); }
+  .brand #logoIc .ic { width: clamp(30px, 4vw, 56px); height: clamp(30px, 4vw, 56px); color: #fff; filter: drop-shadow(0 3px 0 #4a8fc4); margin-right: 8px; align-self: center; }
+  .homeStats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .homeStats .chip, .homeStats .profile { background: rgba(10,32,64,.5); color: #d6e9fb; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .homeStats .profile.claim { background: rgba(76,195,255,.45); color: #fff; animation: claimPulse 2s ease-in-out infinite; }
+  @keyframes claimPulse { 50% { box-shadow: 0 0 0 4px rgba(76,195,255,.3); } }
+  .homeNav { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: 1vh; }
+  .homeNav .hl { display: flex; flex-direction: column; align-items: center; text-align: center; }
+  .homeNav .hl > span:first-child:not(.snowy) { display: none; }
+  .homeNav .hl small { margin-top: 0; }
+  .hl { position: relative; display: grid; grid-template-columns: clamp(26px, 3vw, 38px) auto; grid-template-rows: auto auto; align-items: center; column-gap: 12px; text-align: left; padding: 4px 6px; border-radius: 16px; transition: transform .18s cubic-bezier(.2,1.6,.4,1); }
+  .hl > span:first-child:not(.snowy) { grid-row: 1 / 3; display: grid; place-items: center; }
+  .hl .ic { width: clamp(26px, 3vw, 38px); height: clamp(26px, 3vw, 38px); color: #fff; filter: drop-shadow(0 3px 0 #4a8fc4); }
+  .hl .snowy { font-size: clamp(40px, 5.6vw, 80px); }
+  .hl small { grid-column: 2; font-size: 13px; font-weight: 700; color: #e6f3ff; text-shadow: 0 1px 3px rgba(8,30,62,.7); margin-top: 2px; }
+  .hl:hover, .hl:focus-visible { transform: scale(1.07) rotate(-2deg); }
+  .hl:hover .snowy { --ice2: #ffd38a; --ice3: #ff6b2c; }
+  .hl.play .snowy { --ice2: #ffc08a; --ice3: #ff6b2c; }
+  .hl.play:hover .snowy { --ice2: #ffe08a; --ice3: #e5551a; }
+  .hl .dot { top: 6px; right: -10px; }
+  .homeMinor { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .homeMinor button { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 99px; background: rgba(10,32,64,.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); font-size: 13px; font-weight: 700; }
+  .homeMinor button:hover { background: rgba(10,32,64,.7); }
+  .homeMinor .ic { width: 16px; height: 16px; }
+  .homeMinor small { color: var(--muted); font-weight: 600; }
+  .lbHead { display: flex; align-items: center; gap: 10px; }
+  .lbHead .snowy { font-size: clamp(36px, 4.6vw, 66px); }
+  .lbHead .ic { width: clamp(26px, 3vw, 40px); height: clamp(26px, 3vw, 40px); color: var(--gold); filter: drop-shadow(0 3px 0 #a86a00); }
+  .lbHead:hover .snowy { --ice2: #ffe08a; --ice3: #d99a00; }
+  .lbTabs { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+  .lbTabs .tabs { background: rgba(10,32,64,.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); margin: 0; }
+  .lbTabs .tab { color: #c9def2; }
+  /* menu leaderboard rows are big snowy names, no cards */
+  #menu #miniLb { width: 100%; min-height: 0; gap: 2px; }
+  #menu #miniLb .item { background: none; box-shadow: none; padding: 2px 4px; gap: 12px; font-family: 'Lilita One', system-ui, sans-serif; font-weight: 400; font-size: clamp(22px, 2.4vw, 34px); color: #fff; text-shadow: 0 2px 0 #8fc8ee, 0 4px 0 #4a8fc4, 0 6px 12px rgba(8,30,62,.45); }
+  #menu #miniLb .item .rank { width: auto; min-width: 1.4em; color: #fff; font-weight: 400; }
+  #menu #miniLb .item .rank::after { content: '.'; }
+  #menu #miniLb .item.first .rank::after { content: ''; }
+  #menu #miniLb .item.first .rank .ic { width: 1em; height: 1em; color: var(--gold); filter: drop-shadow(0 2px 0 #a86a00); }
+  #menu #miniLb .item.first { text-shadow: 0 2px 0 #ffe08a, 0 4px 0 #d99a00, 0 6px 12px rgba(8,30,62,.45); }
+  #menu #miniLb .item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #menu #miniLb .item .val { font-size: .62em; font-weight: 400; opacity: .92; }
+  #menu #miniLb .item .rowTime { font-family: system-ui, sans-serif; font-size: 12px; color: #e6f3ff; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+  #menu #miniLb .item.me .grow { color: #ffd38a; }
+  #menu #miniLb .note { color: #e6f3ff; text-shadow: 0 1px 3px rgba(8,30,62,.8); font-size: 13px; text-align: right; }
+  .lbFoot { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  .hl.small { display: block; }
+  .hl.small .snowy { font-size: clamp(30px, 3.4vw, 48px); }
+  .lbFoot .btn { padding: 9px 16px; font-size: 14px; border-radius: 99px; background: rgba(10,32,64,.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .spaceHint { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); font-size: 13px; font-weight: 700; color: #fff; text-shadow: 0 1px 3px rgba(8,30,62,.8); opacity: .85; animation: breathe 2.4s ease-in-out infinite; pointer-events: none; }
+  @keyframes breathe { 50% { opacity: .4; } }
+  body:has(#menu:not(.hidden)) #muteBtn { left: auto; right: 14px; top: auto; bottom: 14px; }
+  #musicBtn { display: none; }
+  body:has(#menu:not(.hidden)) #musicBtn { display: grid; left: auto; right: 64px; top: auto; bottom: 14px; }
+  #musicBtn.off { opacity: .45; }
+  #musicBtn.off::after { content: ''; position: absolute; width: 26px; height: 2px; background: #fff; transform: rotate(-45deg); border-radius: 2px; }
+  @media (pointer: coarse) { .spaceHint { display: none; } }
+  @media (max-width: 760px) {
+    #menu { background: linear-gradient(180deg, rgba(10,32,64,.35), transparent 26%, transparent 40%, rgba(10,32,64,.55) 62%); overflow-y: auto; }
+    .home { display: flex; flex-direction: column; justify-content: flex-start; gap: 16px; padding: max(18px, env(safe-area-inset-top)) 16px 80px; }
+    .homeNav { margin-top: 24vh; }
+    .homeRight { width: 100%; align-items: stretch; }
+    .lbHead, .lbFoot { align-self: flex-start; align-items: flex-start; }
+    #menu #miniLb .note { text-align: left; }
+    .hl:hover, .hl:focus-visible { transform: none; }
+  }
   /* ---------- panel ---------- */
   #panel { position: fixed; inset: 0; z-index: 4; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(8,18,32,.5); }
   #panel .card { max-height: 92vh; overflow-y: auto; }
@@ -300,6 +407,45 @@
   @keyframes glow { 50% { box-shadow: 0 0 0 2px var(--accent), 0 0 24px rgba(255,107,44,.55); } }
 
   .flashNote { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 9; background: rgba(13,25,42,.92); color: #fff; padding: 10px 16px; border-radius: 12px; font: 700 14px system-ui, sans-serif; box-shadow: 0 8px 24px rgba(0,0,0,.3); animation: toast 2.6s ease-out forwards; }
+
+  /* ---------- one look everywhere: snowy lettering and frosted ice cards (matches the home screen) ---------- */
+  :root { --snow-font: 'Lilita One', system-ui, sans-serif; --ice-shadow: 0 2px 0 #8fc8ee, 0 4px 0 #4a8fc4, 0 6px 12px rgba(8,30,62,.45); }
+  .card {
+    position: relative; border: 1px solid rgba(190,228,255,.28);
+    background:
+      radial-gradient(circle at 12px -3px, #fff 10px, transparent 11px) 0 0 / 24px 12px repeat-x,
+      linear-gradient(#fff, #fff) 0 0 / 100% 3px no-repeat,
+      linear-gradient(180deg, rgba(28,62,112,.9), rgba(10,24,50,.94));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.3), 0 20px 60px rgba(5,15,30,.4), 0 0 0 1px rgba(10,30,60,.25);
+    padding-top: 26px;
+  }
+  #panelTitle, h2 .snowy, .big-num .snowy, .rv-score .snowy { font-size: 30px; }
+  #panelTitle { font-weight: 400; letter-spacing: .01em; }
+  h2 .snowy { font-size: 40px; }
+  .big-num { font-family: var(--snow-font); font-weight: 400; }
+  .big-num .snowy { font-size: 58px; letter-spacing: 0; }
+  .rv-score .snowy { font-size: 64px; }
+  .rv-rank, .iname, .cname, .lbTitle, #trickName, #score, #comboText, .rv-kicker, .tag, .newTag, .rar {
+    font-family: var(--snow-font); font-weight: 400; letter-spacing: .02em;
+  }
+  .rv-rank, .iname, #score, #trickName { color: #fff; text-shadow: var(--ice-shadow); }
+  .rv-rank.landed { color: #fff; text-shadow: 0 2px 0 #ffe08a, 0 4px 0 #d99a00, 0 0 30px rgba(255,201,60,.6); }
+  #score { font-size: 46px; }
+  #trickName { font-size: 34px; }
+  #trickPts { font-family: var(--snow-font); font-weight: 400; text-shadow: 0 2px 0 #a86a00, 0 4px 8px rgba(8,30,62,.4); }
+  .btn, .tab, .mode .t, .nav button, .chip, .profile b, .secHead { font-family: var(--snow-font); font-weight: 400; letter-spacing: .02em; }
+  .btn { font-size: 18px; border-radius: 16px; box-shadow: inset 0 -3px 0 rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.18); text-shadow: 0 1px 0 rgba(0,0,0,.25); }
+  .btn.primary { background: linear-gradient(180deg, #ff8a4c, var(--accent)); }
+  .btn.big { font-size: 24px; }
+  .tab { font-size: 14px; }
+  .tab.on { background: rgba(255,255,255,.18); box-shadow: inset 0 -2px 0 rgba(0,0,0,.15); }
+  .item { background: rgba(255,255,255,.08); }
+  .item.me { background: rgba(255,140,70,.28); }
+  .earn { background: rgba(255,255,255,.08); }
+  .earn b { font-family: var(--snow-font); font-weight: 400; font-size: 20px; }
+  #panel .head { margin-bottom: 2px; }
+  #pause, #over { background: linear-gradient(180deg, rgba(10,32,64,.25), rgba(10,32,64,.6)); }
+  #toast { font-family: var(--snow-font); font-weight: 400; letter-spacing: .02em; }
   /* ---------- optional side ad rails (web hosting only) ---------- */
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
   .adrail.left { left: 8px; } .adrail.right { right: 8px; }
@@ -320,57 +466,60 @@
   <div id="toast"></div>
   <div id="hint"></div>
   <div id="speedo"></div>
+  <div id="tStick"><div id="tKnob"></div></div>
+  <div id="tJump"><b>JUMP</b><small>hold = grab</small></div>
   <button id="pauseBtn" class="iconBtn" aria-label="Pause"></button>
   <button id="camBtn" class="iconBtn" aria-label="Change camera"></button>
 </div>
 
 <div id="menu" class="screen">
-  <div class="menuWrap">
-    <div class="card mainCard">
-      <div class="topRow">
-        <div class="logo"><span id="logoIc"></span><b>Peak Flip</b></div>
+  <div class="home">
+    <section class="homeLeft">
+      <h1 class="brand"><span id="logoIc"></span><span class="snowy" data-text="PEAKFLIP">PEAKFLIP</span><small class="snowy" data-text=".io">.io</small></h1>
+      <div class="homeStats">
         <button id="profileBtn" class="profile"></button>
-      </div>
-      <div class="chips">
         <div class="chip">Best <b id="menuBest">0</b></div>
         <div class="chip"><span class="coin"></span><b id="menuCoins">0</b></div>
       </div>
-      <div class="secHead">Play</div>
-      <button id="playBtn" class="mode primary"><span id="icPlay"></span><span><span class="t">Endless</span><span class="s">Tricks, speed, how far can you go</span></span><span id="icGo1"></span></button>
-      <button id="raceBtn" class="mode race"><span id="icFlag"></span><span><span class="t">Daily Race</span><span class="s" id="raceSub"></span></span><span id="icGo2"></span></button>
-      <div class="secHead">Your stuff</div>
-      <div class="nav">
-        <button id="shopBtn"><span id="icShop"></span>Shop<small id="shopSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
-        <button id="lockerBtn"><span id="icSkis"></span>Locker<small id="lockerSub"></small></button>
-        <button id="missionsBtn"><span id="icTarget"></span>Missions<small id="missionSub"></small></button>
-        <button id="helpBtn"><span id="icHelp"></span>How to play<small>Controls</small></button>
+      <nav class="homeNav">
+        <button id="playBtn" class="hl play"><span id="icPlay"></span><span class="snowy" data-text="play">play</span><small>Endless · tricks, speed, distance</small><span id="icGo1" hidden></span></button>
+        <button id="raceBtn" class="hl"><span id="icFlag"></span><span class="snowy" data-text="race">race</span><small id="raceSub"></small><span id="icGo2" hidden></span></button>
+        <button id="lockerBtn" class="hl"><span id="icSkis"></span><span class="snowy" data-text="locker">locker</span><small id="lockerSub"></small></button>
+        <button id="shopBtn" class="hl"><span id="icShop"></span><span class="snowy" data-text="shop">shop</span><small id="shopSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>
+      </nav>
+      <div class="homeMinor">
+        <button id="missionsBtn"><span id="icTarget"></span>Missions <small id="missionSub"></small></button>
+        <button id="helpBtn"><span id="icHelp"></span>How to play</button>
       </div>
-    </div>
-    <div class="card lbCard">
-      <div class="lbTop">
-        <div class="lbTitle"><span id="icTrophy"></span>Leaderboard</div>
+    </section>
+    <section class="homeRight">
+      <button id="lbBtn" class="lbHead"><span id="icTrophy"></span><span class="snowy" data-text="leaderboard">leaderboard</span></button>
+      <div class="lbTabs">
         <div class="tabs mini"><button class="tab on" data-mlb="endless">Endless</button><button class="tab" data-mlb="race">Today's race</button></div>
         <div class="tabs mini lbPeriods miniPeriod"><button class="tab on" data-ml-period="all">All time</button><button class="tab" data-ml-period="weekly">Weekly</button><button class="tab" data-ml-period="daily">Daily</button></div>
       </div>
       <div id="miniLb" class="list"><div class="note">Loading…</div></div>
-      <button id="globalChatBtn" class="btn">Global chat</button>
-      <button id="lbBtn" class="btn">See full leaderboard</button>
-    </div>
+      <div class="lbFoot">
+        <button id="seeMoreBtn" class="hl small"><span class="snowy" data-text="see more">see more</span></button>
+        <button id="globalChatBtn" class="btn">Global chat</button>
+      </div>
+    </section>
   </div>
+  <div class="spaceHint">Press <kbd>Space</kbd> to ride</div>
 </div>
 
 <div id="over" class="screen hidden"></div>
 
 <div id="pause" class="screen hidden">
   <div class="card">
-    <h2>Paused</h2>
+    <h2><span class="snowy" data-text="Paused">Paused</span></h2>
     <button id="resumeBtn" class="btn primary big">Resume</button>
     <button id="quitBtn" class="btn">Quit to menu</button>
   </div>
 </div>
 
 <div id="panel" class="hidden"><div class="card">
-  <div class="head"><div id="panelTitle"></div><button id="panelClose" aria-label="Close"></button></div>
+  <div class="head"><div id="panelTitle" class="snowy"></div><button id="panelClose" aria-label="Close"></button></div>
   <div id="panelBody" style="display:flex;flex-direction:column;gap:12px"></div>
 </div></div>
 <div id="chestOpen" class="hidden"></div>
@@ -379,6 +528,7 @@
 <aside class="adrail right" id="adRight"></aside>
 
 <button id="muteBtn" class="iconBtn" aria-label="Sound"></button>
+<button id="musicBtn" class="iconBtn" aria-label="Music"></button>
 
 <script src="config.js"></script>
 <script>

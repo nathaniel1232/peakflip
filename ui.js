@@ -25,12 +25,54 @@ const LB = {
     try { return await rpc('get_leaderboard_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit, p_period: period }); }
     catch { return null; }
   },
+  // null = network trouble (try again later); { ok: false } = the server turned it down for good
   async submit(board, value, day, time, ghost) {
     if (!save.name) return null;
     try { return await rpc('submit_score_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_time: time ?? null, p_ghost: ghost || null }); }
-    catch { return null; }
+    catch (e) { return /\b4\d\d\b/.test(e.message) ? { ok: false } : null; }
   },
 };
+
+// ---------- score queue ----------
+// Every finished run goes into a small queue (best per board and day), saved with the rest of the progress.
+// It's sent as soon as there's a name and a connection, so no run is ever lost to "no name yet" or a bad network.
+const better = (a, b) => a.value > b.value || (a.value === b.value && (a.time ?? 0) < (b.time ?? 0));
+const daysAgo = day => (Date.parse(today()) - Date.parse(day)) / 864e5;
+let raceGhost = null;   // today's best race recording is too big for the save, so it rides along in memory
+function queueScore(e) {
+  const q = save.lbQueue = (save.lbQueue || []).filter(x => !(x.board === e.board && x.day === e.day && !better(x, e)));
+  if (!q.some(x => x.board === e.board && x.day === e.day)) q.push(e);
+  persist();
+}
+let flushing = null;
+function flushScores() {
+  if (flushing) return flushing.then(() => flushScores());
+  flushing = (async () => {
+    if (!save.name) return;
+    // the server only takes Endless days from the last week and the race for today or yesterday
+    save.lbQueue = (save.lbQueue || []).filter(e => daysAgo(e.day) <= (e.board === 'racepts' ? 1 : 6));
+    for (const e of save.lbQueue.slice()) {
+      const ghost = e.board === 'racepts' && raceGhost?.day === e.day && raceGhost.score === e.value ? raceGhost.ghost : undefined;
+      let res = await LB.submit(e.board, e.value, e.day, e.time, ghost);
+      // an older database only knows players who registered there: register this name, then send again
+      if (res && !res.ok) { await LB.register(save.name); res = await LB.submit(e.board, e.value, e.day, e.time, ghost); }
+      if (!res) continue;   // offline: keep it for next time
+      save.lbQueue = save.lbQueue.filter(x => x !== e);
+    }
+    persist(false);
+  })().finally(() => { flushing = null; });
+  return flushing;
+}
+// queue this run, send everything, and report whether this run made it to the server
+async function submitRun(r) {
+  const { board, day, value, time, ghost } = lbArgs(r);
+  if (ghost) raceGhost = { day, score: value, ghost };
+  queueScore({ board, day: day || today(), value, time: time ?? null });
+  await flushScores();
+  const sent = !!save.name && !save.lbQueue.some(x => x.board === board && x.day === (day || today()));
+  if (sent) { miniCache = {}; refreshLeader(true); }
+  return sent;
+}
 LB.register = async name => {
   try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
   catch { return null; }
@@ -71,7 +113,7 @@ function swatch(kind, it) {
 let inCloset = false;
 function openPanel(title, html, wide, closet = false) {
   const card = $('panel').querySelector('.card'), keep = $('panelTitle').textContent === title && !$('panel').classList.contains('hidden') ? card.scrollTop : 0;
-  $('panelTitle').textContent = title;
+  $('panelTitle').textContent = title; $('panelTitle').dataset.text = title;
   $('panelBody').innerHTML = html;
   $('panel').classList.toggle('wide', !!wide);
   $('panel').classList.toggle('closet', closet);
@@ -167,7 +209,7 @@ function renderHelp() {
     <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, coins buy chests. Landing upside down or hitting trees and rocks ends the run.</div>
     <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
       </div>
-    <h4>Leaderboards</h4><div class="item">Claim a name once to save your Endless scores and daily race results. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
+    <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
   </div>`);
 }
 
@@ -400,8 +442,8 @@ async function renderLeaderboard() {
   $('lbList').innerHTML = lbRows(data, lbTab, 20);
 }
 
-// Claim a leaderboard name, or (with a name already) change it. Names are unique; renames are limited to one
-// every 10 minutes in the database, and old scores follow the new name.
+// Claim a leaderboard name, or (with a name already) change it whenever you like. Any name works (several
+// players can share one), and old scores follow the new name.
 const NAME_ERR = {
   taken: 'That name is taken. Try another.', too_short: 'Pick a longer name.',
   too_soon: 'You just changed your name. Try again in a few minutes.',
@@ -414,16 +456,16 @@ function nameForm(slot, after, compact, editing = false) {
     return;
   }
   const renaming = !!save.name;
-  slot.innerHTML = `<div class="note" style="margin-bottom:6px">${renaming ? 'Pick a new name. Your scores move with you.' : 'Pick a name for the leaderboard. You can change it later.'}</div>
-    <div class="nameRow"><input id="nameIn" maxlength="14" placeholder="Your name" autocomplete="off" value="${renaming ? esc(save.name) : ''}"><button class="btn primary" id="nameSave">${renaming ? 'Save' : 'Claim'}</button>${renaming ? '<button class="btn" id="nameCancel">Cancel</button>' : ''}</div>
+  slot.innerHTML = `${compact && !renaming ? '' : `<div class="note" style="margin-bottom:6px">${renaming ? 'Pick a new name. Your scores move with you.' : 'Pick any name for the leaderboard. You can change it later.'}</div>`}
+    <div class="nameRow"><input id="nameIn" maxlength="20" placeholder="Your name" autocomplete="off" value="${renaming ? esc(save.name) : ''}"><button class="btn primary" id="nameSave">${renaming ? 'Save' : 'Claim'}</button>${renaming ? '<button class="btn" id="nameCancel">Cancel</button>' : ''}</div>
     <div class="note" id="nameErr" style="color:#ff8a8a"></div>`;
   const btn = $('nameSave'), input = $('nameIn');
   input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') btn.click(); };   // typing never reaches the game
   setTimeout(() => { input?.focus(); input?.select(); }, 50);
   if (renaming) $('nameCancel').onclick = () => nameForm(slot, after, compact);
   btn.onclick = async () => {
-    const v = input.value.trim().replace(/\s+/g, ' ').slice(0, 14);
-    if (v.length < 2) { $('nameErr').textContent = 'At least 2 characters.'; return; }
+    const v = input.value.replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 20);
+    if (!v) { $('nameErr').textContent = 'Type a name first.'; return; }
     if (renaming && v === save.name) { nameForm(slot, after, compact); return; }
     btn.disabled = true; btn.textContent = '…';
     // change_name also claims when there's no name yet; fall back to register_name if the database hasn't been updated
@@ -432,7 +474,8 @@ function nameForm(slot, after, compact, editing = false) {
     btn.disabled = false; btn.textContent = renaming ? 'Save' : 'Claim';
     if (!res) { $('nameErr').textContent = res === undefined && renaming ? "Name changes aren't switched on yet." : "Couldn't reach the leaderboard. Try again in a moment."; return; }
     if (!res.ok) { $('nameErr').textContent = NAME_ERR[res.error] || 'Something went wrong. Try another name.'; return; }
-    save.name = res.name; persist(); miniCache = {}; refreshLeader(true);
+    save.name = res.name; persist(); miniCache = {};
+    await flushScores(); refreshLeader(true); showMenuUI();
     if (renaming) nameForm(slot, after, compact);
     after && after();
   };
@@ -455,10 +498,13 @@ const rowHtml = (rank, name, val, me, extra = '', time = '') =>
 
 // ---------- results ----------
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
+// Players without a name get the same moment after any run, with a name box, until they pick one
+// (skipping it only quiets the prompt for ordinary runs until the page reloads).
+let skippedName = false;
 export function showResults(r) {
   const token = ++resultToken;
-  if (r.newBest) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
-  else resultsCard(r, token);
+  if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
+  else { resultsCard(r, token); }
 }
 
 let resultToken = 0;
@@ -471,13 +517,13 @@ function resultsCard(r, token = resultToken) {
       ? `<div class="list">${r.field.map((f, i) => rowHtml(f.rank ?? i + 1, f.name, Math.round(f.score).toLocaleString(), f.me, '', fmtTime(f.t))).join('')}</div>` : '';
     body = `
       ${r.newBest ? '<div class="tag">PERSONAL BEST</div>' : ''}
-      <div class="big-num"><small>RACE POINTS</small>${r.score.toLocaleString()}</div>
+      <div class="big-num"><small>RACE POINTS</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${fmtTime(r.time)} elapsed · ${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · points rank first, time breaks ties</div>
       ${field}`;
   } else {
     body = `
       ${r.newBest ? '<div class="tag">NEW RECORD</div>' : ''}
-      <div class="big-num"><small>SCORE</small>${r.score.toLocaleString()}</div>
+      <div class="big-num"><small>SCORE</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${esc(r.reason)} · ${r.dist.toLocaleString()} m · best ${save.best.toLocaleString()}</div>`;
   }
   const missions = r.missions.done.length
@@ -503,17 +549,20 @@ function resultsCard(r, token = resultToken) {
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
-  if (save.name) rankRow(r, token);
+  rankRow(r, token);
   miniCache = {};
 }
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
 async function rankRow(r, token) {
-  const { board, day, value, time, ghost } = lbArgs(r);
+  const { board, day } = lbArgs(r);
+  if (!r.submitted) r.submitted = await submitRun(r);
   if (!r.submitted) {
-    const res = await LB.submit(board, value, day, time, ghost);
-    r.submitted = !!res?.ok;
-    if (!r.submitted) return;
-    refreshLeader(true);
+    // no name yet: the score waits in the queue, and claiming a name right here sends it
+    const lb = $('resLb');
+    if (token !== resultToken || !lb || save.name) return;
+    lb.innerHTML = `<div class="saveBox"><div class="note">Pick a name to put this run on the leaderboard</div><div id="resName"></div></div>`;
+    nameForm($('resName'), () => { lb.innerHTML = ''; rankRow(r, token); }, true);
+    return;
   }
   if (token !== resultToken) return;
   const data = await LB.get(board, day, 10, 'all');
@@ -548,31 +597,33 @@ function recordMoment(r, done, token) {
   const finish = () => { el.remove(); done(); };
   el._done = finish;
   const big = r.score.toLocaleString();
-  card.innerHTML = `<div class="rv-kicker">${r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
-    <div class="rv-score">${big}</div>${r.mode === 'race' ? `<div class="rv-sub">RACE POINTS · ${fmtTime(r.time)} elapsed · time breaks ties</div>` : ''}<div id="rvStep"></div>`;
-  cfg.sfx.perfect();
+  card.innerHTML = `<div class="rv-kicker">${!r.newBest ? (r.mode === 'race' ? 'RACE POINTS' : 'YOUR SCORE') : r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
+    <div class="rv-score"><span class="snowy" data-text="${big}">${big}</span></div>${r.mode === 'race' ? `<div class="rv-sub">RACE POINTS · ${fmtTime(r.time)} elapsed · time breaks ties</div>` : ''}<div id="rvStep"></div>`;
+  if (r.newBest) cfg.sfx.perfect();
   const step = $('rvStep');
   const go = async () => {
     if (token !== resultToken || !document.body.contains(el)) return;
     step.innerHTML = '<div class="note">Checking the leaderboard…</div>';
-    const { board, day, value, time, ghost } = lbArgs(r);
-    const res = await LB.submit(board, value, day, time, ghost);
-    r.submitted = !!res?.ok;
-    if (r.submitted) refreshLeader(true);
+    const { board, day } = lbArgs(r);
+    if (!r.submitted) r.submitted = await submitRun(r);
     if (token !== resultToken || !document.body.contains(el)) return;
     const data = r.submitted ? await LB.get(board, day, 7, 'all') : null;
     if (token !== resultToken || !document.body.contains(el)) return;
     if (!data?.me) {
-      step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now.</div><button class="btn primary" id="rvOk">Continue</button>`;
+      step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now. Your score is saved and will be sent automatically.</div><button class="btn primary" id="rvOk">Continue</button>`;
       $('rvOk').onclick = finish; return;
     }
     revealBoard(el, data, board, finish);
   };
   if (save.name) go();
   else {
-    step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Claim your spot on the ${r.mode === 'race' ? "today's race" : 'world'} leaderboard</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
-    nameForm($('rvName'), go);
-    $('rvSkip').onclick = finish;
+    // the run is queued right away, so it reaches the board the moment a name is picked (here or later)
+    const { board, day, value, time, ghost } = lbArgs(r);
+    if (ghost) raceGhost = { day, score: value, ghost };
+    queueScore({ board, day: day || today(), value, time: time ?? null });
+    step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Pick any name to put this on the ${r.mode === 'race' ? "today's race" : 'world'} leaderboard. You can change it later.</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
+    nameForm($('rvName'), go, true);
+    $('rvSkip').onclick = () => { skippedName = true; finish(); };
   }
 }
 
@@ -650,7 +701,7 @@ export function initUI(c) {
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(freeChestReady() ? 'chests' : shopTab); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
-  $('lbBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
+  $('lbBtn').onclick = $('seeMoreBtn').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
@@ -665,9 +716,12 @@ export function initUI(c) {
     else if (!$('panel').classList.contains('hidden')) closePanel();
   });
   refreshLeader();
+  flushScores().then(() => { miniCache = {}; if (!$('menu').classList.contains('hidden')) miniBoard(true); });
+  addEventListener('online', () => flushScores());
   setInterval(() => {
     if (document.hidden) return;
     if (!$('menu').classList.contains('hidden')) showMenuUI();
+    if (save.lbQueue?.length) flushScores();
     refreshLeader();
   }, 30000);
 }

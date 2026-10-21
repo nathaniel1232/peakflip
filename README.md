@@ -23,7 +23,8 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
 ## Global leaderboards (Supabase)
 1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes.
    Then run `supabase/points-and-chat.sql` for the score-based races, period leaderboards, and global chat.
-   Both files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
+   Then run `supabase/names.sql`: any name allowed (shared names, accents, emoji), renames any time, and scores
+   from players the database hasn't seen yet are accepted. All three files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
 2. The project URL and publishable key live in `config.js`. The browser can only call the
    validated score and chat functions — it has no direct table access.
 
