@@ -2618,6 +2618,189 @@ function renderRearView() {
   renderer.render(scene, rearCam);
   renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
 }
+// ---------- Heaven Island: past 500,000 points, fly so high the mountain whites out, and you land on a bright
+// island in the clouds. Ski anywhere you like for a while (no crashes), then drop back onto the run ----------
+const ISLAND_SCORE = 500000, ISLAND_FADE = [24, 40], ISLAND_TIME = 20, ISLAND_R = 72;
+let islandDone = false, skyWhite = 0;
+const islandH = (x, z) => {
+  const r = Math.hypot(x, z), edge = clamp((ISLAND_R - r) / 14, -1, 1);
+  return edge * 1.6 + 7 * Math.exp(-((x * x + (z + 8) ** 2) / 700)) + 0.7 * Math.sin(x * 0.09) * Math.cos(z * 0.08) * Math.max(0, edge);
+};
+const islandScene = new THREE.Scene();
+const islandCam = new THREE.PerspectiveCamera(66, innerWidth / innerHeight, 0.25, 600);
+const isl = { x: 0, y: 0, z: 0, vy: 0, heading: 0, speed: 0, t: 0, grounded: true, saved: null, halos: [] };
+(() => {
+  const S = islandScene;
+  const sky = document.createElement('canvas'); sky.width = 4; sky.height = 256; const sg = sky.getContext('2d');
+  const gr = sg.createLinearGradient(0, 0, 0, 256);
+  gr.addColorStop(0, '#dff1ff'); gr.addColorStop(0.45, '#ffffff'); gr.addColorStop(0.62, '#fff6df'); gr.addColorStop(1, '#ffffff');
+  sg.fillStyle = gr; sg.fillRect(0, 0, 4, 256);
+  const skyTex = new THREE.CanvasTexture(sky); skyTex.colorSpace = THREE.SRGBColorSpace; S.background = skyTex;
+  S.fog = new THREE.Fog(0xfffbf0, 70, 260);
+  S.add(new THREE.HemisphereLight(0xffffff, 0xfff0c8, 1.25));
+  const sun = new THREE.DirectionalLight(0xfff2d0, 1.1); sun.position.set(30, 80, -40); S.add(sun);
+  // pale shimmering sea all the way to the white horizon
+  const sea = new THREE.Mesh(new THREE.CircleGeometry(400, 48).rotateX(-Math.PI / 2), lam(0xbff3ee, { emissive: 0x2a5a58, emissiveIntensity: 0.25 }));
+  sea.position.y = 0.05; S.add(sea);
+  // the island: white sand, with a little pale grass up on the hill
+  const N = 90, size = ISLAND_R * 2 + 30, ground = new THREE.PlaneGeometry(size, size, N, N).rotateX(-Math.PI / 2);
+  const pos = ground.attributes.position, cols = [], c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), h = islandH(x, z); pos.setY(i, h);
+    c.set(h > 6.3 ? 0xeefbe0 : h < 0.6 ? 0xf6eed6 : 0xfffcf2); cols.push(c.r, c.g, c.b);
+  }
+  ground.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); ground.computeVertexNormals();
+  S.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x4a463c })));
+  // palm trees, all in one mesh
+  const parts = [], spots = [];
+  for (let i = 0; i < 46; i++) {
+    const a = rand(0, TAU), r = rand(14, ISLAND_R - 6), x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (Math.hypot(x, z + 8) < 12 || (Math.abs(x) < 6 && z > 20)) continue;   // keep the hut and the landing strip clear
+    spots.push([x, z]);
+    // a trunk that curves over in one direction: offset grows with t², each segment tilted along the curve
+    const y0 = islandH(x, z), ry = rand(0, TAU), H = rand(6, 9), B = rand(0.8, 2.6), bx = Math.cos(ry), bz = Math.sin(ry);
+    for (let k = 0; k < 7; k++) {
+      const t = (k + 0.5) / 7, ang = Math.atan(2 * B * t / H), o = B * t * t;
+      parts.push({ geo: new THREE.CylinderGeometry(0.22 - t * 0.08, 0.26 - t * 0.08, H / 7 + 0.15, 7), color: k % 2 ? 0xc9a77a : 0xb8936a, m: R(ang * bz, 0, -ang * bx).premultiply(T(x + bx * o, y0 + H * t, z + bz * o)) });
+    }
+    const tx = x + bx * B, tz = z + bz * B, ty = y0 + H;
+    for (let k = 0; k < 7; k++) {
+      const la = k / 7 * TAU + ry;
+      parts.push({ geo: new THREE.BoxGeometry(0.9, 0.08, 4.2), color: k % 2 ? 0x8fd46b : 0x7cc35a, m: new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(0.45, la, 0, 'YXZ')).premultiply(T(tx + Math.sin(la) * 1.8, ty - 0.5, tz + Math.cos(la) * 1.8)) });   // droop, then fan out
+    }
+    parts.push({ geo: new THREE.SphereGeometry(0.4, 6, 4), color: 0x8a6a3c, m: T(tx, ty - 0.3, tz) });
+  }
+  S.add(new THREE.Mesh(merged(parts), vcol));
+  isl.palms = spots;
+  // the bamboo beach hut on stilts, with a thatched roof and a hammock between two palms
+  const hut = new THREE.Group(), hx = 0, hz = -8, hy = islandH(hx, hz); hut.position.set(hx, hy, hz); S.add(hut);
+  const bamboo = lam(0xe2c48a), bambooDark = lam(0xb8935a), thatch = lam(0xf0d89a), fringe = lam(0xe0c27a);
+  const H_ = (geo, m, x, y, z, rx = 0, ry = 0, rz = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); o.rotation.set(rx, ry, rz); hut.add(o); return o; };
+  for (const [sx, sz] of [[-3, -2.5], [3, -2.5], [-3, 2.5], [3, 2.5]]) H_(new THREE.CylinderGeometry(0.15, 0.15, 2.2, 6), bambooDark, sx, 0.6, sz);
+  H_(box(7, 0.25, 6), bambooDark, 0, 1.6, 0);
+  for (let i = -3.2; i <= 3.21; i += 0.32) {
+    H_(new THREE.CylinderGeometry(0.15, 0.15, 3, 6), bamboo, i, 3.2, -2.85);
+    if (Math.abs(i) > 0.8) H_(new THREE.CylinderGeometry(0.15, 0.15, 3, 6), bamboo, i, 3.2, 2.85);
+  }
+  for (let i = -2.7; i <= 2.71; i += 0.32) for (const sx of [-3.35, 3.35]) H_(new THREE.CylinderGeometry(0.15, 0.15, 3, 6), bamboo, sx, 3.2, i);
+  H_(box(1.5, 2.6, 0.1), new THREE.MeshBasicMaterial({ color: 0x5a3b1a }), 0, 3, 2.86);
+  for (const sx of [-2, 2]) H_(box(1.1, 0.9, 0.1), new THREE.MeshBasicMaterial({ color: 0xbfefff }), sx, 3.6, 2.92);
+  const roof = H_(new THREE.ConeGeometry(6.2, 3.4, 4), thatch, 0, 6.3, 0, 0, Math.PI / 4); roof.scale.set(1, 1, 0.9);
+  for (let i = 0; i < 4; i++) { const f = H_(new THREE.CylinderGeometry(4.5, 4.7, 0.5, 4, 1, true), fringe, 0, 4.55 - i * 0.02, 0, 0, Math.PI / 4); f.scale.set(1, 1, 0.9); f.material.side = THREE.DoubleSide; }
+  H_(box(2.2, 0.15, 2.4), bambooDark, 0, 1.3, 4.1, -0.5);   // steps down to the sand
+  for (const sx of [-1, 1]) H_(new THREE.CylinderGeometry(0.15, 0.15, 3.4, 6), bamboo, sx * 2.6, 1.4, 4.5);
+  const ham = H_(new THREE.TorusGeometry(2.2, 0.35, 4, 16, Math.PI), lam(0xf4f1ff), 8.5, 1.6, 1.5, 0, Math.PI / 2, Math.PI); ham.scale.set(1, 0.4, 1);
+  for (const sz of [-0.7, 3.7]) H_(new THREE.CylinderGeometry(0.2, 0.25, 4, 7), bambooDark, 8.5, 1.5, sz);
+  isl.hut = { x: hx, z: hz, r: 5 };
+  // heavenly touches: soft light shafts, golden halos to ride through, drifting glows and cloud puffs on the sea
+  const ray = new THREE.MeshBasicMaterial({ color: 0xfff1b8, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  for (let i = 0; i < 7; i++) { const s = new THREE.Mesh(new THREE.ConeGeometry(rand(5, 9), 120, 12, 1, true), ray); s.position.set(rand(-50, 50), 60, rand(-60, 40)); s.rotation.z = rand(-0.25, 0.25); S.add(s); }
+  const haloMat = lam(0xffd76a, { emissive: 0xffc23a, emissiveIntensity: 0.8 });
+  for (let i = 0; i < 14; i++) {
+    const a = i / 14 * TAU, r = 30 + (i % 3) * 12, x = Math.cos(a) * r, z = Math.sin(a) * r - 4;
+    const m = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.16, 6, 24), haloMat); m.position.set(x, islandH(x, z) + 2, z); m.rotation.y = a; S.add(m);
+    isl.halos.push({ m, x, z, ph: rand(0, TAU) });
+  }
+  const glow = new THREE.SpriteMaterial({ map: glowTex, color: 0xfff0b0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.8 });
+  isl.motes = [];
+  for (let i = 0; i < 60; i++) { const s = new THREE.Sprite(glow); s.scale.setScalar(rand(0.6, 1.6)); s.position.set(rand(-70, 70), rand(2, 20), rand(-70, 70)); S.add(s); isl.motes.push({ s, ph: rand(0, TAU), y: s.position.y }); }
+  const puff = lam(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.35 });
+  for (let i = 0; i < 26; i++) {
+    const a = rand(0, TAU), r = rand(110, 190), g = new THREE.Group(); g.position.set(Math.cos(a) * r, rand(-1, 6), Math.sin(a) * r);
+    for (let k = 0; k < 5; k++) { const b = new THREE.Mesh(new THREE.IcosahedronGeometry(rand(5, 10), 1), puff); b.position.set(rand(-12, 12), rand(0, 4), rand(-6, 6)); g.add(b); }
+    S.add(g);
+  }
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xfff6d0, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.9 }));
+  halo.scale.set(140, 140, 1); halo.position.set(40, 110, -220); S.add(halo);
+})();
+
+// the sky turns white as you climb, and at the very top you're through
+function updateSkyWhite() {
+  const want = mode === 'endless' && !islandDone && !special() && state === 'play' && totalScore() > ISLAND_SCORE
+    ? clamp((p.y - ISLAND_FADE[0]) / (ISLAND_FADE[1] - ISLAND_FADE[0]), 0, 1) : 0;
+  if (want === 0 && skyWhite === 0) return;
+  skyWhite = want;
+  const f = $('fade'); f.style.transition = 'none'; f.style.background = '#fff'; f.style.opacity = skyWhite;
+  if (skyWhite >= 1) enterIsland();
+}
+function enterIsland() {
+  islandDone = true; skyWhite = 0; endChase();
+  state = 'island';
+  isl.saved = { z: p.z };
+  Object.assign(isl, { x: 0, z: 58, y: islandH(0, 58), vy: 0, heading: 0, speed: 20, t: 0, grounded: true });
+  for (const h of isl.halos) h.m.visible = true;
+  Object.assign(p, { trick: null, grabbing: false, pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0, grinding: null, charging: false });
+  islandScene.add(skier.root); islandScene.add(skier.shadow);
+  islandCam.position.set(0, isl.y + 30, 90); islandCam.lookAt(0, 4, 0);
+  fadeScreen('#fff');
+  showTrick('HEAVEN ISLAND', `Freemode for ${ISLAND_TIME} s`, true);
+  [523, 659, 784, 1047, 1319].forEach((f, i) => Sfx.tone(f, 1.6, 'sine', 0.12, null, i * 0.12));
+}
+function exitIsland() {
+  world.add(skier.root); world.add(skier.shadow);
+  Object.assign(p, { x: 0, y: 0, vy: 0, vx: 0, z: isl.saved.z, heading: 0, grounded: true, pitch: 0, roll: 0, yaw: 0, trick: null, grabbing: false, speed: baseSpeed(-isl.saved.z) });
+  keepClear(0, Infinity, p.z + 5, p.z - 60);   // a soft landing back on the run
+  state = 'play'; snapCam = true; hud.race.classList.add('hidden');
+  fadeScreen('#fff'); showTrick('Back on the mountain', '', false); Sfx.perfect();
+}
+function updateIsland(dt) {
+  const inp = readInput();
+  isl.t += dt;
+  // ride wherever you like: steer turns you, slopes speed you up or slow you down, jump hops
+  isl.heading += inp.h * 2.1 * dt;
+  const dx = Math.sin(isl.heading), dz = -Math.cos(isl.heading);
+  const slope = (islandH(isl.x + dx, isl.z + dz) - islandH(isl.x - dx, isl.z - dz)) / 2;
+  isl.speed = clamp(isl.speed + (-slope * 18 + (24 - isl.speed) * 0.4) * dt, 12, 40);
+  isl.x += dx * isl.speed * dt; isl.z += dz * isl.speed * dt;
+  // the shore turns you back toward land; palms and the hut nudge you around them
+  const r = Math.hypot(isl.x, isl.z);
+  if (r > ISLAND_R - 3) {
+    const toC = Math.atan2(-isl.x, isl.z), diff = wrap(toC - isl.heading);
+    isl.heading += clamp(diff, -3 * dt, 3 * dt);
+    if (r > ISLAND_R + 2) { isl.x *= (ISLAND_R + 2) / r; isl.z *= (ISLAND_R + 2) / r; }
+  }
+  for (const [px, pz] of isl.palms) {
+    const ddx = isl.x - px, ddz = isl.z - pz, d = Math.hypot(ddx, ddz);
+    if (d < 0.9 && isl.y < islandH(px, pz) + 6) { isl.x = px + ddx / d * 0.9; isl.z = pz + ddz / d * 0.9; isl.speed *= 0.9; }
+  }
+  { const h = isl.hut, ddx = isl.x - h.x, ddz = isl.z - h.z, d = Math.hypot(ddx, ddz); if (d < h.r && isl.y < islandH(h.x, h.z) + 8) { isl.x = h.x + ddx / d * h.r; isl.z = h.z + ddz / d * h.r; } }
+  const gh = islandH(isl.x, isl.z);
+  if (isl.grounded) {
+    if (inp.jump) { isl.vy = 11; isl.grounded = false; Sfx.ollie(); }
+    else if (gh < isl.y - 0.4) isl.grounded = false;
+    else isl.y = gh;
+  }
+  if (!isl.grounded) {
+    isl.vy -= G * dt; isl.y += isl.vy * dt;
+    if (isl.y <= gh) { isl.y = gh; isl.vy = 0; isl.grounded = true; Sfx.land(false); }
+  }
+  // halos: ride through them for points
+  for (const h of isl.halos) {
+    if (!h.m.visible) continue;
+    h.m.position.y = islandH(h.x, h.z) + 2 + Math.sin(time * 2 + h.ph) * 0.3; h.m.rotation.y += dt;
+    if (Math.hypot(isl.x - h.x, isl.z - h.z) < 2 && Math.abs(isl.y + 1 - h.m.position.y) < 2.2) {
+      h.m.visible = false; p.trickScore += 1000; showTrick('Halo!', '+1,000', false); Sfx.coin(); Sfx.tone(1568, 0.3, 'sine', 0.12);
+    }
+  }
+  for (const m of isl.motes) m.s.position.y = m.y + Math.sin(time * 0.8 + m.ph) * 0.8;
+  p.trickScore += Math.round(isl.speed * dt * 8);
+  // pose the rider through the normal visuals, then move it onto the island
+  Object.assign(p, { x: isl.x, y: isl.y, z: isl.z, heading: 0, grounded: isl.grounded, speed: isl.speed });
+  updateSkierVisual(dt);
+  skier.body.rotation.y = -isl.heading; skier.body.rotation.z = clamp(-inp.h * 0.4, -0.4, 0.4);
+  skier.shadow.position.set(isl.x, gh + 0.05, isl.z);
+  // chase camera
+  tmpV.set(isl.x - dx * 9, Math.max(isl.y, gh) + 4.2, isl.z - dz * 9);
+  islandCam.position.lerp(tmpV, 1 - Math.exp(-5 * dt));
+  camLook.set(isl.x + dx * 8, isl.y + 1.2, isl.z + dz * 8);
+  islandCam.lookAt(camLook);
+  islandCam.aspect = camera.aspect; islandCam.updateProjectionMatrix();
+  updateHUD(dt);
+  hud.race.classList.remove('hidden');
+  hud.race.textContent = `HEAVEN ISLAND  ·  freemode  ·  ${Math.ceil(ISLAND_TIME - isl.t)} s`;
+  renderer.render(islandScene, islandCam);
+  if (isl.t > ISLAND_TIME) exitIsland();
+}
 const lanternGlow = new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 });
 const floatGlows = [0x7cf7d4, 0xc264ff].map(c => new THREE.SpriteMaterial({ map: glowTex, color: c, transparent: true, depthWrite: false, opacity: 0.8 }));
 const lanternMat = lam(0xffd27a, { emissive: 0xffb347, emissiveIntensity: 0.15 }), postMat = lam(0x3b4a5a);
@@ -3545,7 +3728,7 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 function startRun(m = mode) {
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
   Quality.cap = Infinity; Quality.apply();
-  zone = 'normal'; portal = null; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  zone = 'normal'; portal = null; islandDone = false; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
@@ -3787,6 +3970,7 @@ function frame(now) {
   if (paused) return;
   time += dt;
   if (state === 'cabin') { for (const pl of allPools) pl.flush(); updateCabin(dt); return; }
+  if (state === 'island') { updateIsland(dt); return; }
   if (state === 'play') {
     const x0 = p.x, y0 = p.y, z0 = p.z;
     updatePlayer(dt);
@@ -3839,6 +4023,7 @@ function frame(now) {
   updatePads(dt);
   updateAnimals(dt);
   updateChase(dt);
+  updateSkyWhite();
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
   sleigh.update(time); agarthaSky.update(time); updateYetis();
@@ -3875,4 +4060,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
