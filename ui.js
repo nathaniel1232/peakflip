@@ -152,6 +152,8 @@ export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
   const rs = save.raceScores?.[today()];
+  const ls = Object.values(save.levels || {}).reduce((a, r) => a + (r.stars || 0), 0);
+  $('levelsSub').textContent = ls ? `${ls} / ${cfg.levels.length * 3} stars` : `${cfg.levels.length} courses · earn stars`;
   $('raceSub').textContent = rs ? `Forest course · ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
@@ -453,6 +455,23 @@ function renderLocker() {
 }
 
 // ---------- missions ----------
+// ---------- levels ----------
+const LEVEL_COLORS = { day: ['#3f8fd8', '#1d5fa8'], golden: ['#f59e3c', '#c2410c'], night: ['#3a3f8f', '#14183f'], xmas: ['#d62839', '#1f7a3d'], agartha: ['#8a5cf6', '#3b1f8a'] };
+const starRow = (n, cls = 'stars') => `<div class="${cls}">${[0, 1, 2].map(i => i < n ? '<b>★</b>' : '★').join('')}</div>`;
+const levelUnlocked = n => n === 0 || (save.levels?.[n - 1]?.stars || 0) > 0;
+function renderLevels() {
+  const lv = cfg.levels, total = lv.reduce((a, l) => a + (save.levels?.[l.n]?.stars || 0), 0);
+  openPanel('Levels', `<div class="note">Hand-made courses, much harder than Endless: one crash and you start over. Reach the finish for ★, score enough for ★★ and ★★★. Finishing a level unlocks the next. <b>${total} / ${lv.length * 3} ★</b></div>
+    <div class="levelGrid">${lv.map(l => {
+      const rec = save.levels?.[l.n], open = levelUnlocked(l.n), [a, b] = LEVEL_COLORS[l.theme] || LEVEL_COLORS.day;
+      return `<button class="lvl" data-level="${l.n}" style="--a:${a};--b:${b}" ${open ? '' : 'disabled'}>
+        ${open ? '' : icon('lock')}<span class="num">LEVEL ${l.n + 1}</span><span class="name">${esc(l.name)}</span>
+        ${starRow(rec?.stars || 0)}<span class="meta">${l.len} m · ★★ ${(l.stars[0] / 1000).toFixed(1)}k · ★★★ ${(l.stars[1] / 1000).toFixed(1)}k</span>
+        ${rec?.best ? `<span class="meta">Best ${rec.best.toLocaleString()}</span>` : ''}</button>`;
+    }).join('')}</div>`, true);
+  document.querySelectorAll('[data-level]').forEach(b => b.onclick = () => { closePanel(); cfg.onLevel(+b.dataset.level); });
+}
+
 function renderMissions() {
   const list = save.missions.map(m => `<div class="item"><span class="grow">${esc(missionText(m))}</span><span class="val">${coin} ${m.reward}</span></div>`).join('');
   openPanel('Missions', `<div class="list">${list}</div><div class="note">Finish them within a single run. Rewards pay out when the run ends, then a harder mission takes its place.<br>Completed so far: <b>${save.missionsDone}</b></div>`);
@@ -552,6 +571,7 @@ let skippedName = false;
 export function showResults(r) {
   const token = ++resultToken;
   setTimeout(checkRewards, 1200);
+  if (r.mode === 'level') { resultsCard(r, token); return; }   // stars are kept locally, no world board
   if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
   else { resultsCard(r, token); }
 }
@@ -569,6 +589,15 @@ function resultsCard(r, token = resultToken) {
       <div class="big-num"><small>RACE POINTS</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${fmtTime(r.time)} elapsed · ${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · points rank first, time breaks ties</div>
       ${field}`;
+  } else if (r.mode === 'level') {
+    const nextOpen = r.done && !r.last;
+    body = `
+      <div class="tag">${r.done ? `LEVEL ${r.level + 1} COMPLETE` : `LEVEL ${r.level + 1} FAILED`}</div>
+      ${starRow(r.stars, 'stars bigStars')}
+      <div class="big-num"><small>${esc(r.name).toUpperCase()}</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
+      <div class="sub">${r.done ? `★★ at ${r.targets[0].toLocaleString()} · ★★★ at ${r.targets[1].toLocaleString()} · best ${r.best.toLocaleString()}` : `${esc(r.reason)} · ${r.dist} of ${r.len} m`}</div>
+      ${r.stars > r.prevStars && r.prevStars > 0 ? '<div class="tag">MORE STARS!</div>' : ''}
+      ${nextOpen ? `<button class="btn primary big" id="nextLevel">Next level ›</button>` : ''}`;
   } else {
     body = `
       ${r.newBest ? '<div class="tag">NEW RECORD</div>' : ''}
@@ -583,7 +612,7 @@ function resultsCard(r, token = resultToken) {
     <div class="earn"><span>Coins earned</span><b>${coin} +${earned}</b></div>
     ${missions}
     <div id="resLb"></div>
-    <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : 'Ride again'}</button>
+    <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : r.mode === 'level' ? 'Try again' : 'Ride again'}</button>
     <div class="row btnGrid">
       <button class="btn" id="menuBtn">${icon('home')}Menu</button>
       <button class="btn" id="toLb">${icon('trophy')}Ranks</button>
@@ -598,6 +627,11 @@ function resultsCard(r, token = resultToken) {
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop(); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
+  if (r.mode === 'level') {
+    if ($('nextLevel')) $('nextLevel').onclick = () => cfg.onLevel(r.level + 1);
+    $('toLb').innerHTML = `${icon('target')}Levels`; $('toLb').onclick = () => { cfg.onMenu(); renderLevels(); };
+    return;
+  }
   rankRow(r, token);
   miniCache = {};
 }
@@ -729,6 +763,7 @@ async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
     ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race in ${fmtTime(r.time)}. Race points rank first, with elapsed time as the tiebreak. Can you beat my ghost?`
+    : r.mode === 'level' ? `I got ${'★'.repeat(r.stars)} on level ${r.level + 1} (${r.name}) in Peak Flip with ${r.score.toLocaleString()} points. Can you beat it?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -741,12 +776,13 @@ async function share(r) {
 export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
-  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
+  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag'); put('icLevels', 'target');
   put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help'); put('icGear', 'gear');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
+  $('levelsBtn').onclick = () => { c.sfx.init(); renderLevels(); };
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };

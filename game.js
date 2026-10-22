@@ -19,7 +19,7 @@ const TAU = Math.PI * 2;
 
 // gets brutal past ~3 km; the steeper Endless slope (and Agartha) run a little faster, the race is unchanged
 const baseSpeed = d => Math.min(62, 22 + d * 0.0105) * speedK();
-const speedK = () => mode === 'race' ? 1 : (WORLDS[zone]?.speed ?? 1.07);
+const speedK = () => mode === 'race' ? 1 : mode === 'level' ? (level.def.speed ?? 1.1) : (WORLDS[zone]?.speed ?? 1.07);
 
 // ---------- helpers ----------
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -2307,13 +2307,20 @@ function pickDemo() {
 }
 let forcedFeature = null;   // for testing: window.__game.forceFeature('garden')
 function spawnFeature() {
-  const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
-  if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
-  if (mode !== 'race') {
-    if (special()) { if (D > -zoneEndZ - 60) { if (!portal) addPortal(zoneEndZ); spawnZ -= 80; return; } }
-    else if (D > nextCaveD) { nextCaveD = Infinity; spawnZ -= featureEntrance(z)[0]; return; }
+  const z = spawnZ, D = -z, sp = baseSpeed(D);
+  let d = clamp(D / 1600, 0, 1), k;
+  if (mode === 'level') {
+    // the level's own sequence, then the finish line
+    if (D > level.def.len - 40) { if (!finish) addFinish(-level.def.len); spawnZ -= 400; return; }
+    k = level.def.seq[level.idx++ % level.def.seq.length]; d = level.def.d;
+  } else {
+    if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
+    if (mode !== 'race') {
+      if (special()) { if (D > -zoneEndZ - 60) { if (!portal) addPortal(zoneEndZ); spawnZ -= 80; return; } }
+      else if (D > nextCaveD) { nextCaveD = Infinity; spawnZ -= featureEntrance(z)[0]; return; }
+    }
+    k = forcedFeature || (special() ? pickSpecial() : demo ? pickDemo() : pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d)); forcedFeature = null;
   }
-  const k = forcedFeature || (special() ? pickSpecial() : demo ? pickDemo() : pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d)); forcedFeature = null;
   const f = {
     ramp: () => featureRamp(z, false, sp), big: () => featureRamp(z, true, sp), rail: () => featureRail(z, sp, false), railKick: () => featureRail(z, sp, true),
     rocks: () => featureRocks(z, d), slalom: () => featureSlalom(z, d), snake: () => featureCoinSnake(z), crevasse: () => featureCrevasse(z, d),
@@ -2325,7 +2332,7 @@ function spawnFeature() {
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine'].includes(k) && crng() < 0.12 + d * 0.4) {
+  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine'].includes(k) && crng() < (mode === 'level' ? 0.35 + d * 0.4 : 0.12 + d * 0.4)) {
     for (let i = 0, n = 1 + Math.floor(d * 2.5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
@@ -2894,7 +2901,7 @@ function addLantern(x, z) {
 }
 let decorN = 0;   // counts decor rows (4 m apart) for things that repeat every so often
 function spawnDecor(z) {
-  const forest = mode === 'race';
+  const forest = mode === 'race' || (mode === 'level' && !!level.def.forest);
   decorN++;
   if (zone === 'agartha') {
     // the inner-earth city: stone blocks along the run, pyramids and spires further out, mammoth caravans
@@ -2937,7 +2944,7 @@ function spawnDecor(z) {
   }
   if (!forest && decorN % 12 === 0) addLiftTower(z);
   if (!forest && decorN > 20 && Math.random() < 0.004) addYeti((Math.random() < 0.5 ? -1 : 1) * rand(20, 25), z);
-  if (!forest && decorN % 160 === 57) {
+  if (!forest && mode === 'endless' && decorN % 160 === 57) {
     addCabin(15.6, z, 0, !demo);
     if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
   }
@@ -2967,6 +2974,48 @@ function clearWorld() {
 }
 
 
+
+// ---------- Levels: hand-made courses, each with its own theme and mix. Much harder than Endless: one crash
+// and you start over. Reach the finish for a star; enough points earn the second and third ----------
+// seq is ridden in order (and repeats until the finish); d is how nasty the hazards are; width narrows the run
+const LEVELS = [
+  { name: 'First Tracks', theme: 'day', len: 700, d: 0.35, tricky: 1.0, seq: ['ramp', 'rocks', 'rail', 'slalom', 'line', 'logs', 'railKick', 'rocks', 'big'] },
+  { name: 'Rail Yard', theme: 'golden', len: 800, d: 0.4, tricky: 1.4, seq: ['rail', 'garden', 'rocks', 'jibLine', 'gapRail', 'slalom', 'railKick', 'garden', 'logs', 'jibLine'] },
+  { name: 'Tree Run', theme: 'day', len: 800, d: 0.6, tricky: 0.6, width: 10, forest: true, seq: ['slalom', 'ramp', 'field', 'logs', 'slalom', 'rail', 'field', 'slalom'] },
+  { name: 'Sunset Kickers', theme: 'golden', len: 900, d: 0.45, tricky: 1.6, seq: ['line', 'rocks', 'proLine', 'table', 'logs', 'big', 'stepdown', 'slalom', 'mega'] },
+  { name: 'Polar Pass', theme: 'day', len: 900, d: 0.7, tricky: 0.8, seq: ['bear', 'ramp', 'balls', 'logs', 'bear', 'railKick', 'field', 'balls', 'bear'] },
+  { name: 'Night Shift', theme: 'night', len: 1000, d: 0.7, tricky: 1.2, seq: ['ramp', 'field', 'garden', 'logs', 'proLine', 'balls', 'slalom', 'jibLine', 'bear'] },
+  { name: 'North Pole', theme: 'xmas', zone: 'xmas', len: 1000, d: 0.7, tricky: 1.0, seq: ['slalom', 'ramp', 'rocks', 'logs', 'rail', 'slalom', 'big', 'rocks', 'line', 'logs'] },
+  { name: 'Agartha Depths', theme: 'agartha', zone: 'agartha', len: 1100, d: 0.8, tricky: 1.1, seq: ['rocks', 'line', 'rocks', 'gapRail', 'table', 'rocks', 'mega', 'rocks', 'stepdown'] },
+  { name: 'Snowball Alley', theme: 'golden', len: 1000, d: 0.9, tricky: 0.7, width: 11, seq: ['balls', 'ramp', 'balls', 'logs', 'balls', 'rail', 'balls', 'field'] },
+  { name: 'Big Mountain', theme: 'day', len: 1200, d: 0.6, tricky: 2.0, speed: 1.2, seq: ['big', 'mega', 'logs', 'stepdown', 'proLine', 'rocks', 'mega', 'line', 'big'] },
+  { name: 'The Gauntlet', theme: 'night', len: 1300, d: 1, tricky: 1.0, width: 11, seq: ['field', 'logs', 'bear', 'balls', 'slalom', 'jibLine', 'field', 'logs', 'proLine', 'balls'] },
+  { name: 'Peak Legend', theme: 'golden', len: 1600, d: 1, tricky: 1.4, speed: 1.15, width: 11, seq: ['mega', 'field', 'garden', 'balls', 'logs', 'proLine', 'bear', 'slalom', 'gapRail', 'field', 'stepdown', 'balls'] },
+];
+// points for the 2nd and 3rd star (special worlds pay double, so their targets are doubled too)
+const levelStars = L => {
+  const k = L.zone ? 2 : 1, r = v => Math.round(v / 500) * 500;
+  // just riding through earns roughly 10 points a metre; the stars ask for real tricks on top
+  return [r(L.len * (12 + 10 * L.tricky) * k), r(L.len * (12 + 25 * L.tricky) * k)];
+};
+const level = { n: 0, def: LEVELS[0], idx: 0 };
+const levelInfo = () => LEVELS.map((L, i) => ({ name: L.name, theme: L.theme, len: L.len, stars: levelStars(L), n: i }));
+function startLevel(n) { level.n = clamp(n, 0, LEVELS.length - 1); startRun('level'); }
+function levelOver(done) {
+  state = 'over';
+  Platform.gameplayStop();
+  const L = level.def, score = totalScore(), [s2, s3] = levelStars(L);
+  const stars = done ? 1 + (score >= s2) + (score >= s3) : 0;
+  const rec = (save.levels ||= {})[level.n] || { stars: 0, best: 0 };
+  const newBest = done && score > rec.best;
+  save.levels[level.n] = { stars: Math.max(rec.stars, stars), best: done ? Math.max(rec.best, score) : rec.best };
+  // coins: a little for trying, more for each star you earn for the first time
+  const bonus = Math.floor(score / 500) + Math.max(0, stars - rec.stars) * 50;
+  save.coins += bonus;
+  const missions = endCommon();
+  if (done) Sfx.perfect();
+  showResults({ mode: 'level', done, level: level.n, name: L.name, score, stars, prevStars: rec.stars, best: save.levels[level.n].best, targets: [s2, s3], newBest, last: level.n === LEVELS.length - 1, reason: p.reason, dist: Math.floor(Math.min(-p.z, L.len)), len: L.len, coins: p.coins, bonus, missions });
+}
 
 // ---------- player ----------
 const p = {};
@@ -3550,6 +3599,7 @@ function updatePlayer(dt) {
     }
     if (p.z < -RACE_LEN) return finishRace();
   }
+  if (mode === 'level' && p.z < -level.def.len) return levelOver(true);
 }
 
 // Coins: tested along the rider's whole path this frame, so nothing tunnels past at 200 km/h.
@@ -3788,7 +3838,12 @@ function showTrick(name, pts, perfect) {
 }
 const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 function updateHUD(dt) {
-  if (mode === 'race') {
+  if (mode === 'level') {
+    const s = totalScore(), [s2, s3] = levelStars(level.def);
+    if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
+    const stars = s >= s3 ? '★★★' : s >= s2 ? '★★☆' : '★☆☆', next = s >= s3 ? '' : `  ·  next ★ at ${(s >= s2 ? s3 : s2).toLocaleString()}`;
+    hud.race.textContent = `LEVEL ${level.n + 1}  ·  ${Math.max(0, Math.ceil(level.def.len + p.z))} m to go  ·  ${stars}${next}`;
+  } else if (mode === 'race') {
     hud.score.textContent = (totalScore() + race.gates * 500).toLocaleString();
     hud.race.textContent = `${fmtTime(race.t)} elapsed  ·  ${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}`;
   } else {
@@ -3819,8 +3874,11 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 function startRun(m = mode) {
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
   Quality.cap = Infinity; Quality.apply();
-  zone = 'normal'; portal = null; islandDone = false; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
-  setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
+  if (mode === 'level') level.def = LEVELS[level.n], level.idx = 0;
+  const LV = mode === 'level' ? level.def : null;
+  zone = LV?.zone || 'normal'; portal = null; islandDone = false; nextCaveD = LV ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  setSlope(mode === 'race' ? SLOPES.race : LV?.zone ? WORLDS[LV.zone].slope : SLOPES.endless);
+  if (LV?.zone) Music.play(LV.zone);
   SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
   Sfx.init();
@@ -3828,7 +3886,7 @@ function startRun(m = mode) {
   clearWorld();
   resetPlayer(); resetRun();
   Object.assign(race, { t: 0, gates: 0, penalty: 0, day: today(), splits: [], rec: [], recT: 0 });
-  X_LIMIT = mode === 'race' ? 11 : 13;
+  X_LIMIT = mode === 'race' ? 11 : LV?.width ?? 13;
   scene.fog.near = mode === 'race' ? 45 : 70; scene.fog.far = mode === 'race' ? 170 : 230;
   checkpoints = [];
   clearGhosts();
@@ -3839,8 +3897,9 @@ function startRun(m = mode) {
     const day = race.day;
     fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) addGhost(g.name, g.ghost); });
   }
-  setTheme(mode === 'race' ? 'day' : pickTheme());   // the Daily Race keeps its original daytime look
-  crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : Math.random;
+  setTheme(mode === 'race' ? 'day' : LV ? LV.theme : pickTheme());   // the Daily Race keeps its original daytime look
+  if (LV?.zone) { scene.fog.near = WORLDS[LV.zone].fog[0]; scene.fog.far = WORLDS[LV.zone].fog[1]; }
+  crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : LV ? mulberry32(hashStr('peakflip-level-' + level.n)) : Math.random;
   laneSeed = [crng() * 6.28, crng() * 6.28];
   decorN = 0;
   spawnZ = -55; decorZ = 30; wallZ = 40;
@@ -3848,7 +3907,8 @@ function startRun(m = mode) {
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
   state = 'play'; paused = false;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
-  show('raceInfo', mode === 'race');
+  show('raceInfo', mode === 'race' || mode === 'level');
+  if (LV) showTrick(`Level ${level.n + 1}: ${LV.name}`, 'One crash and you start over', true);
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
@@ -3868,6 +3928,7 @@ function endCommon() {
 }
 
 function gameOver() {
+  if (mode === 'level') return levelOver(false);
   state = 'over';
   const score = totalScore();
   const newBest = score > save.best;
@@ -4143,6 +4204,7 @@ initUI({
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
   closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
   music: Music, soundUI: () => updateMuteBtn(),
+  levels: levelInfo(), onLevel: n => startLevel(n),
 });
 toMenu();
 requestAnimationFrame(frame);
@@ -4151,4 +4213,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
