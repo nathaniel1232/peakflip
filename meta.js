@@ -242,6 +242,7 @@ export const SETS = {
   halloween: { name: 'Halloween', color: '#ff7518', blurb: 'Pumpkins, bones and bats', until: '2026-11-08' },
   tradition: { name: 'Shabbat',   color: '#9db8ff', blurb: 'Traditional Jewish dress', until: '2026-11-30' },
   xmas:      { name: 'Christmas', color: '#2a9d4f', blurb: 'Santa, elves and reindeer', until: '2027-01-06' },
+  looks:     { name: 'Looks',     color: '#4cc3ff', blurb: 'Complete outfits made from shop items' },
 };
 const utcToday = () => new Date().toISOString().slice(0, 10);
 export const isLimited = it => !!SETS[it?.set]?.until;
@@ -266,6 +267,17 @@ export function grantSecret(kind, id) {
   save.inv[kind].push(id); persist(); return true;
 }
 export const FITS = [
+  { id: 'patrol', name: 'Ski Patrol', set: 'looks', pieces: { outfit: 'police', hat: 'beanie', face: 'aviators', back: 'backpack', ski: 'red', trail: 'snow' } },
+  { id: 'westerner', name: 'Wild West', set: 'looks', pieces: { outfit: 'cocoa', hat: 'cowboy', face: 'mustache', back: 'none', ski: 'forest', trail: 'none' } },
+  { id: 'captain', name: 'Pirate Captain', set: 'looks', pieces: { outfit: 'phantom', hat: 'pirate', face: 'eyepatch', back: 'none', ski: 'blackgold', trail: 'void' } },
+  { id: 'royalty', name: 'Royalty', set: 'looks', pieces: { outfit: 'royal', hat: 'crown', face: 'monocle', back: 'cape', ski: 'gold', trail: 'gold' } },
+  { id: 'eighties', name: 'Retro 80s', set: 'looks', pieces: { outfit: 'retro', hat: 'headphones', face: 'pixel', back: 'surfboard', ski: 'pink', trail: 'rainbow' } },
+  { id: 'archmage', name: 'Archmage', set: 'looks', pieces: { outfit: 'galaxy', hat: 'wizard', face: 'nerd', back: 'cape', ski: 'void', trail: 'stardust' } },
+  { id: 'jarl', name: 'Viking Jarl', set: 'looks', pieces: { outfit: 'slate', hat: 'viking', face: 'beard', back: 'shield', ski: 'chrome', trail: 'ice' } },
+  { id: 'chef', name: 'Le Chef', set: 'looks', pieces: { outfit: 'arctic', hat: 'chef', face: 'mustache', back: 'baguette', ski: 'pizza', trail: 'none' } },
+  { id: 'rockstar', name: 'Rock Star', set: 'looks', pieces: { outfit: 'midnight', hat: 'tophat', face: 'aviators', back: 'guitar', ski: 'carbon', trail: 'fire' } },
+  { id: 'phoenix', name: 'Phoenix', set: 'looks', pieces: { outfit: 'phoenix', hat: 'halo', face: 'hearts', back: 'wings', ski: 'lava', trail: 'ember' } },
+  { id: 'spacewalk', name: 'Spacewalker', set: 'looks', pieces: { outfit: 'astronaut', hat: 'none', face: 'none', back: 'backpack', ski: 'chrome', trail: 'void' } },
   { id: 'agartha', name: 'Agartha Guardian', set: 'agartha', pieces: { outfit: 'agartha', hat: 'crystal', face: 'thirdeye', back: 'innersun', ski: 'crystal', trail: 'aurora' } },
   { id: 'hollow', name: 'Hollow Earth Explorer', set: 'agartha', pieces: { outfit: 'hollow', hat: 'none', face: 'thirdeye', back: 'none', ski: 'crystal', trail: 'aurora' } },
   { id: 'reaper', name: 'Grim Reaper', set: 'halloween', pieces: { outfit: 'skeleton', hat: 'none', face: 'none', back: 'scythe', ski: 'bone', trail: 'spooky' } },
@@ -295,55 +307,76 @@ export const KIND_NAME = { outfit: 'Outfit', hat: 'Hat', face: 'Face', back: 'Ba
 export const item = (kind, id) => CATALOG[kind].find(i => i.id === id) || CATALOG[kind][0];
 export const equipped = kind => item(kind, save.eq[kind]);
 
-// ---------- chests ----------
-export const CHESTS = {
-  free:  { name: 'Free Chest',  price: 0,   odds: { common: 72, rare: 22, epic: 5, legendary: 1 }, color: '#8d6e4f' },
-  basic: { name: 'Snow Chest',  price: 150, odds: { common: 72, rare: 22, epic: 5, legendary: 1 }, color: '#4dabf7' },
-  epic:  { name: 'Epic Chest',  price: 600, odds: { common: 0, rare: 60, epic: 32, legendary: 8 }, color: '#c264ff' },
-  // themed chests only drop items from their set
-  spooky:    { name: 'Spooky Chest',  price: 350, set: 'halloween', odds: { common: 0, rare: 50, epic: 38, legendary: 12 }, color: '#ff7518' },
-  agartha:   { name: 'Agartha Chest', price: 450, set: 'agartha',   odds: { common: 0, rare: 0, epic: 70, legendary: 30 }, color: '#3cf2ff' },
-  tradition: { name: 'Shabbat Chest', price: 250, set: 'tradition', odds: { common: 30, rare: 45, epic: 25, legendary: 0 }, color: '#9db8ff' },
-  xmas:      { name: 'Christmas Chest', price: 400, set: 'xmas',  odds: { common: 0, rare: 45, epic: 40, legendary: 15 }, color: '#2a9d4f' },
-};
-export const FREE_CHEST_COOLDOWN = 3 * 60 * 60 * 1000;
-export const PITY = 10; // a Snow/Free chest is guaranteed Epic+ after this many without one
-
-function rollRarity(chest) {
-  if ((chest === 'free' || chest === 'basic') && save.pity >= PITY - 1) return Math.random() < 0.85 ? 'epic' : 'legendary';
-  const odds = CHESTS[chest].odds;
-  let r = Math.random() * 100;
-  for (const k of ['legendary', 'epic', 'rare', 'common']) { if ((r -= odds[k]) < 0) return k; }
-  return 'common';
-}
-export function openChest(chest, paidByAd = false) {
-  const c = CHESTS[chest];
-  if (c.set && !setAvailable(c.set)) return null;   // a limited chest that has left the Shop
-  if (paidByAd) { /* the player watched a rewarded ad */ }
-  else if (chest === 'free') { if (Date.now() < save.freeChestAt) return null; save.freeChestAt = Date.now() + FREE_CHEST_COOLDOWN; }
-  else { if (save.coins < c.price) return null; save.coins -= c.price; }
-  let rarity = rollRarity(chest);
-  if (chest === 'free' || chest === 'basic') save.pity = (rarity === 'epic' || rarity === 'legendary') ? 0 : save.pity + 1;
-  // pick a kind weighted by how many items it has in that rarity; prefer unowned items
-  // score rewards and secrets never drop; limited items only come from their own chest
-  const inPool = it => it.id !== 'none' && !it.ad && !it.score && !it.secret && (c.set ? it.set === c.set : !isLimited(it));
-  let pool = [];
-  for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (it.rarity === rarity && inPool(it)) pool.push({ kind, it });
-  if (!pool.length) {   // a themed set may have nothing at this rarity: fall back to anything in the set
-    for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (inPool(it)) pool.push({ kind, it });
-    rarity = pool[0]?.it.rarity || rarity;
+// ---------- item shop: a new rotation every day at 00:00 UTC, the same for everyone ----------
+// Featured (big, epic/legendary, the first one is the Item of the Day at a discount), Daily, Limited (only while
+// a limited set is on sale) and one Bundle (a whole fit at 30% off). Score rewards, secrets and ad items are never sold.
+export const PRICE = { common: 120, rare: 300, epic: 650, legendary: 1200 };
+export const DEAL = 0.75;   // Item of the Day: 25% off
+const mulberry = a => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const hash = s => { let h = 2166136261; for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return h >>> 0; };
+const round50 = n => Math.max(50, Math.round(n / 50) * 50);
+export function shopToday(day = utcToday()) {
+  const rng = mulberry(hash('peakflip-shop-' + day));
+  const all = [];
+  for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind])
+    if (it.id !== 'none' && !it.ad && !it.score && !it.secret && (!isLimited(it) || setAvailable(it.set))) all.push({ kind, it, price: PRICE[it.rarity] });
+  const take = (list, n) => { const out = [], pool = list.slice(); while (out.length < n && pool.length) out.push(pool.splice((rng() * pool.length) | 0, 1)[0]); return out; };
+  const normal = all.filter(x => !isLimited(x.it));
+  const featured = take(normal.filter(x => x.it.rarity === 'legendary' || x.it.rarity === 'epic'), 2);
+  featured[0] = featured[0] && { ...featured[0], deal: true, was: featured[0].price, price: round50(featured[0].price * DEAL) };
+  const daily = take(normal.filter(x => !featured.some(f => f.it === x.it)), 6).sort((a, b) => a.price - b.price);
+  const limited = take(all.filter(x => isLimited(x.it)), 4);
+  const fits = FITS.filter(f => setAvailable(f.set));
+  const fit = fits[(rng() * fits.length) | 0];
+  let bundle = null;
+  if (fit) {
+    const pieces = Object.entries(fit.pieces).filter(([, id]) => id !== 'none').map(([kind, id]) => ({ kind, it: item(kind, id) }));
+    const full = pieces.reduce((n, x) => n + PRICE[x.it.rarity], 0);
+    bundle = { fit, pieces, was: full, price: round50(full * 0.7) };
   }
-  const unowned = pool.filter(({ kind, it }) => !save.inv[kind].includes(it.id));
-  const src = unowned.length && Math.random() < 0.7 ? unowned : pool;
-  const { kind, it } = src[(Math.random() * src.length) | 0];
-  rarity = it.rarity;
-  const dupe = save.inv[kind].includes(it.id);
-  let refund = 0;
-  if (dupe) { refund = RARITY[rarity].dupe; save.coins += refund; }
-  else save.inv[kind].push(it.id);
-  save.chestsOpened++;
-  persist();
-  return { kind, item: it, rarity, dupe, refund };
+  return { day, featured, daily, limited, bundle };
+}
+export const msToNewShop = () => { const d = new Date(); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1) - d.getTime(); };
+// buy something that's in today's shop (prices come from shopToday, so a stale page can't buy at an old price)
+export function buyItem(kind, id) {
+  const shop = shopToday(), offer = [...shop.featured, ...shop.daily, ...shop.limited].find(x => x.kind === kind && x.it.id === id);
+  if (!offer || save.inv[kind].includes(id) || save.coins < offer.price) return false;
+  save.coins -= offer.price; save.inv[kind].push(id); save.bought = (save.bought || 0) + 1; persist();
+  return true;
+}
+export function buyBundle() {
+  const b = shopToday().bundle; if (!b) return false;
+  const missing = b.pieces.filter(x => !save.inv[x.kind].includes(x.it.id));
+  if (!missing.length || save.coins < b.price) return false;
+  save.coins -= b.price; for (const x of missing) save.inv[x.kind].push(x.it.id); persist();
+  return true;
+}
+// whole outfits: every look (and themed fit) can be bought at once, 20% off the pieces you don't have yet.
+// Ad, score and secret pieces are never part of the price; limited fits only while their set is on sale.
+export const FIT_DISCOUNT = 0.8;
+export function fitOffer(f) {
+  const missing = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && !save.inv[k].includes(id))
+    .map(([kind, id]) => ({ kind, it: item(kind, id) })).filter(x => !x.it.ad && !x.it.score && !x.it.secret);
+  const full = missing.reduce((n, x) => n + PRICE[x.it.rarity], 0);
+  return { missing, was: full, price: missing.length ? round50(full * FIT_DISCOUNT) : 0, available: setAvailable(f.set) };
+}
+export function buyFit(id) {
+  const f = FITS.find(x => x.id === id); if (!f) return false;
+  const o = fitOffer(f);
+  if (!o.available || !o.missing.length || save.coins < o.price) return false;
+  save.coins -= o.price; for (const x of o.missing) save.inv[x.kind].push(x.it.id); persist();
+  return true;
+}
+// daily gift: free coins once per UTC day, growing with a login streak (day 7 and beyond pays the most)
+export const GIFT = [50, 75, 100, 150, 200, 250, 400];
+export const giftReady = () => save.giftDay !== utcToday();
+export function claimGift() {
+  if (!giftReady()) return null;
+  const y = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  save.streak = save.giftDay === y ? (save.streak || 0) + 1 : 1;
+  const amount = GIFT[Math.min(save.streak, GIFT.length) - 1];
+  save.giftDay = utcToday(); save.coins += amount; persist();
+  return { amount, streak: save.streak };
 }
 export const collectionCount = () => {
   let have = 0, total = 0;

@@ -1,10 +1,11 @@
 // ============================================================
-//  Menus, chests, locker, missions, results, leaderboards
+//  Menus, item shop, locker, missions, results, leaderboards
 // ============================================================
 import {
-  save, persist, CATALOG, RARITY, CHESTS, KIND_NAME, PITY, SETS, FITS, fitOwned,
-  openChest, collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
+  save, persist, CATALOG, RARITY, KIND_NAME, SETS, FITS, fitOwned,
+  collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
   isLimited, setDaysLeft, setAvailable, grantScoreRewards, grantSecret,
+  shopToday, msToNewShop, buyItem, buyBundle, giftReady, claimGift, GIFT, fitOffer, buyFit,
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
@@ -95,7 +96,17 @@ const ACC_SVG = {
   face: '<circle cx="8" cy="12" r="3"/><circle cx="16" cy="12" r="3"/><path d="M11 12h2"/>',
   back: '<path d="M8 5h8l2 15H6z"/><path d="M9 5c0-2 6-2 6 0"/>',
 };
+// item pictures are small 3D renders (made by the game, filled in as they're ready); old flat swatches are only a fallback
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+function thumb(key) {
+  const url = cfg.thumb(key);
+  return url === false ? null : `<img class="thumb ${url ? 'ready' : ''}" data-thumb="${key}" src="${url || BLANK}" alt="" draggable="false">`;
+}
 function swatch(kind, it) {
+  if (!(kind === 'hat' || kind === 'face' || kind === 'back') || it.id !== 'none') { const t = thumb(`${kind}:${it.id}`); if (t) return t; }
+  return swatch2d(kind, it);
+}
+function swatch2d(kind, it) {
   if (kind === 'hat' || kind === 'face' || kind === 'back') {
     if (it.id === 'none') return '<div class="sw trail"><span>—</span></div>';
     return `<div class="sw acc" style="background:${it.color2 || 'rgba(255,255,255,.12)'}"><svg viewBox="0 0 24 24" fill="${it.color}" stroke="rgba(0,0,0,.35)" stroke-width="1.2">${ACC_SVG[kind]}</svg></div>`;
@@ -129,7 +140,7 @@ function closePanel() {
 }
 
 // ---------- menu ----------
-const freeChestReady = () => Date.now() >= (save.freeChestAt || 0);
+
 const fmtCooldown = ms => { const m = Math.ceil(ms / 60000); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
 export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
@@ -140,9 +151,9 @@ export function showMenuUI() {
   pb.classList.toggle('claim', !save.name);
   pb.innerHTML = save.name ? `${icon('user')}<b>${esc(save.name)}</b>` : `${icon('user')}<b>Claim your name</b>`;
   miniBoard();
-  const ready = freeChestReady();
+  const ready = giftReady();
   $('chestBadge').classList.toggle('hidden', !ready);
-  $('shopSub').textContent = ready ? 'Free chest!' : 'Chests & items';
+  $('shopSub').textContent = ready ? 'Daily gift ready!' : `New items in ${fmtLeft(msToNewShop())}`;
   const { have } = collectionCount();
   $('lockerSub').textContent = `${have} owned`;
   $('missionSub').textContent = `${save.missions.length} active`;
@@ -207,29 +218,13 @@ Cloud.onStatus(() => { const l = $('syncLine'); if (l) { l.className = `syncLine
 function renderHelp() {
   openPanel('How to play', `<div class="help">
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
-    <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, coins buy chests. Landing upside down or hitting trees and rocks ends the run.</div>
+    <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees and rocks ends the run.</div>
     <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
       </div>
     <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
   </div>`);
 }
 
-// ---------- chests ----------
-function chestCard(key) {
-  const c = CHESTS[key];
-  const odds = Object.entries(c.odds).filter(([, v]) => v > 0).map(([k, v]) => `<span style="color:${RARITY[k].color}">${RARITY[k].name} ${v}%</span>`).join('');
-  let btn;
-  if (key === 'free') {
-    const ready = freeChestReady();
-    btn = `<button class="btn ${ready ? 'go' : ''}" data-chest="free" ${ready ? '' : 'disabled'}>${ready ? 'Open free' : fmtCooldown(save.freeChestAt - Date.now())}</button>`;
-  } else {
-    const can = save.coins >= c.price;
-    btn = `<button class="btn ${can ? 'go' : ''}" data-chest="${key}" ${can ? '' : 'disabled'}>${coin} ${c.price}</button>`;
-  }
-  const tag = c.set && SETS[c.set].until ? `<div class="evTag">LIMITED · ${daysText(setDaysLeft(c.set))}</div>` : '';
-  return `<div class="chestCard ${c.set ? 'themed' : ''}" style="--c:${c.color}">${tag}<div class="chest" style="--c:${c.color}"><div class="lid"></div><div class="base"></div></div>
-    <div class="cname">${c.name}</div><div class="odds">${odds}</div>${btn}</div>`;
-}
 // rewarded ad with a friendly message when there's no ad to show right now
 async function watchAd() {
   const ok = await cfg.ads.rewarded();
@@ -241,27 +236,19 @@ function note(text) {
   document.body.appendChild(el); setTimeout(() => el.remove(), 2600);
 }
 
-// ---------- shop: every item, previewed on your avatar, unlocked from chests ----------
-let shopTab = 'chests', shopSel = null;   // shopSel: { kind, id } the item shown in the detail bar
+// ---------- item shop: today's rotation, bought with coins (like an item shop, no chests) ----------
+let shopSel = null;   // { kind, id } the item shown in the detail bar
 const KINDS = Object.keys(CATALOG);
-const chestFor = it => it.set ? Object.keys(CHESTS).find(k => CHESTS[k].set === it.set) : it.rarity === 'common' ? 'basic' : 'epic';
 const daysText = d => d <= 0 ? 'last day' : d === 1 ? '1 day left' : `${d} days left`;
 const shortNum = n => n >= 1e6 ? `${n / 1e6}M` : n >= 1e3 ? `${n / 1e3}k` : String(n);
+const fmtLeft = ms => { const m = Math.max(1, Math.ceil(ms / 60000)); return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`; };
+const owns = (kind, id) => save.inv[kind].includes(id);
 function sourceText(it) {
   if (it.ad) return `Watch ${it.ad} ad${it.ad > 1 ? 's' : ''} to unlock`;
   if (it.score) return `Reach a score of ${it.score.toLocaleString()} (your best: ${save.best.toLocaleString()})`;
   if (it.secret) return 'A secret. Keep exploring…';
-  if (isLimited(it)) return setAvailable(it.set) ? `Limited: ${CHESTS[chestFor(it)].name} only · ${daysText(setDaysLeft(it.set))}` : 'Limited edition, no longer available';
-  if (it.set) return `${CHESTS[chestFor(it)].name}, or any chest`;
-  return it.rarity === 'common' ? 'Free & Snow Chests' : 'Snow & Epic Chests';
-}
-// the label under an item in the Shop grid
-function itemTag(kind, it) {
-  if (it.ad) return `<div class="rr" style="color:${RARITY[it.rarity].color}">Ad exclusive</div>`;
-  if (it.score) return `<div class="rr" style="color:var(--gold)">Score ${shortNum(it.score)}</div>`;
-  if (it.secret) return `<div class="rr" style="color:#ff4fd8">Secret</div>`;
-  if (isLimited(it)) return `<div class="rr limited">${setAvailable(it.set) ? 'Limited' : 'Retired'}</div>`;
-  return `<div class="rr" style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name}</div>`;
+  if (isLimited(it)) return setAvailable(it.set) ? `Limited edition · ${daysText(setDaysLeft(it.set))} · shows up in the Limited row` : 'Limited edition, retired';
+  return 'Shows up in the item shop from time to time';
 }
 // score rewards unlocked by the run that just ended (or a best that came from the cloud)
 export function checkRewards() {
@@ -271,73 +258,106 @@ export function findSecret(kind, id, text) {
   if (!grantSecret(kind, id)) return;
   note(text); cfg.sfx.perfect(); if (!$('menu').classList.contains('hidden')) showMenuUI();
 }
-function chestsHtml() {
-  const pityLeft = Math.max(1, PITY - (save.pity || 0));
+// one item card: big for Featured, small for everything else
+function offerCard(o, big) {
+  const { kind, it } = o, own = owns(kind, it.id), sel = shopSel?.kind === kind && shopSel.id === it.id, rc = RARITY[it.rarity].color;
+  return `<button class="offer ${big ? 'big' : ''} ${sel ? 'sel' : ''} ${own ? 'owned' : ''}" style="--rc:${rc}" data-offer="${kind}:${it.id}">
+    ${o.deal ? '<span class="offerTag">ITEM OF THE DAY</span>' : isLimited(it) ? '<span class="offerTag lim">LIMITED</span>' : ''}
+    <div class="offerArt">${swatch(kind, it)}</div>
+    <div class="offerName">${esc(it.name)}</div>
+    <div class="offerKind">${RARITY[it.rarity].name} ${KIND_NAME[kind]}</div>
+    <div class="offerPrice">${own ? `${icon('check')} Owned` : `${o.was ? `<s>${o.was}</s> ` : ''}${coin} ${o.price.toLocaleString()}`}</div>
+  </button>`;
+}
+function shopHtml() {
+  const shop = shopToday(), gift = giftReady(), streak = save.giftDay === new Date(Date.now() - 864e5).toISOString().slice(0, 10) ? (save.streak || 0) + 1 : 1;
+  const b = shop.bundle, bundleOwned = b && b.pieces.every(x => owns(x.kind, x.it.id));
+  const limitedLeft = Math.min(...Object.keys(SETS).filter(k => SETS[k].until && setAvailable(k)).map(setDaysLeft));
+  const adItems = KINDS.flatMap(kind => CATALOG[kind].filter(it => it.ad).map(it => ({ kind, it })));
   return `
-    <div class="chestRow">${chestCard('free')}${chestCard('basic')}${chestCard('epic')}</div>
-    <div class="secHead">Themed chests <small>only drop items from their set · limited sets leave the Shop</small></div>
-    <div class="chestRow">${Object.keys(CHESTS).filter(k => CHESTS[k].set && setAvailable(CHESTS[k].set)).map(chestCard).join('')}</div>
-    ${cfg.ads.available ? `<div class="row">
-      <button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>
-      <button class="btn" id="adChest" ${adUsesLeft('chest') > 0 ? '' : 'disabled'}>${icon('play')} Free Snow Chest <small style="opacity:.7">(${adUsesLeft('chest')})</small></button>
+    <div class="shopTop">
+      <div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div>
+      <div class="chip">New items in <b>${fmtLeft(msToNewShop())}</b></div>
+    </div>
+    <button class="giftBar ${gift ? 'ready' : ''}" id="giftBtn" ${gift ? '' : 'disabled'}>${icon('gift')}
+      <span>${gift ? `Daily gift · day ${Math.min(streak, GIFT.length)} streak` : `Gift claimed · come back tomorrow (day ${Math.min((save.streak || 0) + 1, GIFT.length)})`}</span>
+      <b>${coin} ${gift ? GIFT[Math.min(streak, GIFT.length) - 1] : GIFT[Math.min((save.streak || 0) + 1, GIFT.length) - 1]}</b></button>
+    <div class="secHead">Featured</div>
+    <div class="offers featured">${shop.featured.map(o => offerCard(o, true)).join('')}</div>
+    ${b ? `<div class="secHead">Bundle <small>${esc(SETS[b.fit.set].name)} · 30% off</small></div>
+    <div class="bundle" style="--c:${SETS[b.fit.set].color}">
+      <div class="bundleHead"><b>${esc(b.fit.name)}</b><span>${b.pieces.length} items</span></div>
+      <div class="fitPieces">${b.pieces.map(x => `<div class="fp ${owns(x.kind, x.it.id) ? '' : 'miss'}" title="${esc(x.it.name)}">${swatch(x.kind, x.it)}</div>`).join('')}</div>
+      <div class="row"><button class="btn" id="tryBundle">Try on</button>
+      <button class="btn go" id="buyBundle" ${bundleOwned || save.coins < b.price ? 'disabled' : ''}>${bundleOwned ? `${icon('check')} Owned` : `<s>${b.was}</s> ${coin} ${b.price}`}</button></div>
     </div>` : ''}
-    <div class="note">Epic or better guaranteed within <b>${pityLeft}</b> Free/Snow chest${pityLeft > 1 ? 's' : ''}. Duplicates turn into coins.<br>Coins are earned only by playing. No real money involved.</div>`;
-}
-function shopItemsHtml(kind) {
-  // secrets stay hidden until found
-  return `<div class="grid">${CATALOG[kind].filter(it => it.id !== 'none' && (!it.secret || save.inv[kind].includes(it.id))).map(it => {
-    const owned = save.inv[kind].includes(it.id), on = tryOn?.[kind] === it.id || (shopSel?.kind === kind && shopSel.id === it.id);
-    return `<button class="skin ${on ? 'trying' : ''} ${isLimited(it) ? 'lim' : ''}" data-shop="${kind}:${it.id}">
-      <div class="swWrap">${swatch(kind, it)}${owned ? `<span class="lockBadge own">${icon('check')}</span>` : ''}</div>
-      <div class="nm">${esc(it.name)}</div>${itemTag(kind, it)}</button>`;
-  }).join('')}</div>`;
-}
-function shopFitsHtml() {
-  return `<div class="fits">${FITS.filter(f => setAvailable(f.set) || fitOwned(f)).map(f => {
-    const set = SETS[f.set], have = fitOwned(f), total = Object.keys(f.pieces).length, ck = Object.keys(CHESTS).find(k => CHESTS[k].set === f.set);
-    const pieces = Object.entries(f.pieces).filter(([, id]) => id !== 'none').map(([k, id]) => {
-      const it = CATALOG[k].find(i => i.id === id);
-      return `<div class="fp" title="${esc(it.name)}">${swatch(k, it)}</div>`;
-    }).join('');
-    return `<div class="fit" style="--c:${set.color}">
-      <div class="fitHead"><b>${esc(f.name)}</b><span>${set.name}${set.until ? ` · limited, ${setAvailable(f.set) ? daysText(setDaysLeft(f.set)) : 'retired'}` : ''} · ${have}/${total} owned</span></div>
-      <div class="fitPieces">${pieces}</div>
-      <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
-      <button class="btn go" data-chest="${ck}" ${save.coins >= CHESTS[ck].price && setAvailable(f.set) ? '' : 'disabled'}>${coin} ${CHESTS[ck].price}</button></div>
-    </div>`;
-  }).join('')}</div><div class="note">The coin button opens that set's themed chest.</div>`;
+    <div class="secHead">Daily</div>
+    <div class="offers">${shop.daily.map(o => offerCard(o)).join('')}</div>
+    ${shop.limited.length ? `<div class="secHead">Limited <small>leaves the shop for good · ${daysText(limitedLeft)}</small></div>
+    <div class="offers">${shop.limited.map(o => offerCard(o)).join('')}</div>` : ''}
+    ${adItems.length ? `<div class="secHead">Watch to unlock</div>
+    <div class="offers">${adItems.map(({ kind, it }) => `<button class="offer ${owns(kind, it.id) ? 'owned' : ''}" style="--rc:${RARITY[it.rarity].color}" data-offer="${kind}:${it.id}">
+      <div class="offerArt">${swatch(kind, it)}</div><div class="offerName">${esc(it.name)}</div><div class="offerKind">${KIND_NAME[kind]}</div>
+      <div class="offerPrice">${owns(kind, it.id) ? `${icon('check')} Owned` : `${icon('play')} ${adWatched(kind, it.id)}/${it.ad}`}</div></button>`).join('')}</div>` : ''}
+    ${cfg.ads.available ? `<button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>` : ''}
+    <div class="note">The shop changes every day at 00:00 UTC, the same for everyone. Coins are earned only by playing. No real money involved.</div>`;
 }
 function detailBar() {
-  if (!shopSel) return tryOn ? `<div class="tryBar"><span>Trying on a fit</span><button class="btn" id="tryReset">Take off</button></div>` : '';
-  const { kind, id } = shopSel, it = CATALOG[kind].find(i => i.id === id), owned = save.inv[kind].includes(id);
+  if (!shopSel) return tryOn ? `<div class="tryBar"><span>Trying on a whole outfit</span><button class="btn" id="tryReset">Take off</button></div>` : '';
+  const { kind, id } = shopSel, it = CATALOG[kind].find(i => i.id === id), own = owns(kind, id);
+  const shop = shopToday(), offer = [...shop.featured, ...shop.daily, ...shop.limited].find(x => x.kind === kind && x.it.id === id);
   let action;
-  if (owned) action = save.eq[kind] === id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="shopEquip">Wear</button>`;
+  if (own) action = save.eq[kind] === id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="shopEquip">Wear</button>`;
   else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`;
-  else if (it.score) action = `<button class="btn" disabled>${shortNum(save.best)} / ${shortNum(it.score)}</button>`;
-  else if (it.secret || (isLimited(it) && !setAvailable(it.set))) action = `<button class="btn" disabled>${icon('lock')}</button>`;
-  else { const ck = chestFor(it), c = CHESTS[ck]; action = `<button class="btn go" data-chest="${ck}" ${save.coins >= c.price ? '' : 'disabled'}>${c.name.replace(' Chest', '')} ${coin} ${c.price}</button>`; }
+  else if (offer) action = `<button class="btn go" id="shopBuy" ${save.coins >= offer.price ? '' : 'disabled'}>Buy ${coin} ${offer.price.toLocaleString()}</button>`;
+  else action = `<button class="btn" disabled>${icon('lock')}</button>`;
   return `<div class="tryBar"><span><b>${esc(it.name)}</b> <small style="color:${RARITY[it.rarity].color}">${isLimited(it) ? 'Limited ' : ''}${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small><br>
-    <small>${owned ? 'In your locker' : `Get it: ${sourceText(it)}`}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
+    <small>${own ? 'In your locker' : offer ? (save.coins >= offer.price ? 'In the shop today' : `You need ${(offer.price - save.coins).toLocaleString()} more coins`) : sourceText(it)}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
 }
+// whole outfits: every look and themed fit, bought in one go
+function outfitsHtml() {
+  const fits = FITS.filter(f => setAvailable(f.set) || Object.entries(f.pieces).every(([k, id]) => id === 'none' || owns(k, id)));
+  return `<div class="looks">${fits.map(f => {
+    const set = SETS[f.set], o = fitOffer(f), owned = !o.missing.length;
+    return `<div class="look" style="--c:${set.color}">
+      ${set.until ? `<span class="offerTag lim">LIMITED · ${daysText(setDaysLeft(f.set))}</span>` : ''}
+      <div class="lookArt">${thumb('fit:' + f.id) || ''}</div>
+      <div class="offerName">${esc(f.name)}</div>
+      <div class="offerKind" style="color:${set.color}">${set.name} · ${Object.values(f.pieces).filter(id => id !== 'none').length} items</div>
+      <div class="row"><button class="btn" data-tryfit="${f.id}">Try on</button>
+      <button class="btn go" data-buyfit="${f.id}" ${owned || save.coins < o.price ? 'disabled' : ''}>${owned ? `${icon('check')} Owned` : `<s>${o.was}</s> ${coin} ${o.price.toLocaleString()}`}</button></div>
+    </div>`;
+  }).join('')}</div>
+  <div class="note">Whole outfits are 20% off, and you only pay for the pieces you don't own yet.</div>`;
+}
+let shopTimer = null, shopTab = 'today';
 function renderShop(tab) {
-  if (tab) shopTab = tab;
-  const tabs = `<button class="tab ${shopTab === 'chests' ? 'on' : ''}" data-stab="chests">${icon('chest')} Chests</button>
-    <button class="tab ${shopTab === 'fits' ? 'on' : ''}" data-stab="fits">${icon('gift')} Fits</button>` +
-    KINDS.map(k => `<button class="tab ${shopTab === k ? 'on' : ''}" data-stab="${k}">${KIND_NAME[k]}</button>`).join('');
-  const body = shopTab === 'chests' ? chestsHtml() : shopTab === 'fits' ? shopFitsHtml()
-    : `${shopItemsHtml(shopTab)}<div class="note">Tap anything to see it on your rider. Items unlock from chests; ${icon('check')} = you own it.</div>`;
-  openPanel('Shop', `<div class="chips"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>
-    ${detailBar()}<div class="tabs">${tabs}</div>${body}`, true, true);
+  if (tab === 'today' || tab === 'outfits') shopTab = tab;
+  const tabs = `<div class="tabs"><button class="tab ${shopTab === 'today' ? 'on' : ''}" data-stab="today">${icon('shop')} Today</button><button class="tab ${shopTab === 'outfits' ? 'on' : ''}" data-stab="outfits">${icon('gift')} Outfits</button></div>`;
+  openPanel('Item Shop', `${detailBar()}${tabs}${shopTab === 'outfits' ? `<div class="shopTop"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>${outfitsHtml()}` : shopHtml()}`, true, true);
+  clearInterval(shopTimer);   // keep the countdown fresh (and roll over to the new shop at midnight UTC)
+  shopTimer = setInterval(() => { if ($('panelTitle').textContent === 'Item Shop' && !$('panel').classList.contains('hidden')) renderShop(); else clearInterval(shopTimer); }, 60000);
   const B = $('panelBody');
   B.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => renderShop(b.dataset.stab));
-  B.querySelectorAll('[data-chest]').forEach(b => b.onclick = () => doOpen(b.dataset.chest));
-  B.querySelectorAll('[data-shop]').forEach(b => b.onclick = () => {
-    const [kind, id] = b.dataset.shop.split(':'), t = { ...(tryOn || {}) };
+  B.querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { shopSel = null; preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderShop(); });
+  B.querySelectorAll('[data-buyfit]').forEach(b => b.onclick = () => {
+    const f = FITS.find(x => x.id === b.dataset.buyfit);
+    if (buyFit(f.id)) { for (const [k, id] of Object.entries(f.pieces)) if (id === 'none' || owns(k, id)) save.eq[k] = id; persist(); cfg.onCosmetics(); preview(null); cfg.sfx.perfect(); celebrate(`${f.name} is yours!`); }
+    renderShop();
+  });
+  B.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => {
+    const [kind, id] = b.dataset.offer.split(':'), t = { ...(tryOn || {}) };
     if (t[kind] === id) { delete t[kind]; shopSel = null; } else { t[kind] = id; shopSel = { kind, id }; }   // tap again to take it off
     preview(t); renderShop();
   });
-  B.querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { shopSel = null; preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderShop(); });
   if ($('tryReset')) $('tryReset').onclick = () => { shopSel = null; preview(null); renderShop(); };
+  if ($('tryBundle')) $('tryBundle').onclick = () => { shopSel = null; preview({ ...shopToday().bundle.fit.pieces }); renderShop(); };
+  if ($('buyBundle')) $('buyBundle').onclick = () => { if (buyBundle()) { cfg.sfx.perfect(); celebrate('Bundle unlocked!'); } renderShop(); };
+  if ($('shopBuy')) $('shopBuy').onclick = () => {
+    const { kind, id } = shopSel;
+    if (buyItem(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); celebrate(`${CATALOG[kind].find(i => i.id === id).name} is yours!`); preview(tryOn); }
+    renderShop();
+  };
   if ($('shopEquip')) $('shopEquip').onclick = () => { save.eq[shopSel.kind] = shopSel.id; persist(); preview(tryOn); cfg.sfx.perfect(); renderShop(); };
   if ($('shopAd')) $('shopAd').onclick = async () => {
     $('shopAd').disabled = true;
@@ -345,42 +365,18 @@ function renderShop(tab) {
     if (await watchAd() && adProgress(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); }
     preview(tryOn); renderShop();
   };
-  const adC = $('adCoins'), adX = $('adChest');
+  if ($('giftBtn')) $('giftBtn').onclick = () => {
+    const g = claimGift(); if (!g) return;
+    cfg.sfx.coin(); celebrate(`+${g.amount} coins · day ${g.streak} streak`); renderShop(); showMenuUI();
+  };
+  const adC = $('adCoins');
   if (adC) adC.onclick = async () => { adC.disabled = true; if (await watchAd()) { useAd('coins'); save.coins += 75; persist(); cfg.sfx.coin(); } renderShop(); };
-  if (adX) adX.onclick = async () => { adX.disabled = true; if (await watchAd()) { useAd('chest'); doOpen('basic', true); } else renderShop(); };
 }
-function doOpen(key, paidByAd) {
-  const res = openChest(key, paidByAd);
-  if (!res) { cfg.sfx.tone(200, 0.15, 'square', 0.1); return; }
-  const rc = RARITY[res.rarity].color;
-  const ov = $('chestOpen');
-  ov.innerHTML = `<div class="chest big shaking" style="--c:${CHESTS[key].color};--glow:${rc}"><div class="lid"></div><div class="base"></div></div><div class="tapHint">Opening…</div>`;
-  ov.classList.remove('hidden');
-  const S = cfg.sfx;
-  // suspense: ticks speed up, the glow colour hints at the rarity before the reveal
-  [0, 300, 550, 750, 900, 1020, 1120].forEach((t, i) => setTimeout(() => S.tone(300 + i * 60, 0.06, 'square', 0.05), t));
-  setTimeout(() => ov.querySelector('.chest')?.classList.add('glowing'), 650);
-  setTimeout(() => {
-    const it = res.item;
-    if (res.rarity === 'legendary' || res.rarity === 'epic') { S.perfect(); setTimeout(() => S.perfect(), 200); }
-    else S.trick(['common', 'rare'].indexOf(res.rarity));
-    ov.innerHTML = `
-      <div class="burst" style="--glow:${rc}"></div>
-      <div class="reveal" style="--glow:${rc}">
-        <div class="rar" style="color:${rc}">${RARITY[res.rarity].name.toUpperCase()}</div>
-        <div class="bigSw">${swatch(res.kind, it)}</div>
-        <div class="iname">${esc(it.name)}</div>
-        <div class="ikind">${KIND_NAME[res.kind]}</div>
-        ${res.dupe ? `<div class="dupe">Duplicate · ${coin} +${res.refund}</div>` : '<div class="newTag">NEW</div>'}
-        <div class="row">
-          <button class="btn" id="openMore">Back</button>
-          ${res.dupe ? '' : `<button class="btn primary" id="equipNow">Equip</button>`}
-        </div>
-      </div>`;
-    const eq = $('equipNow');
-    if (eq) eq.onclick = () => { save.eq[res.kind] = it.id; persist(); ov.classList.add('hidden'); preview(tryOn); renderShop(); };
-    $('openMore').onclick = () => { ov.classList.add('hidden'); renderShop(); };
-  }, 1300);
+// a quick sparkle burst with a message (purchases, gifts)
+function celebrate(text) {
+  note(text);
+  const c = document.createElement('canvas'); c.id = 'confetti'; c.style.zIndex = 8; document.body.appendChild(c);
+  confetti(140); setTimeout(() => c.remove(), 3600);
 }
 
 // ---------- locker ----------
@@ -390,7 +386,7 @@ function preview(t) { tryOn = t && Object.keys(t).length ? t : null; cfg.preview
 function lockerFitsHtml() {
   // a fit shows up once you own at least one of its pieces, listing just the pieces you have
   const mine = FITS.filter(f => Object.entries(f.pieces).some(([k, id]) => id !== 'none' && save.inv[k].includes(id)));
-  if (!mine.length) return emptyLocker('No fits yet. Themed chests in the Shop drop Agartha, Christmas, Halloween and Shabbat pieces.');
+  if (!mine.length) return emptyLocker('No fits yet. Bundles in the Item Shop give you a whole look at once.');
   return `<div class="fits">${mine.map(f => {
     const set = SETS[f.set], owned = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && save.inv[k].includes(id));
     const worn = owned.every(([k, id]) => save.eq[k] === id);
@@ -401,7 +397,7 @@ function lockerFitsHtml() {
     </div>`;
   }).join('')}</div>`;
 }
-const emptyLocker = text => `<div class="note" style="padding:18px 0">${text}</div><button class="btn primary" id="toShop">${icon('chest')} Go to the Shop</button>`;
+const emptyLocker = text => `<div class="note" style="padding:18px 0">${text}</div><button class="btn primary" id="toShop">${icon('shop')} Go to the Item Shop</button>`;
 function renderLocker() {
   if (tryOn) preview(null);
   const tabs = KINDS.map(k => `<button class="tab ${k === lockerTab ? 'on' : ''}" data-tab="${k}">${KIND_NAME[k]} <small>${save.inv[k].filter(id => id !== 'none').length}</small></button>`).join('')
@@ -426,7 +422,7 @@ function renderLocker() {
     for (const [k, id] of Object.entries(f.pieces)) if (save.inv[k].includes(id)) save.eq[k] = id;
     persist(); cfg.onCosmetics(); cfg.sfx.perfect(); renderLocker();
   });
-  if ($('toShop')) $('toShop').onclick = () => renderShop(lockerTab === 'fits' ? 'fits' : lockerTab);
+  if ($('toShop')) $('toShop').onclick = () => renderShop(lockerTab === 'fits' ? 'outfits' : 'today');
 }
 
 // ---------- missions ----------
@@ -554,7 +550,7 @@ function resultsCard(r, token = resultToken) {
   }
   const missions = r.missions.done.length
     ? `<div class="list">${r.missions.done.map(m => `<div class="item">${icon('check')}<span class="grow">${esc(missionText(m))}</span><span class="val">${coin} ${m.reward}</span></div>`).join('')}</div>` : '';
-  const chestReady = save.coins >= CHESTS.basic.price || freeChestReady();
+
   el.innerHTML = `<div class="card">
     ${body}
     <div class="earn"><span>Coins earned</span><b>${coin} +${earned}</b></div>
@@ -564,7 +560,7 @@ function resultsCard(r, token = resultToken) {
     <div class="row btnGrid">
       <button class="btn" id="menuBtn">${icon('home')}Menu</button>
       <button class="btn" id="toLb">${icon('trophy')}Ranks</button>
-      ${chestReady ? `<button class="btn" id="toChests">${icon('chest')}Chests</button>` : ''}
+      <button class="btn" id="toChests">${icon('shop')}Shop</button>
       <button class="btn" id="shareBtn">${icon('share')}Share</button>
     </div>
   </div>`;
@@ -572,7 +568,7 @@ function resultsCard(r, token = resultToken) {
   arm(el);
   $('againBtn').onclick = () => { const b = $('againBtn'); b.disabled = true; b.innerHTML = `${icon('retry')}Loading…`; cfg.onAgain(); };
   $('menuBtn').onclick = () => cfg.onMenu();
-  if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop('chests'); };
+  if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop(); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
   rankRow(r, token);
@@ -724,7 +720,7 @@ export function initUI(c) {
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
-  $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(freeChestReady() ? 'chests' : shopTab); };
+  $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = 'all'; renderLeaderboard(); };

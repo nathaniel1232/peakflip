@@ -56,7 +56,7 @@ The game has three kinds of ad slots, all going through `ads.js`:
 
 | Slot | When | Where it comes from |
 |---|---|---|
-| **Rewarded** | Player clicks a ▶ button: ad-exclusive items (Jetpack, Laser Eyes, Propeller Cap…), +75 coins, free Snow Chest | CrazyGames SDK or Google H5 Games Ads |
+| **Rewarded** | Player clicks a ▶ button: ad-exclusive items (Jetpack, Laser Eyes, Propeller Cap…), +75 coins | CrazyGames SDK or Google H5 Games Ads |
 | **Between runs** | Before "Ride again" (only when `ADS_ENABLED = true` in `game.js`) | same |
 | **Side banners** | Desktop screens ≥1280px, your own site only | Google AdSense display ads |
 
@@ -86,8 +86,8 @@ Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). 
 ## Files
 - `game.js` — rendering, physics, controls, world generation, sky themes, 3D closet, race mode
 - `landscape.js` — alpine heightfield and world-space tree groves
-- `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), chests & odds, missions
-- `ui.js` — menus, shop (all items + 3D preview + chests), locker (owned items), profile, leaderboards, results
+- `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), daily item shop rotation & prices, daily gift, missions
+- `ui.js` — menus, item shop (daily rotation + 3D try-on), locker (owned items), profile, leaderboards, results
 - `cloud.js` — automatic cloud saves, domain hand-off · `net.js` — Supabase RPC helper
 - `chat.js` — shared chat, reconnect/polling, mute and report controls
 - `icons.js` — the hand-made SVG icon set

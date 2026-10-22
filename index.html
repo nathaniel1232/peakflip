@@ -437,6 +437,7 @@
   .rv-rank, .iname, #score, #trickName { color: #fff; text-shadow: var(--ice-shadow); }
   .rv-rank.landed { color: #fff; text-shadow: 0 2px 0 #ffe08a, 0 4px 0 #d99a00, 0 0 30px rgba(255,201,60,.6); }
   #score { font-size: 46px; }
+  #score.record { color: #ffe08a; text-shadow: 0 2px 0 #d99a00, 0 4px 0 #a86a00, 0 0 24px rgba(255,201,60,.6); }
   #trickName { font-size: 34px; }
   #trickPts { font-family: var(--snow-font); font-weight: 400; text-shadow: 0 2px 0 #a86a00, 0 4px 8px rgba(8,30,62,.4); }
   .btn, .tab, .mode .t, .nav button, .chip, .profile b, .secHead { font-family: var(--snow-font); font-weight: 400; letter-spacing: .02em; }
@@ -452,6 +453,51 @@
   #panel .head { margin-bottom: 2px; }
   #pause, #over { background: linear-gradient(180deg, rgba(10,32,64,.25), rgba(10,32,64,.6)); }
   #toast { font-family: var(--snow-font); font-weight: 400; letter-spacing: .02em; }
+
+  /* ---------- item shop: daily rotation cards ---------- */
+  .shopTop { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .giftBar { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,.08); font-family: var(--snow-font); font-size: 16px; text-align: left; }
+  .giftBar span { flex: 1; } .giftBar .ic { width: 24px; height: 24px; color: var(--gold); }
+  .giftBar.ready { background: linear-gradient(90deg, #ff8a4c, #ffc93c); color: #2a1500; animation: claimPulse 2s ease-in-out infinite; }
+  .giftBar.ready .ic { color: #2a1500; }
+  .giftBar:disabled { opacity: .75; cursor: default; }
+  .offers { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
+  .offers.featured { grid-template-columns: 1fr 1fr; }
+  .offer { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px 10px; border-radius: 16px; text-align: center; overflow: hidden;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--rc) 38%, #102544), #0b1a33 85%); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--rc) 55%, transparent); transition: transform .12s; }
+  .offer:hover { transform: translateY(-2px); }
+  .offer.sel { box-shadow: inset 0 0 0 3px var(--ice), 0 0 18px rgba(76,195,255,.4); }
+  .offer.big { padding: 22px 10px 14px; }
+  .offer.big .offerArt .sw { transform: scale(1.7); margin: 22px auto; }
+  .offerArt .sw { transform: scale(1.15); margin: 8px auto; }
+  .offerName { font-family: var(--snow-font); font-size: 16px; line-height: 1.1; }
+  .offer.big .offerName { font-size: 22px; }
+  .offerKind { font-size: 11px; font-weight: 700; color: var(--rc); }
+  .offerPrice { margin-top: 4px; font-family: var(--snow-font); font-size: 16px; display: flex; gap: 4px; align-items: center; }
+  .offerPrice s { color: var(--muted); font-size: 13px; }
+  .offerPrice .ic { width: 15px; height: 15px; color: var(--good); }
+  .offer.owned { opacity: .62; }
+  .offerTag { position: absolute; top: 6px; left: 6px; font-size: 9px; font-weight: 900; letter-spacing: .08em; padding: 2px 7px; border-radius: 99px; background: var(--accent); }
+  .offerTag.lim { background: linear-gradient(90deg, #ffd23f, #ff7b00); color: #2a1500; }
+  .bundle { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 16px; background: linear-gradient(160deg, color-mix(in srgb, var(--c) 30%, #102544), #0b1a33 70%); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent); }
+  .bundleHead { display: flex; justify-content: space-between; align-items: baseline; } .bundleHead b { font-family: var(--snow-font); font-size: 20px; font-weight: 400; } .bundleHead span { font-size: 12px; color: var(--muted); }
+  .bundle .btn s { opacity: .6; font-size: 13px; }
+
+  /* ---------- 3D item pictures and whole-outfit cards ---------- */
+  .thumb { display: block; width: 64px; height: 64px; margin: 0 auto; object-fit: contain; opacity: 0; transition: opacity .25s; pointer-events: none; }
+  .thumb.ready { opacity: 1; }
+  .offer .thumb { width: 96px; height: 96px; }
+  .offer.big .thumb { width: 150px; height: 150px; }
+  .offerArt { min-height: 96px; display: grid; place-items: center; background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--rc) 35%, transparent), transparent 70%); border-radius: 12px; width: 100%; }
+  .fp .thumb { width: 40px; height: 40px; }
+  .fp { background: rgba(255,255,255,.07); border-radius: 10px; padding: 2px; }
+  .skin .thumb { width: 64px; height: 64px; }
+  .looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .look { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 12px 10px; border-radius: 16px; text-align: center;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--c) 35%, #102544), #0b1a33 80%); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 50%, transparent); }
+  .lookArt { width: 100%; display: grid; place-items: center; background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--c) 40%, transparent), transparent 70%); border-radius: 12px; }
+  .look .thumb { width: 150px; height: 150px; }
+  .look .row { width: 100%; margin-top: 4px; } .look .btn { padding: 9px 6px; font-size: 14px; } .look .btn s { opacity: .6; font-size: 12px; }
   /* ---------- optional side ad rails (web hosting only) ---------- */
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
   .adrail.left { left: 8px; } .adrail.right { right: 8px; }
@@ -527,7 +573,6 @@
   <div class="head"><div id="panelTitle" class="snowy"></div><button id="panelClose" aria-label="Close"></button></div>
   <div id="panelBody" style="display:flex;flex-direction:column;gap:12px"></div>
 </div></div>
-<div id="chestOpen" class="hidden"></div>
 
 <aside class="adrail left" id="adLeft"></aside>
 <aside class="adrail right" id="adRight"></aside>

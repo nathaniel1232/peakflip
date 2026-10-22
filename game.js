@@ -35,7 +35,7 @@ let demo = false;
 const track = (...a) => demo ? [] : trackRun(...a);
 
 // ---------- save data / meta-game ----------
-import { save, persist, equipped, item, CATALOG, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
+import { save, persist, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
 import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
 import { icon } from './icons.js';
 import { Ads } from './ads.js';
@@ -341,6 +341,8 @@ const trees = new Pool(treeGeo, vcol, 520);
 const sceneryTrees = [new Pool(spruceGeometry(false), vcol, 260), new Pool(spruceGeometry(true), vcol, 260)];
 const rocks = new Pool(rockGeo, vcol, 90);
 const coinPool = new Pool(coinGeo, coinMat, 420);
+// golden coins: rare (Endless only, so the Daily Race stays fair), bigger, glowing, worth 10 coins
+const goldCoinPool = new Pool(coinGeo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0xffa000, emissiveIntensity: 0.9 }), 40);
 const patches = new Pool(patchGeo, mat.patch, 260);
 
 // ---------- ground ----------
@@ -600,6 +602,8 @@ const skier = (() => {
   const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.85, 14).rotateX(-Math.PI / 2), mat.shadow);
   world.add(shadow);
   world.add(root);
+  Object.assign(skis, { name: 'skis' }); Object.assign(board, { name: 'board' }); Object.assign(legs, { name: 'legs' }); Object.assign(upper, { name: 'upper' });
+  Object.assign(head, { name: 'head' }); Object.assign(helmet, { name: 'helmet' }); Object.assign(goggles, { name: 'goggles' }); Object.assign(hair, { name: 'hair' }); body.name = 'body';
   return { root, body, legs, upper, arms, shadow, skis, board, poles, head, helmet, goggles, hair };
 })();
 
@@ -608,7 +612,7 @@ const slots = {
   hat: new THREE.Group(), face: new THREE.Group(), back: new THREE.Group(),
 };
 slots.hat.position.set(0, 0.95, 0); slots.face.position.set(0, 0.82, -0.148); slots.back.position.set(0, 0.36, 0.17);
-for (const k in slots) skier.upper.add(slots[k]);
+for (const k in slots) { slots[k].name = 'slot-' + k; skier.upper.add(slots[k]); }
 // Leader crown is a separate, temporary marker so cosmetic refreshes cannot remove it.
 const leaderCrown = new THREE.Group();
 const leaderGold = lam(0xffd33d, { emissive: 0x7a4b00, emissiveIntensity: 0.7 });
@@ -884,6 +888,103 @@ function updateCosmetics() {
   }
 }
 
+// ---------- item pictures: small 3D renders of every item (and whole looks) for the shop and locker ----------
+// A copy of the rider with its own materials is dressed and photographed on a separate little renderer, so the
+// main scene is never touched. Pictures are cached and made a few per frame, so opening the shop never stalls.
+const Thumbs = (() => {
+  const SIZE = 192, cache = new Map(), queue = [], waiting = new Set();
+  let r = null, scene, cam, rig, mats, part, extra, failed = false;
+  function init() {
+    try { r = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true }); } catch { failed = true; return; }
+    r.setPixelRatio(1); r.setSize(SIZE, SIZE); r.setClearColor(0x000000, 0);
+    scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x7f93ad, 1.9));
+    const key = new THREE.DirectionalLight(0xffffff, 2.3); key.position.set(-2, 4, -4); scene.add(key);
+    const rim = new THREE.DirectionalLight(0xbfe3ff, 1.2); rim.position.set(3, 2, 4); scene.add(rim);
+    cam = new THREE.PerspectiveCamera(28, 1, 0.05, 50);
+    rig = skier.root.clone(true);
+    mats = new Map();
+    rig.traverse(o => { if (o.isMesh) { if (!mats.has(o.material)) mats.set(o.material, o.material.clone()); o.material = mats.get(o.material); } });
+    rig.getObjectByName('leader-crown').visible = false;
+    rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0);
+    const body = rig.getObjectByName('body'); body.rotation.set(0, 0, 0); body.position.set(0, 0.9, 0);
+    const up = rig.getObjectByName('upper'); up.rotation.set(0, 0, 0); rig.getObjectByName('legs').rotation.set(0, 0, 0);
+    scene.add(rig);
+    const n = k => rig.getObjectByName(k);
+    part = { slots: { hat: n('slot-hat'), face: n('slot-face'), back: n('slot-back') }, head: n('head'), helmet: n('helmet'), goggles: n('goggles'), hair: n('hair'), skis: n('skis'), board: n('board'), upper: up, legs: n('legs') };
+    extra = new THREE.Group(); scene.add(extra);
+  }
+  const m = orig => mats.get(orig);
+  // put a whole look on the rig: { outfit, hat, face, back, ski } (missing pieces = the plain defaults)
+  function dress(look) {
+    const o = item('outfit', look.outfit || 'rookie'), k = item('ski', look.ski || 'navy');
+    setPattern(m(skinMats.jacket), o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
+    setPattern(m(skinMats.pants), o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
+    m(skinMats.helmet).color.set(o.helmet);
+    m(skinMats.ski).color.set(k.color === 'rainbow' ? '#ff4fd8' : k.color); m(skinMats.tip).color.set(k.tip);
+    m(skinMats.ski).emissive.set(k.glow && k.color !== 'rainbow' ? k.color : '#000000').multiplyScalar(0.4);
+    // building accessories registers their animations on the main rider: keep those as they were
+    const saved = { ...accAnim, wings: accAnim.wings };
+    for (const kind of ['hat', 'face', 'back']) {
+      const slot = part.slots[kind]; slot.clear();
+      const it = item(kind, look[kind] || 'none');
+      if (it.id !== 'none') slot.add(buildAccessory(kind, it));
+    }
+    Object.assign(accAnim, saved);
+    const hat = look.hat && look.hat !== 'none';
+    part.helmet.visible = !hat; part.hair.visible = hat;
+    part.goggles.visible = !hat && !EYE_ITEMS.has(look.face);
+    part.head.visible = look.hat !== 'pumpkinhead';
+    part.slots.hat.position.y = look.hat === 'pumpkinhead' ? 1.02 : 0.95;
+    part.skis.visible = true; part.board.visible = false; part.upper.visible = part.legs.visible = true; rig.visible = true;
+    extra.clear();
+  }
+  // a sweep of little glowing cubes in a trail's colours
+  function trailArt(it) {
+    rig.visible = false;
+    const cols = it.colors === 'rainbow' ? ['#ff5a5a', '#ffb35a', '#ffe45a', '#5aff8a', '#5ac8ff', '#b05aff'] : it.colors;
+    for (let i = 0; i < 26; i++) {
+      const u = i / 25, c = new THREE.Mesh(box(0.16 - u * 0.08, 0.16 - u * 0.08, 0.16 - u * 0.08), new THREE.MeshLambertMaterial({ color: cols[i % cols.length], emissive: cols[i % cols.length], emissiveIntensity: 0.5 }));
+      c.position.set(-0.9 + u * 1.8, 0.9 + Math.sin(u * Math.PI) * 0.7 + Math.sin(i * 2.1) * 0.08, Math.cos(i * 1.3) * 0.15);
+      c.rotation.set(i, i * 0.7, 0); extra.add(c);
+    }
+  }
+  const frame = (x, y, z, lx, ly, lz, fov = 28) => { cam.fov = fov; cam.updateProjectionMatrix(); cam.position.set(x, y, z); cam.lookAt(lx, ly, lz); };
+  function shoot(key) {
+    const [kind, id] = key.split(':');
+    if (kind === 'fit') { const f = FITS.find(x => x.id === id); dress(f ? f.pieces : {}); frame(1.3, 1.55, -3.6, 0, 0.98, 0); }
+    else if (kind === 'outfit') { dress({ outfit: id }); frame(1.3, 1.55, -3.6, 0, 0.98, 0); }
+    else if (kind === 'hat') { dress({ hat: id }); frame(0.45, 1.85, -1.25, 0, 1.68, 0, 32); }
+    else if (kind === 'face') { dress({ face: id }); frame(0.3, 1.58, -0.95, 0, 1.5, 0, 32); }
+    else if (kind === 'back') { dress({ back: id }); frame(-1.1, 1.6, 2.6, 0, 1.2, 0, 30); }
+    else if (kind === 'ski') { dress({ ski: id }); part.upper.visible = part.legs.visible = false; frame(1.5, 1.1, -1.4, 0, 0.0, -0.05, 34); }
+    else if (kind === 'trail') { dress({}); trailArt(item('trail', id)); frame(0, 0.95, -3.4, 0, 1.05, 0); }
+    r.render(scene, cam);
+    return r.domElement.toDataURL('image/png');
+  }
+  function pump() {
+    for (let n = 0; n < 4 && queue.length; n++) {
+      const key = queue.shift(); waiting.delete(key);
+      let url = null; try { url = shoot(key); } catch {}
+      if (!url) continue;
+      cache.set(key, url);
+      document.querySelectorAll(`img[data-thumb="${key}"]`).forEach(img => { img.src = url; img.classList.add('ready'); });
+    }
+    if (queue.length) requestAnimationFrame(pump);
+  }
+  return {
+    // the picture for "kind:id" (or "fit:id") if it's ready; otherwise it's queued and filled in when done.
+    // Returns false if this device can't make pictures (the shop then falls back to colour swatches).
+    get(key) {
+      if (!r && !failed) init();
+      if (failed) return false;
+      if (cache.has(key)) return cache.get(key);
+      if (!waiting.has(key)) { waiting.add(key); queue.push(key); if (queue.length === 1) requestAnimationFrame(pump); }
+      return null;
+    },
+  };
+})();
+
 // ---------- 3D closet (Locker): a wardrobe set around the menu avatar ----------
 const closet = (() => {
   const g = new THREE.Group(); g.visible = false;
@@ -1101,83 +1202,6 @@ const Debris = (() => {
     clear() { for (const d of items) world.remove(d.g); items.length = 0; },
   };
 })();
-// ---------- dragon dance: land five rotations and a random dragon shows up to dance for you ----------
-const Dragon = (() => {
-  const KINDS = [
-    { name: 'Ember', kind: 'Red Dragon', body: 0xd62839, belly: 0xffd23f, accent: 0xffd23f },
-    { name: 'Jade', kind: 'Jade Dragon', body: 0x2a9d4f, belly: 0xd8f3dc, accent: 0xffd23f },
-    { name: 'Nyx', kind: 'Shadow Dragon', body: 0x1b1b1b, belly: 0x6a040f, accent: 0xff4800 },
-    { name: 'Aurora', kind: 'Crystal Dragon', body: 0x6a0dad, belly: 0xe0aaff, accent: 0x3cf2ff },
-    { name: 'Frost', kind: 'Ice Dragon', body: 0x3a86ff, belly: 0xe0fbfc, accent: 0xffffff },
-    { name: 'Sol', kind: 'Golden Dragon', body: 0xffc93c, belly: 0xfff3b0, accent: 0xd62839 },
-    { name: 'Bubblegum', kind: 'Party Dragon', body: 0xff4fa3, belly: 0xffffff, accent: 0x3cf2ff },
-  ];
-  const N = 13;
-  let g = null, segs = [], head = null, jaw = null, wings = [], t = 0, side = 1, life = 0;
-  function build(k) {
-    g = new THREE.Group(); segs = []; wings = [];
-    const body = lam(k.body), belly = lam(k.belly), acc = lam(k.accent, { emissive: k.accent, emissiveIntensity: 0.25 });
-    for (let i = 0; i < N; i++) {
-      const r = 0.75 * (1 - i / (N + 2)) + 0.12, seg = new THREE.Group();
-      seg.add(new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), body));
-      const under = new THREE.Mesh(new THREE.IcosahedronGeometry(r * 0.8, 0), belly); under.position.y = -r * 0.35; under.scale.set(0.9, 0.6, 0.9); seg.add(under);
-      const spike = new THREE.Mesh(new THREE.ConeGeometry(r * 0.35, r * 0.9, 4), acc); spike.position.y = r * 0.95; seg.add(spike);
-      if (i === 2 || i === 8) for (const sz of [-1, 1]) { const leg = new THREE.Mesh(box(0.18, 0.7, 0.18), body); leg.position.set(0, -r - 0.2, sz * r * 0.6); seg.add(leg); }
-      if (i === N - 1) { const fin = new THREE.Mesh(new THREE.ConeGeometry(0.4, 0.9, 3), acc); fin.rotation.z = Math.PI / 2; fin.position.x = 0.45; seg.add(fin); }
-      g.add(seg); segs.push(seg);
-    }
-    for (const sz of [-1, 1]) {   // small wings behind the head
-      const w = new THREE.Group(); w.position.set(0.5, 0.5, sz * 0.4); segs[2].add(w);
-      const m = new THREE.Mesh(new THREE.ConeGeometry(0.9, 1.8, 3), acc); m.scale.z = 0.12; m.rotation.x = sz * 1.2; m.position.set(0, 0.6, sz * 0.7); w.add(m);
-      wings.push({ w, sz });
-    }
-    head = new THREE.Group(); g.add(head);
-    head.add(new THREE.Mesh(box(1.2, 0.9, 1.1), body));
-    const snout = new THREE.Mesh(box(0.8, 0.5, 0.9), body); snout.position.set(-0.85, -0.1, 0); head.add(snout);
-    jaw = new THREE.Mesh(box(0.9, 0.2, 0.8), belly); jaw.position.set(-0.75, -0.45, 0); head.add(jaw);
-    const eyeM = new THREE.MeshBasicMaterial({ color: 0xfff3b0 });
-    for (const sz of [-1, 1]) {
-      const eye = new THREE.Mesh(box(0.2, 0.2, 0.08), eyeM); eye.position.set(-0.3, 0.2, sz * 0.56); head.add(eye);
-      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.8, 5), acc); horn.position.set(0.25, 0.7, sz * 0.35); horn.rotation.z = -0.6; head.add(horn);
-      const wh = new THREE.Mesh(box(0.9, 0.05, 0.05), acc); wh.position.set(-1.4, -0.05, sz * 0.35); wh.rotation.y = sz * 0.5; head.add(wh);
-    }
-    world.add(g);
-  }
-  function clear() { if (g) { world.remove(g); g = null; } life = 0; }
-  return {
-    summon() {
-      clear();
-      const k = KINDS[(Math.random() * KINDS.length) | 0];
-      build(k); t = 0; life = 5; side = Math.random() < 0.5 ? -1 : 1;
-      // a quick festive tune with a drum
-      [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => Sfx.tone(f, 0.16, 'triangle', 0.12, null, i * 0.11));
-      [0, 0.44, 0.88].forEach(d => Sfx.tone(90, 0.12, 'square', 0.14, 50, d));
-      return k;
-    },
-    clear,
-    update(dt) {
-      if (!g) return;
-      t += dt; life -= dt;
-      const leave = Math.max(0, 1 - life);   // last second: fly up and away
-      // floats ahead of you with its head near the middle and its body stretching out to one side; the head looks at you
-      g.position.set(side * 2.5, Math.max(0, p.y) * 0.5 + 4.5 + leave * leave * 25, p.z - 12);
-      g.rotation.y = (side > 0 ? 0 : Math.PI) + Math.sin(t * 2) * 0.25;
-      g.rotation.z = Math.sin(t * 6) * 0.08; g.scale.setScalar(1.5);
-      // the body is a wave running from head to tail; the head bobs to the beat and snaps its jaw
-      segs.forEach((sg, i) => sg.position.set(0.85 * (i + 1), Math.sin(t * 6 - i * 0.65) * 0.9 * Math.min(1, (i + 1) / 3), Math.sin(t * 3 - i * 0.45) * 0.7));
-      head.position.set(0, Math.sin(t * 6 + 0.6) * 0.45, Math.sin(t * 3 + 0.4) * 0.5);
-      head.rotation.set(0, side * Math.PI / 2 + Math.sin(t * 3) * 0.3, Math.sin(t * 12) * 0.25);
-      jaw.rotation.z = Math.max(0, Math.sin(t * 12)) * 0.5;
-      for (const w of wings) w.w.rotation.x = w.sz * Math.sin(t * 14) * 0.6;
-      if (Math.random() < 0.5) {
-        const cols = [0xffd23f, 0xff4fa3, 0x3cf2ff, 0x3ddc84, 0xffffff];
-        tmpV.set(0, 0, 0); head.localToWorld(tmpV); world.worldToLocal(tmpV);
-        Particles.emit(tmpV.x, tmpV.y, tmpV.z, 3, 3, 4, cols[(Math.random() * cols.length) | 0], 0);
-      }
-      if (life <= 0) clear();
-    },
-  };
-})();
 
 const fling = (up, side = 0) => new THREE.Vector3(p.vx * 0.5 + side + rand(-2.5, 2.5), up + rand(0, 3), -p.speed * 0.55 + rand(-3, 3));
 const tumble = (k = 12) => new THREE.Vector3(rand(-k, k), rand(-k, k), rand(-k, k));
@@ -1348,8 +1372,9 @@ function addCrevasse(z0, L) {
   crevasses.push({ z0, L, mesh: g, passed: false, dispose: teethGeo });
 }
 function addCoin(x, y, z) {
-  const idx = coinPool.add(x, y, z);
-  if (idx >= 0) coins.push({ x, y, z, idx, taken: false });
+  const gold = mode !== 'race' && Math.random() < 0.025;
+  const pool = gold ? goldCoinPool : coinPool, idx = pool.add(x, y, z, gold ? 1.5 : 1);
+  if (idx >= 0) coins.push({ x, y, z, idx, taken: false, pool, gold });
 }
 function addGate(x, z, w = 6) {
   const g = new THREE.Group(); g.position.set(x, 0, z);
@@ -2362,7 +2387,7 @@ function cleanup(pz) {
   keep(crevasses, c => c.z0 - c.L, c => { world.remove(c.mesh); c.dispose?.dispose(); });
   keep(gates, g => g.z, g => world.remove(g.mesh));
   keep(pads, q => q.z - 3, q => world.remove(q.mesh));
-  keep(coins, c => c.z, c => { if (!c.taken) coinPool.remove(c.idx); });
+  keep(coins, c => c.z, c => { if (!c.taken) c.pool.remove(c.idx); });
   keep(decor, o => o.z, o => { if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh); if (o.dispose) o.dispose.dispose(); });
   keep(shapes, q => q.z0 - q.L, q => world.remove(q.mesh));
   keep(caves, c => c.z, () => {});
@@ -2384,8 +2409,9 @@ function resetPlayer() {
     grabbing: false, trick: null, grinding: null, grindTime: 0, lastRail: null,
     trickScore: 0, combo: 0, comboTimer: 0, comboTotal: 0, coins: 0,
     crashed: false, crashT: 0, spinX: 0, spinZ: 0, reason: '', happy: false,
-    butter: false, butterT: 0, arch: 0, boostT: 0, bleedZ: 0, bounceN: 0,
+    butter: false, butterT: 0, arch: 0, boostT: 0, bleedZ: 0, bounceN: 0, bestShown: false,
   });
+  $('score')?.classList.remove('record');
 }
 
 function groundAt(x, z) {
@@ -2637,9 +2663,6 @@ function scoreAirTrick(perfect, sketchy) {
   let pts = flips * 1000 + rolls * 1100 + (spins / 180) * 300 + (grabbed ? Math.round(t.grabTotal * 10) * 70 + (t.grabs.length - 1) * 400 : 0);
   if (p.airTime > 1.4) pts += Math.round(p.airTime * 120);
   if (pts === 0) return;
-  // five full rotations (a 1800, or any mix of flips, rolls and spins): a dragon comes to dance
-  const dragon = !sketchy && (spins >= 1800 || flips + rolls + spins / 360 >= 5) ? Dragon.summon() : null;
-  if (dragon) pts += 5000;
   const parts = [];
   if (t.switch) parts.push('Switch');
   if (spins) parts.push((isBoard() ? (t.yaw < 0 ? 'Frontside ' : 'Backside ') : '') + (rolls ? 'Cork ' : '') + spins);
@@ -2654,7 +2677,6 @@ function scoreAirTrick(perfect, sketchy) {
   if (t.tramp) { pts = Math.round(pts * 1.5); parts.unshift('Tramp'); }
   else Sfx.trick(flips + spins / 360);
   award(parts.join(' '), pts, perfect);
-  if (dragon) setTimeout(() => showTrick('DRAGON DANCE!', `${dragon.name} the ${dragon.kind}  +5,000`, true), 1100);
 }
 
 function land(groundSlope) {
@@ -2918,7 +2940,8 @@ function collectCoins(x0, y0, z0) {
     const t = clamp(((c.x - x0) * sx + (c.y - y0) * sy + (c.z - z0) * sz) / len2, 0, 1);
     const dx = c.x - (x0 + sx * t), dy = (c.y - (y0 + sy * t)) * 0.75, dz = c.z - (z0 + sz * t);
     if (Math.hypot(dx, dy, dz) < 1.7) {
-      c.taken = true; coinPool.remove(c.idx);
+      c.taken = true; c.pool.remove(c.idx);
+      if (c.gold) { p.coins += 9; p.trickScore += 475; showTrick('GOLDEN COIN!', '+10 coins', true); Sfx.perfect(); Particles.emit(c.x, c.y, c.z, 30, 4, 5, 0xffd23f, -2); }
       p.coins++; p.trickScore += 25; Sfx.coin(); missionToast(track('coins', 1));
       Particles.emit(c.x, c.y, c.z, 8, 2, 3, 0xffd23f, -2);
     }
@@ -3078,7 +3101,7 @@ function updateCamera(dt) {
 
 function updateCoins() {
   const ry = time * 3;
-  for (const c of coins) if (!c.taken) coinPool.set(c.idx, c.x, c.y + Math.sin(time * 4 + c.z) * 0.12, c.z, 1, ry);
+  for (const c of coins) if (!c.taken) c.pool.set(c.idx, c.x, c.y + Math.sin(time * 4 + c.z) * 0.12, c.z, c.gold ? 1.5 : 1, c.gold ? ry * 1.6 : ry);
 }
 
 // ---------- race ghosts ----------
@@ -3168,7 +3191,7 @@ function startRun(m = mode) {
   Quality.cap = Infinity; Quality.apply();
   zone = 'normal'; portal = null; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
-  SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
+  SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
   Sfx.init();
   jumpQueued = false; latched.clear();
@@ -3260,7 +3283,7 @@ async function restartWithAd() {
 
 function toMenu() {
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
-  SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
+  SkiTracks.clear(); Debris.clear(); fixRider();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   if (closet.on) menuStill(); else startDemo();
@@ -3271,7 +3294,7 @@ function toMenu() {
 // the Locker's still scene: the avatar standing at the top of an empty slope
 function menuStill() {
   demo = false;
-  setSlope(SLOPES.race); SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
+  setSlope(SLOPES.race); SkiTracks.clear(); Debris.clear(); fixRider();
   clearWorld(); resetPlayer();
   decorZ = 30; decorN = 0; wallZ = 40; spawnWalls(-VIEW); while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
 }
@@ -3283,7 +3306,7 @@ function startDemo() {
   Quality.cap = 1; Quality.apply();   // the menu backdrop doesn't need full resolution
   zone = 'normal'; portal = null; nextCaveD = Infinity;
   setSlope(SLOPES.endless);
-  SkiTracks.clear(); Debris.clear(); Dragon.clear(); fixRider();
+  SkiTracks.clear(); Debris.clear(); fixRider();
   clearWorld(); resetPlayer();
   crng = Math.random; laneSeed = [crng() * 6.28, crng() * 6.28];
   decorN = 0; spawnZ = -40; decorZ = 30; wallZ = 40;
@@ -3433,6 +3456,14 @@ function frame(now) {
     }
     if (state === 'play') {
       missionToast(track('score', totalScore(), 'max'));
+      // passing your record mid-run: a banner, fireworks overhead, and a gold score for the rest of the run
+      if (mode === 'endless' && !p.bestShown && save.best > 1000 && totalScore() > save.best) {
+        p.bestShown = true; showTrick('NEW BEST!', 'Keep going!', true); Sfx.perfect(); $('score').classList.add('record');
+        [0, 250, 500].forEach((d, i) => setTimeout(() => {
+          const cols = [0xffd23f, 0xff4fa3, 0x4cc3ff, 0x3ddc84];
+          Particles.emit(p.x + rand(-4, 4), p.y + 7 + i, p.z - 12, 40, 7, 6, cols[i % 4], -3);
+        }, d));
+      }
       missionToast(track('dist', Math.floor(-p.z), 'max'));
     }
   }
@@ -3448,7 +3479,6 @@ function frame(now) {
   animateAccessories(dt);
   Particles.update(dt);
   Debris.update(dt);
-  Dragon.update(dt);
   updatePads(dt);
   updateAnimals(dt);
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
@@ -3476,7 +3506,7 @@ initUI({
   sfx: Sfx, isTouch, hints: isTouch ? HINT_TOUCH : HINT_DESKTOP,
   onPlay: m => startRun(m), onAgain: () => restartWithAd(), onMenu: () => toMenu(),
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
-  closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn),
+  closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
 });
 toMenu();
 requestAnimationFrame(frame);
@@ -3485,4 +3515,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addPad, addBear, addCrevasse, Dragon, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
