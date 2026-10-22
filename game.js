@@ -36,7 +36,7 @@ const track = (...a) => demo ? [] : trackRun(...a);
 
 // ---------- save data / meta-game ----------
 import { save, persist, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
-import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
+import { initUI, missionToast, showMenuUI, showResults, fetchGhosts, fetchParkGhosts, submitParkRun } from './ui.js';
 import { icon } from './icons.js';
 import { Ads } from './ads.js';
 import { Cloud } from './cloud.js';
@@ -2259,6 +2259,7 @@ function pickDemo() {
   return 'ramp';
 }
 function spawnFeature() {
+  if (mode === 'park') return parkSpawn();
   const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
   if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
   if (mode !== 'race') {
@@ -2610,9 +2611,7 @@ function updateChase(dt) {
   const el = $('chaseGap'); if (el) el.textContent = `${Math.max(0, chase.gap).toFixed(0)} m`;
 }
 function renderRearView() {
-  const want = chase.on || (ava.on && (state === 'play' || state === 'crash'));
-  if (!want) { if (rearFrame && !chase.on) rearFrame.style.display = 'none'; return; }
-  ensureRearFrame(); rearFrame.style.display = '';
+  if (!chase.on || !rearFrame) return;
   const w = Math.min(300, innerWidth * 0.36), h = w * 0.56, x = innerWidth - w - 12, y = 58;
   rearFrame.style.width = `${w}px`; rearFrame.style.height = `${h}px`;
   rearCam.aspect = w / h; rearCam.updateProjectionMatrix();
@@ -2920,51 +2919,163 @@ function clearWorld() {
 }
 
 
-// ---------- Avalanche mode: a wall of snow comes down the mountain behind you and keeps getting faster.
-// Tricks give you a burst of speed; smash into things or carve too much and it swallows you ----------
-const ava = { on: false, gap: 0, t: 0, rumble: 0 };
-const avaWall = (() => {
-  const g = new THREE.Group(), layers = [];
-  const white = lam(0xf7fbff), shade = lam(0xd8e6f2);
-  for (let l = 0; l < 3; l++) {
-    const parts = [];
-    for (let i = 0; i < 26; i++) {
-      const r = rand(1.6, 3.4) * (1 + l * 0.35);
-      parts.push({ geo: new THREE.IcosahedronGeometry(r, 0), color: Math.random() < 0.7 ? 0xf7fbff : 0xd8e6f2, m: T(rand(-20, 20), rand(-1, 3) + l * 2.5, rand(-2, 2)) });
-    }
-    const m = new THREE.Mesh(merged(parts), vcol); m.position.set(0, 1.5 + l * 1.5, l * 5); g.add(m); layers.push(m);
-  }
-  const back = new THREE.Mesh(box(46, 16, 20), white); back.position.set(0, 8, 16); g.add(back);
-  const dust = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
-  dust.scale.set(60, 26, 1); dust.position.set(0, 9, 2); g.add(dust);
-  g.visible = false; world.add(g);
-  void shade;
-  return { g, layers };
-})();
-function startAvalanche() {
-  Object.assign(ava, { on: true, gap: 45, t: 0, rumble: 0 });
-  avaWall.g.visible = true;
-  showTrick('AVALANCHE!', 'Go go go!', true);
-  Sfx.noise(1.5, 0.5, 200); Sfx.tone(60, 1.4, 'sawtooth', 0.15, 40);
+
+// ---------- Park mode: a fixed terrain park (the same map for everyone), ridden 3 times. At the bottom the
+// chairlift ("heis") carries you back up. Your best run, and the best runs of other players, ride along as ghosts ----------
+const PARK_RUNS = 3, PARK_SEED = 'peakflip-park-v1';
+const park = { idx: 0, run: 1, runStart: 0, scores: [], online: [], endZ: -1e9, liftT: 0, chair: null };
+const signTex = text => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96; const g = c.getContext('2d');
+  g.fillStyle = '#1d2430'; g.fillRect(0, 0, 256, 96); g.fillStyle = '#ff7b00'; g.fillRect(0, 0, 256, 10); g.fillRect(0, 86, 256, 10);
+  g.fillStyle = '#fff'; g.font = '900 40px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(text, 128, 63);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+};
+const parkSignMats = {};
+function parkSign(z, side, text) {
+  const m = parkSignMats[text] ||= new THREE.MeshBasicMaterial({ map: signTex(text) });
+  const g = new THREE.Group(); g.position.set(side * 14.6, 0, z);
+  for (const sx of [-0.8, 0.8]) { const post = new THREE.Mesh(box(0.12, 2.4, 0.12), postMat); post.position.set(sx, 1.2, 0); g.add(post); }
+  const b = new THREE.Mesh(box(2.2, 0.82, 0.08), [postMat, postMat, postMat, postMat, m, postMat]); b.position.y = 2.6; g.add(b);
+  world.add(g); decor.push({ z: z - 2, mesh: g });
 }
-function stopAvalanche() { ava.on = false; avaWall.g.visible = false; hud.race.style.color = ''; }
-const avaSpeed = () => baseSpeed(-(p.z + ava.gap)) * (1.0 + Math.min(ava.t, 150) * 0.0035);
-function updateAvalanche(dt) {
-  if (!ava.on) return;
-  if (state === 'play') {
-    ava.t += dt;
-    ava.gap += (p.speed - avaSpeed()) * dt;
-    ava.gap = Math.min(ava.gap, 60);   // it never falls hopelessly far behind
-    if (ava.gap <= 0) { ava.gap = 0; return crash('Buried by the avalanche'); }
-    // the closer it gets, the more the ground shakes and the louder it roars
-    const near = clamp(1 - ava.gap / 25, 0, 1);
-    if (near > 0) shake = Math.max(shake, near * 0.18);
-    if ((ava.rumble -= dt) < 0) { ava.rumble = 0.35; Sfx.noise(0.45, 0.08 + near * 0.35, 180 + near * 200); }
-  } else if (state === 'crash' && p.reason === 'Buried by the avalanche') ava.gap = damp(ava.gap, -12, 2, dt);   // and rolls right over you
-  avaWall.g.position.set(0, 0, p.z + ava.gap);
-  if (!chase.on) { const el = $('chaseGap'); if (el) el.textContent = `${Math.max(0, ava.gap).toFixed(0)} m`; }
-  avaWall.layers.forEach((m, i) => { m.rotation.x -= dt * (2.5 - i * 0.6); m.position.y = 1.5 + i * 1.5 + Math.sin(time * 6 + i) * 0.3; });
-  if (Math.random() < 0.5) Particles.emit(rand(-14, 14), rand(0.5, 6), p.z + ava.gap - 1, 3, 3, 4, 0xffffff, -1);
+function parkArch(z, text) {
+  const g = new THREE.Group(); g.position.set(0, 0, z);
+  for (const sx of [-1, 1]) { const p_ = new THREE.Mesh(box(0.5, 10, 0.5), mat.railPost); p_.position.set(sx * 14, 5, 0); g.add(p_); }
+  const m = new THREE.MeshBasicMaterial({ map: signTex(text) });
+  const b = new THREE.Mesh(box(12, 3, 0.2), [postMat, postMat, postMat, postMat, m, m]); b.position.y = 9.6; g.add(b);
+  const bar = new THREE.Mesh(box(28.5, 0.35, 0.35), mat.rail); bar.position.y = 10.1; g.add(bar);
+  world.add(g); decor.push({ z: z - 4, mesh: g });
+}
+// a lift station: the hut with its big turning wheel where the cable comes round
+const liftWheels = [];
+function liftStation(z, top) {
+  const g = new THREE.Group(); g.position.set(-17.5, 0, z);
+  const hut = new THREE.Mesh(box(7, 4.2, 7), lam(0x34506b)); hut.position.y = 2.1; g.add(hut);
+  const roof = new THREE.Mesh(box(7.6, 0.4, 7.6), mat.snow); roof.position.y = 4.4; g.add(roof);
+  const win = new THREE.Mesh(box(0.05, 1.2, 3), lam(0xffd166, { emissive: 0x7a5a00 })); win.position.set(3.53, 2.4, 0); g.add(win);
+  const sign = new THREE.Mesh(box(0.08, 1.1, 3.4), [new THREE.MeshBasicMaterial({ map: signTex('HEIS · LIFT') }), postMat, postMat, postMat, postMat, postMat]); sign.position.set(3.6, 4.1, 0); sign.rotation.y = 0; g.add(sign);
+  const mast = new THREE.Mesh(box(0.6, 7, 0.6), lam(0x5b6573)); mast.position.set(0, 7.5, top ? -2 : 2); g.add(mast);
+  const wheel = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.22, 6, 20), lam(0xe63946)); wheel.rotation.x = Math.PI / 2; wheel.position.set(0, 10.8, top ? -2 : 2); g.add(wheel);
+  liftWheels.push(wheel);
+  world.add(g); decor.push({ z: z - 10, mesh: g });
+}
+function parkKickers(z, x, sizes, sp) {
+  let zz = z;
+  for (const [L, H, W] of sizes) {
+    addRamp(x, zz, L, H, W);
+    const at = airTime(sp, H, L), ls = lipSpeed(sp, H);
+    for (let k = 1; k < 5; k++) { const t = at * k / 5; addCoin(x, arcY(sp, H, L, t) + 1.2, zz - L - ls * t); }
+    zz -= L + ls * at + 12;
+  }
+  return z - zz + 6;
+}
+function parkRails(z, list) {
+  let len = 0;
+  for (const [x, dz, L] of list) { addRail(x, z - dz, L); for (let i = 1; i < L / 3; i++) addCoin(x, 2.2, z - dz - i * 3); len = Math.max(len, dz + L); }
+  return len + 16;
+}
+// the map, top to bottom: each entry builds one section and says how long it is
+const PARK_MAP = [
+  z => { parkArch(z + 30, 'PEAK PARK'); parkSign(z + 6, -1, 'JIB ZONE'); return parkRails(z, [[-7, 0, 14], [0, 6, 10], [7, 2, 18]]); },
+  (z, sp) => { parkSign(z + 6, 1, 'KICKERS'); return parkKickers(z, -5, [[6.5, 2, 5], [7, 2.4, 6], [8, 2.8, 7]], sp); },
+  z => { parkSign(z + 6, -1, 'ROLLERS'); return featureRollers(z, 0.3)[0]; },
+  z => parkRails(z, [[6, 0, 22], [-6, 8, 12], [-1, 24, 12]]),
+  (z, sp) => { parkSign(z + 6, 1, 'TABLE'); return featureTabletop(z, sp, 0.3)[0]; },
+  (z, sp) => { parkSign(z + 6, -1, 'STEP-DOWN'); return featureStepDown(z, sp)[0]; },
+  (z, sp) => parkKickers(z, 5, [[7, 2.4, 6], [7, 2.4, 6]], sp),
+  z => parkRails(z, [[-8, 0, 16], [8, 0, 16], [0, 10, 20]]),
+  (z, sp) => { parkSign(z + 8, 1, 'BIG AIR'); return featureMega(z, sp)[0]; },
+  z => { parkSign(z + 6, -1, 'LAST JIBS'); return parkRails(z, [[-4, 0, 12], [4, 4, 12]]); },
+];
+function parkSpawn() {
+  const z = spawnZ, sp = baseSpeed(-z);
+  if (park.idx < PARK_MAP.length) { spawnZ -= PARK_MAP[park.idx++](z, sp); return; }
+  if (park.endZ > -1e8) { spawnZ -= 400; return; }
+  // the bottom: a line across the run into the lift station
+  park.endZ = z - 20;
+  parkArch(park.endZ, 'LIFT ↑');
+  liftStation(park.endZ - 16, false);
+  for (let i = 0; i < 8; i++) addCoin(-i * 1.4, 1.2, park.endZ + 18 - i * 2.5);
+  spawnZ -= 400;
+}
+// (re)build the top of the park, ready for a run
+function parkReset() {
+  clearWorld(); clearGhosts(); SkiTracks.clear(); Debris.clear();
+  crng = mulberry32(hashStr(PARK_SEED)); laneSeed = [crng() * 6.28, crng() * 6.28];
+  park.idx = 0; park.endZ = -1e9; liftWheels.length = 0;
+  decorN = 0; spawnZ = -55; decorZ = 30; wallZ = 40;
+  liftStation(14, true);
+  while (spawnZ > -VIEW) spawnFeature();
+  spawnWalls(-VIEW);
+  while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
+}
+function startParkRun() {
+  Object.assign(race, { t: 0, rec: [], recT: 0 });
+  park.runStart = totalScore();
+  clearGhosts();
+  if (save.parkGhost) addGhost('Your best', save.parkGhost);
+  for (const g of park.online) addGhost(g.name, g.ghost);
+}
+function startPark() {
+  park.run = 1; park.scores = [];
+  parkReset(); startParkRun();
+  fetchParkGhosts().then(list => {
+    park.online = list;
+    if (mode === 'park' && state === 'play' && race.t < 3) for (const g of list) addGhost(g.name, g.ghost);
+  });
+}
+// over the line at the bottom: bank the run, then ride the lift (or finish after the last run)
+function finishParkRun() {
+  const score = totalScore() - park.runStart, t = +race.t.toFixed(2);
+  park.scores.push(score);
+  const best = save.parkGhost?.score ?? -1, ghost = { t, score, f: race.rec };
+  if (score > best && race.rec.length >= 60) { save.parkGhost = ghost; persist(); submitParkRun(score, t, { f: race.rec }); }
+  if (park.run >= PARK_RUNS) return parkOver();
+  park.run++;
+  state = 'lift'; park.liftT = 0;
+  Sfx.perfect(); showTrick(`Run ${park.run - 1}: ${score.toLocaleString()}`, score > best ? 'Best run! Your new ghost' : 'Riding the lift…', score > best);
+  fadeScreen('#fff');
+  parkReset();
+  for (const g of ghosts) g.root.visible = false;
+  if (!park.chair) {
+    const g = new THREE.Group(), red = lam(0xe63946), grey = lam(0x5b6573);
+    const add = (geo, m, x, y, z_) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z_); g.add(o); };
+    add(box(0.07, 1.7, 0.07), grey, 0, 0.85, 0.35); add(box(1.4, 0.12, 0.6), red, 0, 0, 0); add(box(1.4, 0.7, 0.1), red, 0, 0.4, 0.3);
+    add(box(1.4, 0.06, 0.06), grey, 0, 0.55, -0.45);
+    park.chair = g; world.add(g);
+  }
+  park.chair.visible = true;
+  Object.assign(p, { x: -15.3, y: 9.2, z: -130, vy: 0, vx: 0, heading: 0, yaw: Math.PI, pitch: 0, roll: 0, grounded: false, trick: null, grabbing: false, combo: 0, comboTimer: 0 });
+  snapCam = true;
+}
+function updateLift(dt) {
+  park.liftT += dt;
+  p.z += 21 * dt; p.y = 8.75 + Math.sin(park.liftT * 2.2) * 0.06;
+  p.yaw = Math.PI; p.pitch = 0; p.roll = 0;
+  park.chair.position.set(p.x, 9.2, p.z);
+  park.chair.rotation.z = Math.sin(park.liftT * 2.2) * 0.04;
+  for (const w of liftWheels) w.rotation.z += dt * 1.5;
+  hud.race.classList.remove('hidden');
+  hud.race.textContent = `CHAIRLIFT  ·  up for run ${park.run} of ${PARK_RUNS}`;
+  if (p.z > 6) {
+    // hop off at the top
+    park.chair.visible = false;
+    Object.assign(p, { x: 0, y: 0, z: 0, yaw: 0, heading: 0, grounded: true, speed: 16 });
+    state = 'play'; snapCam = true; fadeScreen('#fff');
+    showTrick(`Run ${park.run} of ${PARK_RUNS}`, 'Drop in!', true);
+    startParkRun();
+  }
+}
+function parkOver() {
+  state = 'over';
+  Platform.gameplayStop();
+  const score = totalScore(), newBest = score > (save.parkBest || 0);
+  if (newBest) save.parkBest = score;
+  const bonus = Math.floor(score / 400);
+  save.coins += bonus;
+  const missions = endCommon();
+  Sfx.perfect();
+  showResults({ mode: 'park', score, newBest: newBest && score > 300, best: save.parkBest, laps: park.scores.length, lapScores: park.scores, bestLap: Math.max(...park.scores), coins: p.coins, bonus, missions });
 }
 
 // ---------- player ----------
@@ -3213,7 +3324,6 @@ function award(name, pts, perfect) {
   const total = Math.round(pts * mult * (special() ? 2 : 1));   // special worlds pay double
   p.trickScore += total; p.comboTotal += total;
   showTrick(name, `+${total.toLocaleString()}${mult > 1 ? `  x${mult}` : ''}`, perfect);
-  if (mode === 'avalanche' && !demo) { p.speed += 2 + Math.min(4, pts / 1500); p.boostT = 1; }   // tricks outrun the snow
   missionToast(track('combo', p.combo, 'max'));
   if (!p.happy && !demo && (p.combo >= 6 || total >= 6000)) { p.happy = true; Platform.happytime(); }
 }
@@ -3538,6 +3648,7 @@ function updatePlayer(dt) {
     }
     if (p.z < -RACE_LEN) return finishRace();
   }
+  if (mode === 'park' && p.z < park.endZ) return finishParkRun();
 }
 
 // Coins: tested along the rider's whole path this frame, so nothing tunnels past at 200 km/h.
@@ -3585,8 +3696,8 @@ function updateCrash(dt) {
   p.pitch += p.spinX * dt; p.lean += p.spinZ * dt;
   p.spinX = damp(p.spinX, 0, 1.2, dt); p.spinZ = damp(p.spinZ, 0, 1.2, dt);
   p.y = Math.max(p.y, -3);
-  if (mode === 'race' && p.crashT > 1.1) respawn();
-  else if (mode !== 'race' && p.crashT > 1.5) gameOver();
+  if ((mode === 'race' || mode === 'park') && p.crashT > 1.1) respawn();
+  else if (mode !== 'race' && mode !== 'park' && p.crashT > 1.5) gameOver();
 }
 
 // ---------- visuals ----------
@@ -3676,6 +3787,13 @@ function updateCamera(dt) {
     camLook.set(0, 1.1, 0);
     world.localToWorld(camPos); world.localToWorld(camLook);
     camera.position.copy(camPos); camera.lookAt(camLook);
+  } else if (state === 'lift') {
+    // on the chairlift: a little behind and beside the chair, looking up the park
+    tmpV.set(p.x + 4.5, p.y + 1.8, p.z - 7.5); world.localToWorld(tmpV);
+    if (snapCam) camera.position.copy(tmpV); else camera.position.lerp(tmpV, 1 - Math.exp(-6 * dt));
+    tmpV.set(p.x - 1.5, p.y - 2, p.z + 12); world.localToWorld(tmpV);
+    if (snapCam) camLook.copy(tmpV); else camLook.lerp(tmpV, 1 - Math.exp(-6 * dt));
+    camera.lookAt(camLook);
   } else if (view === 'first') {
     // eyes sit in the helmet and turn with the body, so flips and spins are felt from the inside
     skier.body.updateMatrixWorld(true);
@@ -3776,17 +3894,18 @@ function showTrick(name, pts, perfect) {
 }
 const fmtTime = t => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
 function updateHUD(dt) {
-  if (mode === 'race') {
+  if (mode === 'park') {
+    const s = totalScore();
+    if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
+    hud.race.textContent = `PARK  ·  run ${park.run} of ${PARK_RUNS}  ·  ${fmtTime(race.t)}  ·  this run ${(s - park.runStart).toLocaleString()}`;
+  } else if (mode === 'race') {
     hud.score.textContent = (totalScore() + race.gates * 500).toLocaleString();
     hud.race.textContent = `${fmtTime(race.t)} elapsed  ·  ${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}`;
   } else {
     const s = totalScore();
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
-    hud.race.classList.toggle('hidden', !special() && mode !== 'avalanche');
-    if (mode === 'avalanche') {
-      hud.race.textContent = `AVALANCHE  ·  ${Math.max(0, ava.gap).toFixed(0)} m behind you`;
-      hud.race.style.color = ava.gap < 15 ? '#ff5a5a' : '';
-    } else if (special()) hud.race.textContent = `${WORLDS[zone].name}  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
+    hud.race.classList.toggle('hidden', !special());
+    if (special()) hud.race.textContent = `${WORLDS[zone].name}  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
   }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
   hud.speed.textContent = `${Math.round(p.speed * 3.6)} km/h`;
@@ -3810,7 +3929,7 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 function startRun(m = mode) {
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
   Quality.cap = Infinity; Quality.apply();
-  zone = 'normal'; portal = null; islandDone = false; nextCaveD = mode === 'avalanche' ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  zone = 'normal'; portal = null; islandDone = false; nextCaveD = mode === 'park' ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
@@ -3837,10 +3956,10 @@ function startRun(m = mode) {
   spawnZ = -55; decorZ = 30; wallZ = 40;
   checkpoints.forEach((c, i) => addCheckpointArch(c, i + 1));
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
+  if (mode === 'park') startPark();
   state = 'play'; paused = false;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
-  show('raceInfo', mode === 'race' || mode === 'avalanche');
-  if (mode === 'avalanche') startAvalanche(); else stopAvalanche();
+  show('raceInfo', mode === 'race' || mode === 'park');
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
@@ -3860,7 +3979,6 @@ function endCommon() {
 }
 
 function gameOver() {
-  if (mode === 'avalanche') return avalancheOver();
   state = 'over';
   const score = totalScore();
   const newBest = score > save.best;
@@ -3869,16 +3987,6 @@ function gameOver() {
   save.coins += bonus;
   const missions = endCommon();
   showResults({ mode: 'endless', score, newBest: newBest && score > 300, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z) });
-}
-
-function avalancheOver() {
-  state = 'over';
-  const score = totalScore(), newBest = score > (save.avaBest || 0);
-  if (newBest) save.avaBest = score;
-  const bonus = Math.floor(score / 300);   // a little more than Endless: it's harder
-  save.coins += bonus;
-  const missions = endCommon();
-  showResults({ mode: 'avalanche', score, newBest: newBest && score > 300, best: save.avaBest, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z), time: ava.t });
 }
 
 function finishRace() {
@@ -3917,7 +4025,6 @@ async function restartWithAd() {
 function toMenu() {
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
-  stopAvalanche();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   if (closet.on) menuStill(); else startDemo();
@@ -4070,10 +4177,11 @@ function frame(now) {
     const x0 = p.x, y0 = p.y, z0 = p.z;
     updatePlayer(dt);
     if (state === 'play') { collectCoins(x0, y0, z0); SkiTracks.update(); }
-    if (mode === 'race') race.t += dt;
+    if (mode === 'race' || mode === 'park') race.t += dt;
   }
-  else if (state === 'crash') { updateCrash(dt); if (mode === 'race') race.t += dt; }
-  if (mode === 'race' && (state === 'play' || state === 'crash')) {
+  else if (state === 'crash') { updateCrash(dt); if (mode === 'race' || mode === 'park') race.t += dt; }
+  else if (state === 'lift') updateLift(dt);
+  if ((mode === 'race' || mode === 'park') && (state === 'play' || state === 'crash')) {
     race.recT += dt;
     const b = skier.body.rotation;
     while (race.recT >= 0.1) { race.recT -= 0.1; race.rec.push(...[p.x, p.y, p.z, b.x, b.y, b.z].map(v => Math.round(v * 100))); }
@@ -4118,7 +4226,6 @@ function frame(now) {
   updatePads(dt);
   updateAnimals(dt);
   updateChase(dt);
-  updateAvalanche(dt);
   updateSkyWhite();
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
@@ -4132,6 +4239,7 @@ function frame(now) {
   updateSkierVisual(dt);
   updateCamera(dt);
   if (state === 'play' || state === 'crash') updateHUD(dt);
+  else if (state === 'lift') hud.speed.textContent = '0 km/h';
   for (const pl of allPools) pl.flush();
   renderer.render(scene, camera);
   renderRearView();
@@ -4156,4 +4264,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get ava() { return ava; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get park() { return park; }, finishParkRun, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
