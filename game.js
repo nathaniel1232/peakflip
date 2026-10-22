@@ -3044,37 +3044,51 @@ const signTex = text => {
 };
 // ---------- Freeride: one huge open mountain, shared live with everyone else riding it. Start at the lodge,
 // take the chairlift to the summit, and ride down anywhere: powder, forests, rocks and kickers everywhere ----------
-const FR = { W: 318, LIFT_X: -46, BASE: -30, SUMMIT: -922 };
+const FR = { LIFT_X: -46, BASE: -30, SUMMIT: -922, SLOPE: 0.42, CHUNK: 64 };
 const fr = { on: false, x: 0, y: 0, z: 0, vy: 0, vyG: 0, heading: 0, s: 0, grounded: true, air: 0, crashT: -1,
   safe: null, prevSafe: null, safeT: 0, lift: null, net: null, others: new Map(), sendT: 0, id: '', name: '', status: '' };
-let frGroup = null, frRamps = [], frGrid = new Map(), frLift = [], frChairs = null;
+let frGroup = null, frLift = [], frChairs = null, frStatic = [];
 const smooth01 = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
-// the mountain: flat lodge area at the bottom, steepening to a summit plateau, flanks rising on both sides,
-// with rolling bumps and bowls all over
-function frTerrain(x, z) {
-  const t = clamp(-z / 940, 0, 0.965), ax = Math.abs(x) / 330;
-  let h = 430 * Math.pow(Math.max(0, t - 0.05) / 0.95, 1.2) + 140 * ax * ax * (0.4 + t);
-  const k = smooth01(40, 140, -z) * (1 - smooth01(880, 925, -z));
-  h += k * (16 * Math.sin(x * 0.019 + z * 0.011) * Math.cos(z * 0.016 - x * 0.007) + 5 * Math.sin(x * 0.07 + 1.3) * Math.sin(z * 0.055));
-  h += k * 3.2 * Math.max(0, Math.sin(z * 0.085 + Math.sin(x * 0.031) * 2.2)) ** 4;   // rollers that pop you into the air
+// ---- the mountain: an endless smooth powder slope falling away towards +z, with a summit plateau at the top
+// of the lift, long gentle ridges and valleys, soft rollers, and a flat terrace for the lodge ----
+function frRaw(x, z) {
+  const u = Math.max(z, FR.SUMMIT + 12);                       // nothing above the summit plateau
+  let h = -u * FR.SLOPE;
+  h += 34 * Math.sin(x * 0.0061 + 0.8) * Math.sin(z * 0.0023 + 1.1) + 22 * Math.sin(x * 0.0029 - z * 0.0017);   // big ridges and bowls
+  h += 7 * Math.sin(x * 0.017 + z * 0.009) * Math.cos(z * 0.012 - x * 0.004);                                     // rolling terrain
+  h += 1.6 * Math.max(0, Math.sin(z * 0.06 + Math.sin(x * 0.023) * 2)) ** 3;                                      // soft pillows that lift you a little
   return h;
 }
+function frTerrain(x, z) {
+  // a small flat landing at the top of the lift (it drops straight into the slope), and the lodge terrace
+  const top = smooth01(FR.SUMMIT + 40, FR.SUMMIT + 15, z) * smooth01(90, 50, Math.abs(x - FR.LIFT_X));
+  let h = lerp(frRaw(x, z), frPlateau, top);
+  const lodge = smooth01(150, 70, Math.hypot(x - 10, z - 10));
+  return lerp(h, frTerrace, lodge);
+}
+let frPlateau = 0, frTerrace = 0;
+const frRampMap = new Map();   // chunk key → kickers in it
 function frGround(x, z) {
   let h = frTerrain(x, z);
-  for (const r of frRamps) if (z >= r.z0 && z <= r.z0 + r.L && Math.abs(x - r.x) <= r.W / 2) { const t = (z - r.z0) / r.L; h += r.H * t * t; }
+  const cx = Math.floor(x / FR.CHUNK), cz = Math.floor(z / FR.CHUNK);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const r of frRampMap.get(`${cx + i},${cz + j}`) || []) {
+    if (z >= r.z0 && z <= r.z0 + r.L && Math.abs(x - r.x) <= r.W / 2) {
+      const t = (z - r.z0) / r.L, edge = smooth01(r.W / 2, r.W / 2 - 1.2, Math.abs(x - r.x));   // rounded shoulders
+      h += r.H * t * t * edge;
+    }
+  }
   return h;
 }
-const frKey = (x, z) => `${Math.floor(x / 10)},${Math.floor(z / 10)}`;
-function frSolid(o) { const k = frKey(o.x, o.z); if (!frGrid.has(k)) frGrid.set(k, []); frGrid.get(k).push(o); }
+const frSolids = new Map();   // chunk key → trees, rocks and buildings you can hit
+function frSolid(o) { const k = `${Math.floor(o.x / FR.CHUNK)},${Math.floor(o.z / FR.CHUNK)}`; if (!frSolids.has(k)) frSolids.set(k, []); frSolids.get(k).push(o); }
 function frHit(x, z, y) {
-  const cx = Math.floor(x / 10), cz = Math.floor(z / 10);
-  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const o of frGrid.get(`${cx + i},${cz + j}`) || []) {
-    if (Math.hypot(o.x - x, o.z - z) < o.r + 0.35 && y < o.y + o.h) return o;
+  const cx = Math.floor(x / FR.CHUNK), cz = Math.floor(z / FR.CHUNK);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const o of frSolids.get(`${cx + i},${cz + j}`) || []) {
+    if (Math.abs(o.x - x) < 5 && Math.abs(o.z - z) < 5 && Math.hypot(o.x - x, o.z - z) < o.r + 0.35 && y < o.y + o.h) return o;
   }
   return null;
 }
 const liftPoint = (d, side = 1) => {
-  // a point d metres along the up-going cable (side -1: the cable coming down)
   for (let i = 1; i < frLift.length; i++) {
     const a = frLift[i - 1], b = frLift[i], L = Math.hypot(b.z - a.z, b.y - a.y);
     if (d <= L || i === frLift.length - 1) { const t = clamp(d / L, 0, 1); return { x: FR.LIFT_X + side * 2.2, y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) }; }
@@ -3082,77 +3096,138 @@ const liftPoint = (d, side = 1) => {
   }
 };
 const liftLen = () => { let L = 0; for (let i = 1; i < frLift.length; i++) L += Math.hypot(frLift[i].z - frLift[i - 1].z, frLift[i].y - frLift[i - 1].y); return L; };
+const onLiftLine = (x, z) => Math.abs(x - FR.LIFT_X) < 12 && z > FR.SUMMIT - 30 && z < FR.BASE + 20;
+const nearBase = (x, z) => Math.hypot(x - 10, z - 10) < 110 || (Math.abs(x - FR.LIFT_X) < 70 && z < FR.SUMMIT + 150);   // the lodge, and an open run-out below the summit
+
+// ---- chunks: the terrain is built in 64 m squares around you. Close ones are detailed (2 m grid, trees,
+// kickers), further ones get coarser, and the far ring is just the shape of the mountain ----
+const FR_LOD = [{ r: 2, step: 2 }, { r: 5, step: 8 }, { r: 10, step: 16 }];   // chunk radius → grid step in metres
+const frChunks = new Map();
+const snowTex = (() => {
+  // fine powder grain with a few sparkles
+  const c = document.createElement('canvas'); c.width = c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, 128, 128);
+  for (let i = 0; i < 2600; i++) { const v = 228 + Math.random() * 27 | 0; g.fillStyle = `rgb(${v},${v + 2 > 255 ? 255 : v + 2},255)`; g.fillRect(Math.random() * 128, Math.random() * 128, 1.4, 1.4); }
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const powderMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: snowTex });
+const kickerMat = new THREE.MeshLambertMaterial({ color: 0xf4f8fc, map: snowTex });
+const lipMat = lam(0x2f7de1, { emissive: 0x0a2a5a });
+function chunkGeo(cx, cz, step) {
+  const S = FR.CHUNK, n = S / step, x0 = cx * S, z0 = cz * S, pos = [], nor = [], col = [], uv = [], idx = [];
+  const c = new THREE.Color(), shade = new THREE.Color(0xd9e6f3), white = new THREE.Color(0xffffff);
+  const vert = (x, z, drop = 0) => {
+    const h = frTerrain(x, z), hx = frTerrain(x + 1, z) - frTerrain(x - 1, z), hz = frTerrain(x, z + 1) - frTerrain(x, z - 1);
+    const nl = Math.hypot(hx, 2, hz);
+    pos.push(x, h - drop, z); nor.push(-hx / nl, 2 / nl, -hz / nl); uv.push(x / 6, z / 6);
+    // faces turned away from the sun sit in a soft blue shade
+    c.copy(white).lerp(shade, clamp(0.5 + (hx * 0.6 - hz * 0.2) * 0.9, 0, 1) * 0.8); col.push(c.r, c.g, c.b);
+    return pos.length / 3 - 1;
+  };
+  for (let j = 0; j <= n; j++) for (let i = 0; i <= n; i++) vert(x0 + i * step, z0 + j * step);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const a = j * (n + 1) + i, b = a + 1, d = a + n + 1, e = d + 1; idx.push(a, d, b, b, d, e); }
+  // a skirt hanging down round the edge hides cracks where a detailed chunk meets a coarse one
+  const edge = (list) => { const top = list.map(([i, j]) => j * (n + 1) + i), bot = list.map(([i, j]) => vert(x0 + i * step, z0 + j * step, 4)); for (let k = 0; k < top.length - 1; k++) idx.push(top[k], bot[k], top[k + 1], top[k + 1], bot[k], bot[k + 1]); };
+  const r = [...Array(n + 1).keys()];
+  edge(r.map(i => [i, 0]).reverse()); edge(r.map(i => [i, n])); edge(r.map(j => [0, j])); edge(r.map(j => [n, j]).reverse());
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  return g;
+}
+// what lives in a chunk: always the same for the same square, so everyone rides the same mountain
+function chunkContents(cx, cz) {
+  const rng = mulberry32(hashStr(`fr2:${cx},${cz}`)), R_ = (a, b) => a + rng() * (b - a), S = FR.CHUNK, x0 = cx * S, z0 = cz * S;
+  const trees = [], rocks = [], ramps = [];
+  const forest = (x, z) => Math.sin(x * 0.011 + 1.7) * Math.cos(z * 0.009) + 0.6 * Math.sin(x * 0.027 - z * 0.019 + 0.5) + 0.3 * Math.sin(z * 0.041 + x * 0.008);
+  // a kicker in about every third open square, facing down the mountain
+  if (rng() < 0.38 && z0 > FR.SUMMIT + 40) {
+    const big = rng(), L = big < 0.5 ? 6 : big < 0.85 ? 7.5 : 9.5, H = big < 0.5 ? 1.8 : big < 0.85 ? 2.5 : 3.4, W = big < 0.5 ? 6 : 8;
+    const x = R_(x0 + 8, x0 + S - 8), z = R_(z0 + 4, z0 + S - 20);
+    if (!onLiftLine(x, z) && !nearBase(x, z) && forest(x, z) < 0.35) ramps.push({ x, z0: z, L, H, W });
+  }
+  for (let z = z0 + 3; z < z0 + S; z += 6.5) for (let x = x0 + 3; x < x0 + S; x += 6.5) {
+    const px = x + R_(-2.6, 2.6), pz = z + R_(-2.6, 2.6), f = forest(px, pz), roll = rng(), s = R_(0.85, 1.7), kind = rng();
+    if (onLiftLine(px, pz) || nearBase(px, pz) || pz < FR.SUMMIT + 20) continue;
+    if (ramps.some(r => Math.abs(px - r.x) < r.W / 2 + 5 && pz > r.z0 - 30 && pz < r.z0 + r.L + 35)) continue;   // keep the run-in and landing clear
+    if (f > 0.6 || roll < 0.01) trees.push([px, frTerrain(px, pz) - 0.25, pz, s, R_(0, 6), kind < 0.5 ? 0 : 1]);
+    else if (roll > 0.997) rocks.push([px, frTerrain(px, pz) - 0.3, pz, R_(1, 2), R_(0, 6)]);
+  }
+  return { trees, rocks, ramps };
+}
+function kickerMesh(r) {
+  // a smooth snow kicker sitting on the slope, with a blue line along its lip
+  const pos = [], idx = [], nx = 6, nz = 10, Y = (x, z) => frGround(x, z) + 0.03;
+  const add = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };
+  const grid = [];
+  for (let j = 0; j <= nz; j++) { grid.push([]); for (let i = 0; i <= nx; i++) { const x = r.x - r.W / 2 + r.W * i / nx, z = r.z0 + r.L * j / nz; grid[j].push(add(x, Y(x, z), z)); } }
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) { const a = grid[j][i], b = grid[j][i + 1], d = grid[j + 1][i], e = grid[j + 1][i + 1]; idx.push(a, d, b, b, d, e); }
+  // the face below the lip
+  const ze = r.z0 + r.L, lip = grid[nz];
+  const low = [...Array(nx + 1).keys()].map(i => { const x = r.x - r.W / 2 + r.W * i / nx; return add(x, frTerrain(x, ze + 0.6) - 0.2, ze + 0.6); });
+  for (let i = 0; i < nx; i++) idx.push(lip[i], low[i], lip[i + 1], lip[i + 1], low[i], low[i + 1]);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  const uvs = []; for (let k = 0; k < pos.length; k += 3) uvs.push(pos[k] / 6, pos[k + 2] / 6); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  const grp = new THREE.Group(); grp.add(new THREE.Mesh(g, kickerMat));
+  const line = new THREE.Mesh(box(r.W * 0.9, 0.08, 0.25), lipMat); line.position.set(r.x, Y(r.x, ze - 0.15) + 0.02, ze - 0.15); grp.add(line);
+  return grp;
+}
+let frTreeMesh = null, frRockMesh = null, frTreesDirty = false;
+function frChunkUpdate(force) {
+  const S = FR.CHUNK, pcx = Math.floor(camera.position.x / S), pcz = Math.floor(camera.position.z / S);
+  const want = new Map(), maxR = FR_LOD[FR_LOD.length - 1].r;
+  for (let j = -maxR; j <= maxR; j++) for (let i = -maxR; i <= maxR; i++) {
+    const d = Math.max(Math.abs(i), Math.abs(j)), lod = FR_LOD.findIndex(l => d <= l.r);
+    if (lod >= 0 && Math.hypot(i, j) <= maxR + 0.5) want.set(`${pcx + i},${pcz + j}`, { cx: pcx + i, cz: pcz + j, lod, d });
+  }
+  for (const [k, ch] of frChunks) if (!want.has(k)) { frGroup.remove(ch.mesh); ch.mesh.geometry.dispose(); if (ch.kick) frGroup.remove(ch.kick); frChunks.delete(k); frTreesDirty = true; }
+  // build the closest missing or wrong-detail chunks first, a few per frame so riding never stutters
+  const todo = [...want.values()].filter(w => frChunks.get(`${w.cx},${w.cz}`)?.lod !== w.lod).sort((a, b) => a.d - b.d);
+  let budget = force ? Infinity : 4;
+  for (const w of todo) {
+    if (budget-- <= 0) break;
+    const k = `${w.cx},${w.cz}`, old = frChunks.get(k);
+    if (old) { frGroup.remove(old.mesh); old.mesh.geometry.dispose(); }
+    const mesh = new THREE.Mesh(chunkGeo(w.cx, w.cz, FR_LOD[w.lod].step), powderMat); frGroup.add(mesh);
+    const stuff = old?.stuff || chunkContents(w.cx, w.cz);
+    if (!old) {
+      frRampMap.set(k, stuff.ramps);
+      for (const t of stuff.trees) frSolid({ x: t[0], z: t[2], y: t[1], r: 0.55 * t[3], h: 4.2 * t[3], name: 'Hugged a tree' });
+      for (const r of stuff.rocks) frSolid({ x: r[0], z: r[2], y: r[1], r: 1.0 * r[3], h: 1.1 * r[3], name: 'Hit a rock' });
+    }
+    let kick = old?.kick || null;
+    if (!kick && w.lod < 2 && stuff.ramps.length) { kick = new THREE.Group(); for (const r of stuff.ramps) kick.add(kickerMesh(r)); frGroup.add(kick); }
+    frChunks.set(k, { mesh, lod: w.lod, stuff, kick });
+    frTreesDirty = true;
+  }
+  if (frTreesDirty && (budget > 0 || force)) frRebuildTrees();
+}
+// all visible trees go into two big instanced meshes; far chunks show only every third tree
+function frRebuildTrees() {
+  frTreesDirty = false;
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  const n = [0, 0], nr = { v: 0 };
+  for (const ch of frChunks.values()) {
+    ch.stuff.trees.forEach((t, i) => {
+      if (ch.lod === 2 && i % 3) return;
+      const im = frTreeMesh[t[5]]; if (n[t[5]] >= im.instanceMatrix.count) return;
+      im.setMatrixAt(n[t[5]]++, m4.compose(v.set(t[0], t[1], t[2]), q.setFromEuler(e.set(0, t[4], 0)), sc.setScalar(t[3])));
+    });
+    if (ch.lod < 2) for (const r of ch.stuff.rocks) if (nr.v < frRockMesh.instanceMatrix.count) frRockMesh.setMatrixAt(nr.v++, m4.compose(v.set(r[0], r[1], r[2]), q.setFromEuler(e.set(0, r[4], 0)), sc.setScalar(r[3])));
+  }
+  frTreeMesh.forEach((im, k) => { im.count = n[k]; im.instanceMatrix.needsUpdate = true; });
+  frRockMesh.count = nr.v; frRockMesh.instanceMatrix.needsUpdate = true;
+}
 
 function buildFreeride() {
   frGroup = new THREE.Group(); scene.add(frGroup);
-  const rng = mulberry32(hashStr('peakflip-freeride-v1')), R_ = (a, b) => a + rng() * (b - a);
-  // kickers, all facing downhill
-  for (let i = 0; i < 46; i++) {
-    const size = rng(), L = size < 0.45 ? 7 : size < 0.8 ? 9.5 : 13, H = size < 0.45 ? 2.2 : size < 0.8 ? 3.1 : 4.6, W = L * 0.75;
-    const x = R_(-260, 260), z0 = R_(-870, -130);
-    if (Math.abs(x - FR.LIFT_X) < 16 || frRamps.some(r => Math.abs(r.x - x) < 20 && Math.abs(r.z0 - z0) < 30)) continue;
-    frRamps.push({ x, z0, L, H, W });
-  }
-  // the snow: one big heightfield, with rock showing on the steepest faces
-  const SX = 680, SZ = 1060, NX = 136, NZ = 212, geo = new THREE.PlaneGeometry(SX, SZ, NX, NZ).rotateX(-Math.PI / 2);
-  geo.translate(0, 0, -SZ / 2 + 90);
-  const pos = geo.attributes.position, cols = [], c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i), h = frTerrain(x, z); pos.setY(i, h);
-    const sl = Math.hypot(frTerrain(x + 2, z) - frTerrain(x - 2, z), frTerrain(x, z + 2) - frTerrain(x, z - 2)) / 4;
-    c.set(sl > 1.05 ? 0x8a94a3 : sl > 0.8 ? 0xd7e2ec : 0xf7fbff); cols.push(c.r, c.g, c.b);
-  }
-  geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); geo.computeVertexNormals();
-  frGroup.add(new THREE.Mesh(geo, vcol));
-  // kicker meshes, built right onto the slope
-  for (const r of frRamps) {
-    const p_ = [], hw = r.W / 2, seg = 8, Y = (x, z, t) => frTerrain(x, z) + r.H * t * t;
-    const quad = (a, b, cc, d) => p_.push(...a, ...b, ...cc, ...a, ...cc, ...d);
-    for (let i = 0; i < seg; i++) {
-      const t0 = i / seg, t1 = (i + 1) / seg, z0 = r.z0 + t0 * r.L, z1 = r.z0 + t1 * r.L;
-      const xl = r.x - hw, xr = r.x + hw;
-      quad([xl, Y(xl, z0, t0) + 0.04, z0], [xl, Y(xl, z1, t1) + 0.04, z1], [xr, Y(xr, z1, t1) + 0.04, z1], [xr, Y(xr, z0, t0) + 0.04, z0]);
-      for (const [x, s] of [[xl, 1], [xr, -1]]) {
-        const a = [x, frTerrain(x, z0) - 0.3, z0], b = [x, Y(x, z0, t0) + 0.04, z0], cc = [x, Y(x, z1, t1) + 0.04, z1], d = [x, frTerrain(x, z1) - 0.3, z1];
-        if (s > 0) quad(a, b, cc, d); else quad(d, cc, b, a);
-      }
-    }
-    const ze = r.z0 + r.L, xl = r.x - hw, xr = r.x + hw;
-    quad([xl, frTerrain(xl, ze) - 0.3, ze], [xl, Y(xl, ze, 1) + 0.04, ze], [xr, Y(xr, ze, 1) + 0.04, ze], [xr, frTerrain(xr, ze) - 0.3, ze]);
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p_, 3)); g.computeVertexNormals();
-    const m = new THREE.Mesh(g, mat.ramp); m.material.side = THREE.DoubleSide; frGroup.add(m);
-    const lip = new THREE.Mesh(box(r.W + 0.1, 0.12, 0.4), mat.rampEdge); lip.position.set(r.x, Y(r.x, ze, 1), ze - 0.2); frGroup.add(lip);
-  }
-  // forests: dense patches where a slow noise is high, plus lone trees; never on the lift line, the lodge or a kicker
-  const trees = [[], []], rocksAt = [];
-  const forest = (x, z) => Math.sin(x * 0.013 + 1.7) * Math.cos(z * 0.011) + 0.6 * Math.sin(x * 0.031 - z * 0.023 + 0.5) + 0.35 * Math.sin(z * 0.05 + x * 0.009);
-  for (let z = 70; z > -905; z -= 6.5) for (let x = -315; x < 315; x += 6.5) {
-    const px = x + R_(-2.5, 2.5), pz = z + R_(-2.5, 2.5);
-    if (Math.abs(px - FR.LIFT_X) < 9 || (pz > -60 && Math.abs(px) < 95) || pz < -900) { rng(); continue; }
-    if (frRamps.some(r => Math.abs(px - r.x) < r.W / 2 + 4 && pz > r.z0 - 25 && pz < r.z0 + r.L + 30)) { rng(); continue; }
-    const f = forest(px, pz), roll = rng();
-    if (f > 0.55 || roll < 0.012) {
-      const s = R_(0.8, 1.7), y = frTerrain(px, pz) - 0.2;
-      trees[roll < 0.5 ? 0 : 1].push([px, y, pz, s, R_(0, 6)]);
-      frSolid({ x: px, z: pz, y, r: 0.55 * s, h: 4.2 * s, name: 'Hugged a tree' });
-    } else if (roll > 0.996) rocksAt.push([px, pz]);
-  }
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
-  trees.forEach((list, k) => {
-    const im = new THREE.InstancedMesh(spruceGeometry(k === 1), vcol, list.length);
-    list.forEach(([x, y, z, s, ry], i) => im.setMatrixAt(i, m4.compose(v.set(x, y, z), q.setFromEuler(e.set(0, ry, 0)), sc.set(s, s, s))));
-    frGroup.add(im);
-  });
-  const rim = new THREE.InstancedMesh(rockGeo, vcol, rocksAt.length);
-  rocksAt.forEach(([x, z], i) => {
-    const s = R_(1, 2.2), y = frTerrain(x, z);
-    rim.setMatrixAt(i, m4.compose(v.set(x, y, z), q.setFromEuler(e.set(0, R_(0, 6), 0)), sc.set(s, s, s)));
-    frSolid({ x, z, y, r: 1.0 * s, h: 1.1 * s, name: 'Hit a rock' });
-  });
-  frGroup.add(rim);
+  frPlateau = frRaw(FR.LIFT_X + 12, FR.SUMMIT + 30) + 1; frTerrace = 0;
+  frTreeMesh = [false, true].map(tall => { const im = new THREE.InstancedMesh(spruceGeometry(tall), vcol, 9000); im.count = 0; im.frustumCulled = false; frGroup.add(im); return im; });
+  frRockMesh = new THREE.InstancedMesh(rockGeo, vcol, 400); frRockMesh.count = 0; frRockMesh.frustumCulled = false; frGroup.add(frRockMesh);
   // the chairlift: towers up the mountain, a cable both ways and chairs going round
-  for (let z = FR.BASE; z >= FR.SUMMIT - 0.1; z -= (FR.BASE - FR.SUMMIT) / 14) frLift.push({ z, y: frTerrain(FR.LIFT_X, z) + 12 });
   const grey = lam(0x5b6573), red = lam(0xe63946);
+  for (let z = FR.BASE; z >= FR.SUMMIT - 0.1; z -= (FR.BASE - FR.SUMMIT) / 14) frLift.push({ z, y: frTerrain(FR.LIFT_X, z) + 12 });
   for (const t of frLift) {
     const g_ = frTerrain(FR.LIFT_X, t.z);
     const pole = new THREE.Mesh(box(0.6, t.y - g_ + 1, 0.6), grey); pole.position.set(FR.LIFT_X, (t.y + g_) / 2 + 0.5, t.z); frGroup.add(pole);
@@ -3170,45 +3245,56 @@ function buildFreeride() {
     { geo: new THREE.BoxGeometry(1.4, 0.7, 0.1), color: 0xe63946, m: T(0, 0.4, 0.3) },
   ]);
   frChairs = new THREE.InstancedMesh(chairGeo, vcol, 48); frChairs.frustumCulled = false; frGroup.add(frChairs);
-  // stations: a hut and a big bullwheel at each end
   const station = (z, sign) => {
     const g_ = frTerrain(FR.LIFT_X, z), grp = new THREE.Group(); grp.position.set(FR.LIFT_X, g_, z); frGroup.add(grp);
     const hut = new THREE.Mesh(box(8, 5, 8), lam(0x34506b)); hut.position.set(-7, 2.5, 0); grp.add(hut);
     const roof = new THREE.Mesh(box(8.6, 0.5, 8.6), mat.snow); roof.position.set(-7, 5.2, 0); grp.add(roof);
-    const wheel = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 6, 22), red); wheel.rotation.x = Math.PI / 2; wheel.position.set(0, frLift[0].y - frTerrain(FR.LIFT_X, frLift[0].z) + 1, sign * 2); grp.add(wheel);
-    const mast = new THREE.Mesh(box(0.8, 12, 0.8), grey); mast.position.set(0, 6, sign * 2); grp.add(mast);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 6, 22), red); wheel.rotation.x = Math.PI / 2; wheel.position.set(0, 13, sign * 2); grp.add(wheel);
+    const mast = new THREE.Mesh(box(0.8, 12.5, 0.8), grey); mast.position.set(0, 6.25, sign * 2); grp.add(mast);
     const sgn = new THREE.Mesh(box(4.4, 1.2, 0.15), [postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: signTex(sign > 0 ? 'LIFT ↑' : 'SUMMIT') }), postMat]);
     sgn.position.set(-7, 6.3, 4.1); grp.add(sgn);
     frSolid({ x: FR.LIFT_X - 7, z, y: g_, r: 4.6, h: 6, name: 'Ran into the lift hut' });
   };
   station(FR.BASE - 4, 1); station(FR.SUMMIT - 4, -1);
   // the lodge where everyone starts
-  const lodge = new THREE.Group(); lodge.position.set(42, 0, 18); frGroup.add(lodge);
+  const lodge = new THREE.Group(); lodge.position.set(42, frTerrace, 18); frGroup.add(lodge);
   const L_ = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); lodge.add(o); return o; };
   L_(box(18, 7, 11), cabinWall, 0, 3.5, 0);
   const roof = L_(new THREE.ConeGeometry(13, 5, 4), cabinRoof, 0, 9.5, 0); roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.62);
   const cap = L_(new THREE.ConeGeometry(12.2, 1.6, 4), mat.snow, 0, 11.3, 0); cap.rotation.y = Math.PI / 4; cap.scale.set(1, 1, 0.62);
   for (const x of [-6, -2, 2, 6]) L_(box(2.2, 2, 0.1), lam(0xffd166, { emissive: 0x7a5a00 }), x, 3.8, -5.55);
   L_(box(3, 4, 0.1), lam(0x4a2c17), 0, 2, -5.56);
-  const lsign = L_(box(9, 1.6, 0.2), [postMat, postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: signTex('PEAK LODGE') })], 0, 7.6, -5.7); void lsign;
+  L_(box(9, 1.6, 0.2), [postMat, postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: signTex('PEAK LODGE') })], 0, 7.6, -5.7);
   L_(box(20, 0.4, 5), cabinWall, 0, 0.2, -8);
   for (const x of [-7, -3, 3, 7]) L_(box(2.4, 0.5, 0.8), lam(0x6b4423), x, 0.7, -9.5);
-  const flagPole = L_(box(0.15, 10, 0.15), grey, -12, 5, -9); void flagPole;
+  L_(box(0.15, 10, 0.15), grey, -12, 5, -9);
   L_(box(2.2, 1.3, 0.05), red, -10.8, 9.2, -9);
-  frSolid({ x: 42, z: 18, y: 0, r: 8, h: 12, name: 'Ran into the lodge' });
-  // arrows on the snow from the lodge to the lift
+  frSolid({ x: 42, z: 18, y: frTerrace, r: 8, h: 12, name: 'Ran into the lodge' });
   for (let i = 0; i < 6; i++) {
     const t = i / 6, x = lerp(4, FR.LIFT_X + 2.2, t), z = lerp(26, FR.BASE + 8, t);
-    const ch = chevron(lam(0xff7b00, { emissive: 0x7a3500 }), 1.6, 0.3); ch.rotation.x = -Math.PI / 2; ch.rotation.z = Math.atan2(FR.LIFT_X + 2.2 - 4, -(FR.BASE + 8 - 26)); ch.position.set(x, 0.06, z); frGroup.add(ch);
+    const ch = chevron(lam(0xff7b00, { emissive: 0x7a3500 }), 1.6, 0.3); ch.rotation.x = -Math.PI / 2; ch.rotation.z = Math.atan2(FR.LIFT_X + 2.2 - 4, -(FR.BASE + 8 - 26)); ch.position.set(x, frTerrain(x, z) + 0.06, z); frGroup.add(ch);
   }
-  // a few snowmen and cabins dotted around the lower slopes
-  for (let i = 0; i < 6; i++) {
-    const x = R_(-200, 200), z = R_(-500, -80); if (Math.abs(x - FR.LIFT_X) < 20) continue;
-    const g_ = new THREE.Group(), y = frTerrain(x, z); g_.position.set(x, y, z); frGroup.add(g_);
-    for (const [r, yy] of [[0.9, 0.75], [0.65, 1.95], [0.45, 2.85]]) { const b = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), snowmanParts.body); b.position.y = yy; g_.add(b); }
-    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 5), snowmanParts.carrot); nose.rotation.x = Math.PI / 2; nose.position.set(0, 2.85, 0.5); g_.add(nose);
-    frSolid({ x, z, y, r: 0.9, h: 3.2, name: 'Flattened a snowman' });
+  // fine powder tracks behind you
+  fr.trail = { pts: [], mesh: new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0xc9d9ea, transparent: true, opacity: 0.55, depthWrite: false })) };
+  fr.trail.mesh.frustumCulled = false; frGroup.add(fr.trail.mesh);
+}
+function frTrail() {
+  const T_ = fr.trail; if (!T_) return;
+  if (fr.grounded && !fr.lift && fr.crashT < 0 && fr.s > 2) {
+    const last = T_.pts[T_.pts.length - 1];
+    if (!last || Math.hypot(last.x - fr.x, last.z - fr.z) > 0.8) T_.pts.push({ x: fr.x, z: fr.z, h: fr.heading });
+  } else if (T_.pts.length && !T_.pts[T_.pts.length - 1].gap) T_.pts.push({ gap: true });
+  if (T_.pts.length > 260) T_.pts.splice(0, T_.pts.length - 260);
+  const pos = [];
+  for (let i = 1; i < T_.pts.length; i++) {
+    const a = T_.pts[i - 1], b = T_.pts[i]; if (a.gap || b.gap) continue;
+    for (const off of [-0.17, 0.17]) {   // two ski lines
+      const pa = [a.x + Math.cos(a.h) * off, a.z + Math.sin(a.h) * off], pb = [b.x + Math.cos(b.h) * off, b.z + Math.sin(b.h) * off];
+      const w = 0.07, ya = frGround(pa[0], pa[1]) + 0.04, yb = frGround(pb[0], pb[1]) + 0.04;
+      pos.push(pa[0] - w, ya, pa[1], pb[0] - w, yb, pb[1], pb[0] + w, yb, pb[1], pa[0] - w, ya, pa[1], pb[0] + w, yb, pb[1], pa[0] + w, ya, pa[1]);
+    }
   }
+  T_.mesh.geometry.dispose(); T_.mesh.geometry = new THREE.BufferGeometry(); T_.mesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
 }
 
 // ---- other riders ----
@@ -3237,9 +3323,12 @@ function startFreeride() {
   if (!frGroup) buildFreeride();
   frGroup.visible = true; world.visible = false; mountains.visible = false;   // our own mountain replaces the backdrop
   frGroup.add(skier.root); frGroup.add(skier.shadow); frGroup.add(Particles.obj);
-  setTheme('day'); scene.fog.near = 160; scene.fog.far = 900; camera.far = 1600; camera.updateProjectionMatrix();
+  setTheme('day'); scene.fog.near = 220; scene.fog.far = 640; camera.far = 1600; camera.updateProjectionMatrix();
   Object.assign(fr, { on: true, x: 6, z: 34, vy: 0, vyG: 0, heading: -0.64, s: 0, grounded: true, air: 0, crashT: -1, lift: null, safe: null, prevSafe: null });
-  fr.y = frGround(fr.x, fr.z);
+  camera.position.set(fr.x, 8, fr.z + 9);
+  frChunkUpdate(true);
+  fr.y = frGround(fr.x, fr.z); if (fr.trail) fr.trail.pts = [];
+  frTopBtn().style.display = '';
   fr.id = save.pid.slice(0, 12) + Math.random().toString(36).slice(2, 6);
   fr.name = save.name || `Guest ${1000 + (hashStr(save.pid) % 9000)}`;
   fr.net = joinRoom('peakflip-freeride', { onState: frOther, onLeave: frDropOther, onStatus: st => { fr.status = st; } });
@@ -3253,7 +3342,7 @@ function leaveFreeride() {
   if (!fr.on) return;
   fr.on = false; fr.net?.close(fr.id); fr.net = null;
   for (const id of [...fr.others.keys()]) frDropOther(id);
-  frGroup.visible = false; world.visible = true; mountains.visible = true;
+  frGroup.visible = false; world.visible = true; mountains.visible = true; frTopBtn().style.display = 'none';
   world.add(skier.root); world.add(skier.shadow); world.add(Particles.obj);
   camera.far = 500; camera.updateProjectionMatrix();
   Platform.gameplayStop();
@@ -3261,15 +3350,16 @@ function leaveFreeride() {
 
 // ---- riding ----
 const frDir = () => [Math.sin(fr.heading), -Math.cos(fr.heading)];
-function frCrash(reason) {
+function frCrash(reason, obj = null) {
   if (fr.crashT >= 0) return;
-  fr.crashT = 0; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
+  fr.crashT = 0; fr.hitObj = obj; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
   Sfx.crash(); Sfx.noise(0.3, 0.6, 2400, 'highpass'); shake = 0.3;
   Particles.emit(fr.x, fr.y + 0.6, fr.z, 50, 5, 6, 0xffffff, 0);
   showTrick('Wipeout!', reason, false);
 }
 function frStartAir(vy) {
   fr.grounded = false; fr.vy = vy; fr.air = 0;
+  p.pitchVel = p.yawVel = p.rollVel = 0;
   latchAtTakeoff();
   p.fromRamp = true; p.maxH = 0; p.airTime = 0;
   p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: GRABS[(Math.random() * GRABS.length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false, pro: false };
@@ -3283,15 +3373,24 @@ function updateFreeride(dt) {
     const [dx, dz] = frDir(); fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt; fr.y = frGround(fr.x, fr.z);
     p.pitch += 9 * dt; p.roll += 5 * dt;
     if (fr.crashT > 1.4) {
-      const sp = fr.prevSafe || fr.safe || { x: 6, z: 34, heading: -0.64 };
-      Object.assign(fr, { x: sp.x, z: sp.z, heading: sp.heading, s: 0, crashT: -1, grounded: true, vy: 0, vyG: null });
+      // back on your skis right where you fell, standing still; if you hit something, beside it and turned away from it
+      let { x, z, heading } = fr;
+      const o = fr.hitObj;
+      if (o) {
+        let ax = x - o.x, az = z - o.z; const d = Math.hypot(ax, az) || 1; ax /= d; az /= d;
+        x = o.x + ax * (o.r + 2.2); z = o.z + az * (o.r + 2.2);
+        const vx = ax + 0, vz = az + 0.8, l = Math.hypot(vx, vz) || 1;   // away from it, leaning back towards the fall line
+        heading = Math.atan2(vx / l, -vz / l);
+        if (frHit(x, z, frGround(x, z) + 0.1)) { const sp = fr.prevSafe || fr.safe; if (sp) ({ x, z, heading } = sp); }
+      }
+      Object.assign(fr, { x, z, heading, s: 0, crashT: -1, grounded: true, vy: 0, vyG: null, hitObj: null });
       fr.y = frGround(fr.x, fr.z); Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0 }); snapCam = true;
     }
   } else if (fr.grounded) {
     fr.heading = wrap(fr.heading + inp.h * (fr.s > 2 ? 1.9 : 2.6) * dt);
     const [dx, dz] = frDir();
     const sl = (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2;   // rise along your skis
-    let acc = -G * 0.75 * sl / Math.sqrt(1 + sl * sl) - 0.0095 * fr.s * fr.s - 0.6 - 3 * Math.abs(inp.h);
+    let acc = -G * 0.9 * sl / Math.sqrt(1 + sl * sl) - 0.0042 * fr.s * fr.s - 0.4 - 2 * Math.abs(inp.h);   // lets you run past 150 km/h on the steep bits
     if (inp.v > 0 && fr.s < 9) acc += 7;   // skate / push on the flat
     if (inp.v < 0) acc -= 10;               // snowplough
     fr.s = Math.max(0, fr.s + acc * dt);
@@ -3345,13 +3444,13 @@ function updateFreeride(dt) {
   }
   if (!fr.lift && fr.crashT < 0) {
     const o = frHit(fr.x, fr.z, fr.y);
-    if (o) frCrash(o.name);
-    // the edges of the mountain turn you back
-    if (Math.abs(fr.x) > FR.W) { fr.x = Math.sign(fr.x) * FR.W; fr.heading = wrap(-fr.heading); }
-    if (fr.z > 85) { fr.z = 85; fr.heading = wrap(Math.PI - fr.heading); }
-    if (fr.z < FR.SUMMIT - 12) { fr.z = FR.SUMMIT - 12; fr.heading = wrap(Math.PI - fr.heading); }
+    if (o) frCrash(o.name, o);
+    // the mountain goes on for ever down and to the sides; only the top is a wall
+    if (fr.z < FR.SUMMIT - 20) { fr.z = FR.SUMMIT - 20; fr.heading = wrap(Math.PI - fr.heading); }
   }
   if (p.comboTimer > 0 && fr.grounded) { p.comboTimer -= dt; if (p.comboTimer <= 0) p.combo = 0; }
+  frChunkUpdate();
+  if ((fr.trailT = (fr.trailT || 0) - dt) <= 0) { fr.trailT = 0.08; frTrail(); }
   // chairs going round
   if (frChairs) {
     const L = liftLen(), m4 = new THREE.Matrix4();
@@ -3386,11 +3485,34 @@ function updateFreeride(dt) {
   const s = totalScore(); if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
   hud.speed.textContent = `${Math.round(fr.s * 3.6)} km/h`;
-  const n = fr.others.size, where = fr.lift ? 'on the chairlift' : fr.z > -40 ? 'at the lodge' : `${Math.round(frTerrain(fr.x, fr.z))} m up`;
-  hud.race.textContent = `FREERIDE  ·  ${fr.status === 'online' ? `${n + 1} rider${n ? 's' : ''} on the mountain` : fr.status === 'connecting' ? 'connecting…' : 'offline'}  ·  ${where}  ·  Esc to leave`;
+  const n = fr.others.size, where = fr.lift ? 'on the chairlift' : Math.hypot(fr.x - 10, fr.z - 10) < 90 ? 'at the lodge' : `${Math.round(1400 + frTerrain(fr.x, fr.z))} m`;
+  hud.race.textContent = `FREERIDE  ·  ${fr.status === 'online' ? `${n + 1} rider${n ? 's' : ''} on the mountain` : fr.status === 'connecting' ? 'connecting…' : 'offline'}  ·  ${where}  ·  R: back to the top  ·  Esc to leave`;
   const showCombo = p.combo > 1 && p.comboTimer > 0;
   hud.combo.classList.toggle('hidden', !showCombo);
   if (showCombo) { hud.comboText.textContent = `COMBO x${Math.min(1 + 0.5 * (p.combo - 1), 8)}  ·  ${p.comboTotal.toLocaleString()}`; hud.comboFill.style.width = `${(p.comboTimer / COMBO_WINDOW) * 100}%`; }
+}
+// R (or the arrow button): straight back up to the summit
+function frToTop() {
+  if (!fr.on) return;
+  Object.assign(fr, { lift: null, x: FR.LIFT_X + 12, z: FR.SUMMIT + 22, heading: Math.PI, s: 10, vy: 0, vyG: null, grounded: true, crashT: -1, air: 0 });
+  fr.y = frGround(fr.x, fr.z); fr.safe = fr.prevSafe = { x: fr.x, z: fr.z, heading: fr.heading };
+  if (fr.liftChair) fr.liftChair.visible = false;
+  if (fr.trail) fr.trail.pts = [];
+  Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, yawVel: 0, rollVel: 0, trick: null, grabbing: false });
+  camera.position.set(fr.x, fr.y + 6, fr.z - 9); frChunkUpdate(true);
+  snapCam = true; fadeScreen('#fff'); showTrick('The Summit', 'Ride anywhere you like', true); Sfx.perfect();
+}
+let topBtn = null;
+function frTopBtn() {
+  if (!topBtn) {
+    topBtn = document.createElement('button'); topBtn.className = 'iconBtn'; topBtn.style.left = '164px'; topBtn.setAttribute('aria-label', 'Back to the top');
+    topBtn.innerHTML = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+    topBtn.style.display = 'none';
+    topBtn.onclick = e => { e.stopPropagation(); frToTop(); };
+    for (const t of ['pointerdown', 'touchstart']) topBtn.addEventListener(t, e => e.stopPropagation());
+    $('camBtn').after(topBtn);
+  }
+  return topBtn;
 }
 function updateFrLift(dt, inp) {
   const L = liftLen();
@@ -3405,8 +3527,8 @@ function updateFrLift(dt, inp) {
   fr.liftChair.visible = true; fr.liftChair.position.set(pt.x, pt.y - 1.6, pt.z);
   if (fr.lift.d >= L) {
     // hop off at the summit, facing down the mountain
-    fr.lift = null; fr.liftChair.visible = false;
-    fr.x = FR.LIFT_X + 12; fr.z = FR.SUMMIT + 6; fr.y = frGround(fr.x, fr.z); fr.heading = Math.PI; fr.s = 4; fr.vyG = null;
+    fr.lift = null; fr.liftChair.visible = false; frChunkUpdate(true);
+    fr.x = FR.LIFT_X + 12; fr.z = FR.SUMMIT + 22; fr.y = frGround(fr.x, fr.z); fr.heading = Math.PI; fr.s = 8; fr.vyG = null;
     fr.safe = fr.prevSafe = { x: fr.x, z: fr.z, heading: fr.heading };
     snapCam = true; showTrick('The Summit', 'Ride anywhere you like', true); Sfx.perfect();
   }
@@ -3426,6 +3548,7 @@ function frCamera(dt) {
   const fov = 64 + clamp((fr.s - 15) * 0.5, 0, 12);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake * 0.4; camera.position.y += rand(-1, 1) * shake * 0.4; shake = Math.max(0, shake - dt * 1.8); }
+  sky.position.copy(camera.position);
   snapCam = false;
 }
 
@@ -3523,6 +3646,7 @@ addEventListener('keydown', e => {
   if (e.code === 'KeyG' && state === 'play') nextGrab();
   if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play' || state === 'freeride')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
+  if (e.code === 'KeyR' && state === 'freeride' && !e.repeat) frToTop();
   if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
   if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy && $('panel').classList.contains('hidden')) startRun();
 });
@@ -4651,4 +4775,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRamps() { return frRamps; }, frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRampMap() { return frRampMap; }, get frChunks() { return frChunks; }, frToTop: () => frToTop(), frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
