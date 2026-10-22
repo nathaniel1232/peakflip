@@ -3112,7 +3112,6 @@ const snowTex = (() => {
 })();
 const powderMat = new THREE.MeshLambertMaterial({ vertexColors: true, map: snowTex });
 const kickerMat = new THREE.MeshLambertMaterial({ color: 0xf4f8fc, map: snowTex });
-const lipMat = lam(0x2f7de1, { emissive: 0x0a2a5a });
 function chunkGeo(cx, cz, step) {
   const S = FR.CHUNK, n = S / step, x0 = cx * S, z0 = cz * S, pos = [], nor = [], col = [], uv = [], idx = [];
   const c = new THREE.Color(), shade = new THREE.Color(0xd9e6f3), white = new THREE.Color(0xffffff);
@@ -3157,7 +3156,7 @@ function chunkContents(cx, cz) {
   return { trees, rocks, ramps };
 }
 function kickerMesh(r) {
-  // a smooth snow kicker sitting on the slope, with a blue line along its lip
+  // a smooth snow kicker sitting on the slope
   const pos = [], idx = [], nx = 6, nz = 10, Y = (x, z) => frGround(x, z) + 0.03;
   const add = (x, y, z) => { pos.push(x, y, z); return pos.length / 3 - 1; };
   const grid = [];
@@ -3170,7 +3169,6 @@ function kickerMesh(r) {
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
   const uvs = []; for (let k = 0; k < pos.length; k += 3) uvs.push(pos[k] / 6, pos[k + 2] / 6); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   const grp = new THREE.Group(); grp.add(new THREE.Mesh(g, kickerMat));
-  const line = new THREE.Mesh(box(r.W * 0.9, 0.08, 0.25), lipMat); line.position.set(r.x, Y(r.x, ze - 0.15) + 0.02, ze - 0.15); grp.add(line);
   return grp;
 }
 let frTreeMesh = null, frRockMesh = null, frTreesDirty = false;
@@ -3340,7 +3338,7 @@ function startFreeride() {
 }
 function leaveFreeride() {
   if (!fr.on) return;
-  fr.on = false; fr.net?.close(fr.id); fr.net = null;
+  fr.on = false; fr.net?.close(fr.id); fr.net = null; frClearBits();
   for (const id of [...fr.others.keys()]) frDropOther(id);
   frGroup.visible = false; world.visible = true; mountains.visible = true; frTopBtn().style.display = 'none';
   world.add(skier.root); world.add(skier.shadow); world.add(Particles.obj);
@@ -3350,12 +3348,50 @@ function leaveFreeride() {
 
 // ---- riding ----
 const frDir = () => [Math.sin(fr.heading), -Math.cos(fr.heading)];
+// a proper wipeout: you're thrown up and tumble head over heels down the slope, bouncing in clouds of
+// powder, your skis and poles fly off, and you slide to a stop lying in the snow before getting up
+const frBits = [];
 function frCrash(reason, obj = null) {
   if (fr.crashT >= 0) return;
   fr.crashT = 0; fr.hitObj = obj; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
-  Sfx.crash(); Sfx.noise(0.3, 0.6, 2400, 'highpass'); shake = 0.3;
-  Particles.emit(fr.x, fr.y + 0.6, fr.z, 50, 5, 6, 0xffffff, 0);
+  const sp = Math.abs(fr.s);
+  fr.s = obj ? -Math.min(sp, 20) * 0.25 : fr.s * 0.85;   // a tree throws you back, a bad landing carries you on
+  fr.cvy = (fr.grounded ? 0 : Math.min(fr.vy, 0)) + 3 + sp * 0.12;
+  fr.tum = { pv: (obj ? 1 : -1) * clamp(sp * 0.4, 5, 13), rv: rand(-5, 5), yv: rand(-2.5, 2.5) };
+  fr.grounded = false;
+  Sfx.crash(); Sfx.noise(0.3, 0.6, 2400, 'highpass'); Sfx.tone(90, 0.4, 'sawtooth', 0.18, 40); shake = 0.35;
+  Particles.emit(fr.x, fr.y + 0.6, fr.z, 60, 5, 6, 0xffffff, 0);
   showTrick('Wipeout!', reason, false);
+  // skis (or the board) and poles come off and fly
+  const [dx, dz] = frDir();
+  for (const part of [...(isBoard() ? [skier.board] : skier.skis.children.filter(m => m.geometry?.parameters?.depth > 1)), ...skier.poles]) {
+    if (!part.visible && !isBoard()) continue;
+    part.updateMatrixWorld(true);
+    const m = part.isMesh ? new THREE.Mesh(part.geometry, part.material) : part.clone(true);
+    part.getWorldPosition(m.position); part.getWorldQuaternion(m.quaternion);
+    frGroup.add(m);
+    frBits.push({ m, vx: dx * sp * 0.5 + rand(-3, 3), vy: rand(4, 8), vz: dz * sp * 0.5 + rand(-3, 3), sx: rand(-9, 9), sy: rand(-9, 9), rest: false });
+  }
+  fr.hidden = [skier.skis, skier.board, ...skier.poles].map(o => [o, o.visible]);
+  for (const [o] of fr.hidden) o.visible = false;
+}
+function frUpdateBits(dt) {
+  for (const b of frBits) {
+    if (b.rest) continue;
+    b.vy -= G * dt; b.m.position.x += b.vx * dt; b.m.position.y += b.vy * dt; b.m.position.z += b.vz * dt;
+    b.m.rotation.x += b.sx * dt; b.m.rotation.y += b.sy * dt;
+    const gh = frGround(b.m.position.x, b.m.position.z) + 0.06;
+    if (b.m.position.y < gh) {
+      b.m.position.y = gh;
+      if (b.vy < -3) { b.vy *= -0.3; b.vx *= 0.6; b.vz *= 0.6; b.sx *= 0.5; b.sy *= 0.5; Particles.emit(b.m.position.x, gh, b.m.position.z, 6, 1.5, 1.5, 0xffffff, 0); }
+      else { b.rest = true; b.m.rotation.x = 0; b.m.rotation.z = 0; }
+    }
+  }
+}
+function frClearBits() {
+  for (const b of frBits) frGroup.remove(b.m);
+  frBits.length = 0;
+  if (fr.hidden) { for (const [o, v] of fr.hidden) o.visible = v; fr.hidden = null; }
 }
 function frStartAir(vy) {
   fr.grounded = false; fr.vy = vy; fr.air = 0;
@@ -3369,10 +3405,32 @@ function updateFreeride(dt) {
   // the hold-to-grab and flip/spin input work just like on the main mountain
   if (fr.lift) updateFrLift(dt, inp);
   else if (fr.crashT >= 0) {
-    fr.crashT += dt; fr.s = damp(fr.s, 0, 2, dt);
-    const [dx, dz] = frDir(); fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt; fr.y = frGround(fr.x, fr.z);
-    p.pitch += 9 * dt; p.roll += 5 * dt;
-    if (fr.crashT > 1.4) {
+    fr.crashT += dt;
+    const [dx, dz] = frDir(), T_ = fr.tum;
+    fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt;
+    fr.cvy -= G * dt; fr.y += fr.cvy * dt;
+    const gh = frGround(fr.x, fr.z), down = fr.y <= gh + 0.05;
+    if (fr.y < gh) {
+      fr.y = gh;
+      if (fr.cvy < -4) {   // a bounce: a puff of powder, a thud, and the tumble slows
+        fr.cvy *= -0.28; T_.pv *= 0.55; T_.rv *= 0.55; T_.yv *= 0.55; fr.s *= 0.7; shake = Math.max(shake, 0.2);
+        Particles.emit(fr.x, gh + 0.3, fr.z, 26, 3, 3.5, 0xffffff, 0); Sfx.noise(0.12, 0.35, 500);
+      } else fr.cvy = 0;
+    }
+    if (down) {   // sliding on your back: the slope keeps pulling you a little, the snow slows you down
+      const sl = (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2;
+      fr.s = fr.s - G * 0.2 * sl * dt; fr.s = damp(fr.s, 0, 2.6, dt);
+      T_.pv = damp(T_.pv, 0, 3, dt); T_.rv = damp(T_.rv, 0, 3, dt); T_.yv = damp(T_.yv, 0, 3, dt);
+      if (Math.abs(fr.s) > 3 && Math.random() < 0.6) Particles.emit(fr.x, gh + 0.2, fr.z, 3, 1.5, 1.5, 0xffffff, 0);
+      // come to rest lying flat in the snow
+      if (Math.abs(T_.pv) < 2.5) p.pitch = damp(p.pitch, Math.round((p.pitch - 1.45) / TAU) * TAU + 1.45, 4, dt);
+      if (Math.abs(T_.rv) < 2.5) p.roll = damp(p.roll, Math.round(p.roll / TAU) * TAU, 4, dt);
+    }
+    p.pitch += T_.pv * dt; p.roll += T_.rv * dt; p.yaw += T_.yv * dt;
+    const restT = fr.crashT > 1 && Math.abs(fr.s) < 1.5 && fr.cvy === 0;
+    if (restT && !fr.restAt) fr.restAt = fr.crashT;
+    if (fr.crashT > 2.8 || (fr.restAt && fr.crashT - fr.restAt > 0.6)) {
+      fr.restAt = 0; frClearBits();
       // back on your skis right where you fell, standing still; if you hit something, beside it and turned away from it
       let { x, z, heading } = fr;
       const o = fr.hitObj;
@@ -3384,10 +3442,19 @@ function updateFreeride(dt) {
         if (frHit(x, z, frGround(x, z) + 0.1)) { const sp = fr.prevSafe || fr.safe; if (sp) ({ x, z, heading } = sp); }
       }
       Object.assign(fr, { x, z, heading, s: 0, crashT: -1, grounded: true, vy: 0, vyG: null, hitObj: null });
+      fadeScreen('#fff');
       fr.y = frGround(fr.x, fr.z); Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0 }); snapCam = true;
     }
   } else if (fr.grounded) {
     fr.heading = wrap(fr.heading + inp.h * (fr.s > 2 ? 1.9 : 2.6) * dt);
+    // gravity turns you down the fall line, unless you hold a turn against it (not on the flat by the lodge)
+    {
+      const gx = (frGround(fr.x + 1, fr.z) - frGround(fr.x - 1, fr.z)) / 2, gz = (frGround(fr.x, fr.z + 1) - frGround(fr.x, fr.z - 1)) / 2, steep = Math.hypot(gx, gz);
+      if (steep > 0.03) {
+        const fall = Math.atan2(-gx, gz), k = (inp.h ? 0.35 : 1.5) * clamp(steep / 0.25, 0, 1);
+        fr.heading = wrap(fr.heading + wrap(fall - fr.heading) * (1 - Math.exp(-k * dt)));
+      }
+    }
     const [dx, dz] = frDir();
     const sl = (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2;   // rise along your skis
     let acc = -G * 0.9 * sl / Math.sqrt(1 + sl * sl) - 0.0042 * fr.s * fr.s - 0.4 - 2 * Math.abs(inp.h);   // lets you run past 150 km/h on the steep bits
@@ -3450,6 +3517,7 @@ function updateFreeride(dt) {
   }
   if (p.comboTimer > 0 && fr.grounded) { p.comboTimer -= dt; if (p.comboTimer <= 0) p.combo = 0; }
   frChunkUpdate();
+  frUpdateBits(dt);
   if ((fr.trailT = (fr.trailT || 0) - dt) <= 0) { fr.trailT = 0.08; frTrail(); }
   // chairs going round
   if (frChairs) {
@@ -3461,14 +3529,20 @@ function updateFreeride(dt) {
     frChairs.instanceMatrix.needsUpdate = true;
   }
   // the rider, posed by the normal visuals and then placed on the mountain
-  Object.assign(p, { x: fr.x, y: fr.y, z: fr.z, heading: 0, grounded: fr.grounded && !fr.lift, speed: fr.s, crashed: false });
+  const crashing = fr.crashT >= 0;
+  Object.assign(p, { x: fr.x, y: fr.y, z: fr.z, heading: 0, grounded: fr.grounded && !fr.lift, speed: Math.abs(fr.s), crashed: crashing });
   updateSkierVisual(dt);
-  const [dx, dz] = frDir(), gh = frGround(fr.x, fr.z);
-  const sl = fr.grounded && !fr.lift ? (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2 : 0;
-  skier.root.position.set(fr.x, fr.y, fr.z);
+  const [dx, dz] = frDir(), gh = frGround(fr.x, fr.z), onSnow = fr.grounded && !fr.lift && !crashing;
+  // stand square on the slope: tip forward/back with it along your skis, and lean with it sideways
+  const sl = onSnow ? (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2 : 0;
+  const side = onSnow ? (frGround(fr.x - dz * 0.6, fr.z + dx * 0.6) - frGround(fr.x + dz * 0.6, fr.z - dx * 0.6)) / 1.2 : 0;
+  fr.tiltX = damp(fr.tiltX || 0, Math.atan(sl), 12, dt); fr.tiltZ = damp(fr.tiltZ || 0, Math.atan(side), 12, dt);
+  // lying in the snow, the body sits lower so it doesn't float
+  const flat = crashing ? Math.max(Math.abs(Math.sin(p.pitch)), Math.abs(Math.sin(p.roll))) : 0;
+  skier.root.position.set(fr.x, fr.y - flat * 0.62, fr.z);
   skier.body.rotation.y = p.yaw - fr.heading;
-  skier.body.rotation.x = p.pitch + Math.atan(sl) + (p.arch || 0);
-  skier.body.rotation.z = p.lean + p.roll;
+  skier.body.rotation.x = p.pitch + fr.tiltX + (crashing ? 0 : p.arch || 0);
+  skier.body.rotation.z = (crashing ? 0 : p.lean) + p.roll + fr.tiltZ;
   skier.shadow.position.set(fr.x, gh + 0.05, fr.z); skier.shadow.visible = !fr.lift;
   // everyone else
   for (const o of fr.others.values()) {
@@ -3494,6 +3568,7 @@ function updateFreeride(dt) {
 // R (or the arrow button): straight back up to the summit
 function frToTop() {
   if (!fr.on) return;
+  frClearBits(); fr.restAt = 0;
   Object.assign(fr, { lift: null, x: FR.LIFT_X + 12, z: FR.SUMMIT + 22, heading: Math.PI, s: 10, vy: 0, vyG: null, grounded: true, crashT: -1, air: 0 });
   fr.y = frGround(fr.x, fr.z); fr.safe = fr.prevSafe = { x: fr.x, z: fr.z, heading: fr.heading };
   if (fr.liftChair) fr.liftChair.visible = false;
