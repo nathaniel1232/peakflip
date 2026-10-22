@@ -783,6 +783,7 @@ export function initUI(c) {
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
   $('levelsBtn').onclick = () => { c.sfx.init(); renderLevels(); };
+  $('freerideBtn').onclick = () => c.onFreeride();
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };

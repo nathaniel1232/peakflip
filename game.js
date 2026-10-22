@@ -39,6 +39,7 @@ const track = (...a) => demo ? [] : trackRun(...a);
 import { save, persist, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
 import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
 import { icon } from './icons.js';
+import { joinRoom } from './mp.js';
 import { Ads } from './ads.js';
 import { Cloud } from './cloud.js';
 
@@ -1088,6 +1089,7 @@ const Particles = (() => {
   let head = 0;
   const c = new THREE.Color();
   return {
+    obj: pts,
     emit(x, y, z, n, spread, up, color, vz = 0) {
       if (LITE) n = Math.ceil(n * (LOW ? 0.35 : 0.6));
       c.set(color);
@@ -3034,6 +3036,399 @@ function levelOver(done) {
   showResults({ mode: 'level', done, level: level.n, name: L.name, diff: L.diff, score, stars, prevStars: rec.stars, best: save.levels[level.n].best, targets: [s2, s3], newBest, last: level.n === LEVELS.length - 1, reason: p.reason, dist: Math.floor(Math.min(-p.z, L.len)), len: L.len, coins: p.coins, bonus, missions });
 }
 
+const signTex = text => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 96; const g = c.getContext('2d');
+  g.fillStyle = '#1d2430'; g.fillRect(0, 0, 256, 96); g.fillStyle = '#ff7b00'; g.fillRect(0, 0, 256, 10); g.fillRect(0, 86, 256, 10);
+  g.fillStyle = '#fff'; g.font = '900 40px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText(text, 128, 63);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+};
+// ---------- Freeride: one huge open mountain, shared live with everyone else riding it. Start at the lodge,
+// take the chairlift to the summit, and ride down anywhere: powder, forests, rocks and kickers everywhere ----------
+const FR = { W: 318, LIFT_X: -46, BASE: -30, SUMMIT: -922 };
+const fr = { on: false, x: 0, y: 0, z: 0, vy: 0, vyG: 0, heading: 0, s: 0, grounded: true, air: 0, crashT: -1,
+  safe: null, prevSafe: null, safeT: 0, lift: null, net: null, others: new Map(), sendT: 0, id: '', name: '', status: '' };
+let frGroup = null, frRamps = [], frGrid = new Map(), frLift = [], frChairs = null;
+const smooth01 = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+// the mountain: flat lodge area at the bottom, steepening to a summit plateau, flanks rising on both sides,
+// with rolling bumps and bowls all over
+function frTerrain(x, z) {
+  const t = clamp(-z / 940, 0, 0.965), ax = Math.abs(x) / 330;
+  let h = 430 * Math.pow(Math.max(0, t - 0.05) / 0.95, 1.2) + 140 * ax * ax * (0.4 + t);
+  const k = smooth01(40, 140, -z) * (1 - smooth01(880, 925, -z));
+  h += k * (16 * Math.sin(x * 0.019 + z * 0.011) * Math.cos(z * 0.016 - x * 0.007) + 5 * Math.sin(x * 0.07 + 1.3) * Math.sin(z * 0.055));
+  h += k * 3.2 * Math.max(0, Math.sin(z * 0.085 + Math.sin(x * 0.031) * 2.2)) ** 4;   // rollers that pop you into the air
+  return h;
+}
+function frGround(x, z) {
+  let h = frTerrain(x, z);
+  for (const r of frRamps) if (z >= r.z0 && z <= r.z0 + r.L && Math.abs(x - r.x) <= r.W / 2) { const t = (z - r.z0) / r.L; h += r.H * t * t; }
+  return h;
+}
+const frKey = (x, z) => `${Math.floor(x / 10)},${Math.floor(z / 10)}`;
+function frSolid(o) { const k = frKey(o.x, o.z); if (!frGrid.has(k)) frGrid.set(k, []); frGrid.get(k).push(o); }
+function frHit(x, z, y) {
+  const cx = Math.floor(x / 10), cz = Math.floor(z / 10);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const o of frGrid.get(`${cx + i},${cz + j}`) || []) {
+    if (Math.hypot(o.x - x, o.z - z) < o.r + 0.35 && y < o.y + o.h) return o;
+  }
+  return null;
+}
+const liftPoint = (d, side = 1) => {
+  // a point d metres along the up-going cable (side -1: the cable coming down)
+  for (let i = 1; i < frLift.length; i++) {
+    const a = frLift[i - 1], b = frLift[i], L = Math.hypot(b.z - a.z, b.y - a.y);
+    if (d <= L || i === frLift.length - 1) { const t = clamp(d / L, 0, 1); return { x: FR.LIFT_X + side * 2.2, y: lerp(a.y, b.y, t), z: lerp(a.z, b.z, t) }; }
+    d -= L;
+  }
+};
+const liftLen = () => { let L = 0; for (let i = 1; i < frLift.length; i++) L += Math.hypot(frLift[i].z - frLift[i - 1].z, frLift[i].y - frLift[i - 1].y); return L; };
+
+function buildFreeride() {
+  frGroup = new THREE.Group(); scene.add(frGroup);
+  const rng = mulberry32(hashStr('peakflip-freeride-v1')), R_ = (a, b) => a + rng() * (b - a);
+  // kickers, all facing downhill
+  for (let i = 0; i < 46; i++) {
+    const size = rng(), L = size < 0.45 ? 7 : size < 0.8 ? 9.5 : 13, H = size < 0.45 ? 2.2 : size < 0.8 ? 3.1 : 4.6, W = L * 0.75;
+    const x = R_(-260, 260), z0 = R_(-870, -130);
+    if (Math.abs(x - FR.LIFT_X) < 16 || frRamps.some(r => Math.abs(r.x - x) < 20 && Math.abs(r.z0 - z0) < 30)) continue;
+    frRamps.push({ x, z0, L, H, W });
+  }
+  // the snow: one big heightfield, with rock showing on the steepest faces
+  const SX = 680, SZ = 1060, NX = 136, NZ = 212, geo = new THREE.PlaneGeometry(SX, SZ, NX, NZ).rotateX(-Math.PI / 2);
+  geo.translate(0, 0, -SZ / 2 + 90);
+  const pos = geo.attributes.position, cols = [], c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), h = frTerrain(x, z); pos.setY(i, h);
+    const sl = Math.hypot(frTerrain(x + 2, z) - frTerrain(x - 2, z), frTerrain(x, z + 2) - frTerrain(x, z - 2)) / 4;
+    c.set(sl > 1.05 ? 0x8a94a3 : sl > 0.8 ? 0xd7e2ec : 0xf7fbff); cols.push(c.r, c.g, c.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3)); geo.computeVertexNormals();
+  frGroup.add(new THREE.Mesh(geo, vcol));
+  // kicker meshes, built right onto the slope
+  for (const r of frRamps) {
+    const p_ = [], hw = r.W / 2, seg = 8, Y = (x, z, t) => frTerrain(x, z) + r.H * t * t;
+    const quad = (a, b, cc, d) => p_.push(...a, ...b, ...cc, ...a, ...cc, ...d);
+    for (let i = 0; i < seg; i++) {
+      const t0 = i / seg, t1 = (i + 1) / seg, z0 = r.z0 + t0 * r.L, z1 = r.z0 + t1 * r.L;
+      const xl = r.x - hw, xr = r.x + hw;
+      quad([xl, Y(xl, z0, t0) + 0.04, z0], [xl, Y(xl, z1, t1) + 0.04, z1], [xr, Y(xr, z1, t1) + 0.04, z1], [xr, Y(xr, z0, t0) + 0.04, z0]);
+      for (const [x, s] of [[xl, 1], [xr, -1]]) {
+        const a = [x, frTerrain(x, z0) - 0.3, z0], b = [x, Y(x, z0, t0) + 0.04, z0], cc = [x, Y(x, z1, t1) + 0.04, z1], d = [x, frTerrain(x, z1) - 0.3, z1];
+        if (s > 0) quad(a, b, cc, d); else quad(d, cc, b, a);
+      }
+    }
+    const ze = r.z0 + r.L, xl = r.x - hw, xr = r.x + hw;
+    quad([xl, frTerrain(xl, ze) - 0.3, ze], [xl, Y(xl, ze, 1) + 0.04, ze], [xr, Y(xr, ze, 1) + 0.04, ze], [xr, frTerrain(xr, ze) - 0.3, ze]);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p_, 3)); g.computeVertexNormals();
+    const m = new THREE.Mesh(g, mat.ramp); m.material.side = THREE.DoubleSide; frGroup.add(m);
+    const lip = new THREE.Mesh(box(r.W + 0.1, 0.12, 0.4), mat.rampEdge); lip.position.set(r.x, Y(r.x, ze, 1), ze - 0.2); frGroup.add(lip);
+  }
+  // forests: dense patches where a slow noise is high, plus lone trees; never on the lift line, the lodge or a kicker
+  const trees = [[], []], rocksAt = [];
+  const forest = (x, z) => Math.sin(x * 0.013 + 1.7) * Math.cos(z * 0.011) + 0.6 * Math.sin(x * 0.031 - z * 0.023 + 0.5) + 0.35 * Math.sin(z * 0.05 + x * 0.009);
+  for (let z = 70; z > -905; z -= 6.5) for (let x = -315; x < 315; x += 6.5) {
+    const px = x + R_(-2.5, 2.5), pz = z + R_(-2.5, 2.5);
+    if (Math.abs(px - FR.LIFT_X) < 9 || (pz > -60 && Math.abs(px) < 95) || pz < -900) { rng(); continue; }
+    if (frRamps.some(r => Math.abs(px - r.x) < r.W / 2 + 4 && pz > r.z0 - 25 && pz < r.z0 + r.L + 30)) { rng(); continue; }
+    const f = forest(px, pz), roll = rng();
+    if (f > 0.55 || roll < 0.012) {
+      const s = R_(0.8, 1.7), y = frTerrain(px, pz) - 0.2;
+      trees[roll < 0.5 ? 0 : 1].push([px, y, pz, s, R_(0, 6)]);
+      frSolid({ x: px, z: pz, y, r: 0.55 * s, h: 4.2 * s, name: 'Hugged a tree' });
+    } else if (roll > 0.996) rocksAt.push([px, pz]);
+  }
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  trees.forEach((list, k) => {
+    const im = new THREE.InstancedMesh(spruceGeometry(k === 1), vcol, list.length);
+    list.forEach(([x, y, z, s, ry], i) => im.setMatrixAt(i, m4.compose(v.set(x, y, z), q.setFromEuler(e.set(0, ry, 0)), sc.set(s, s, s))));
+    frGroup.add(im);
+  });
+  const rim = new THREE.InstancedMesh(rockGeo, vcol, rocksAt.length);
+  rocksAt.forEach(([x, z], i) => {
+    const s = R_(1, 2.2), y = frTerrain(x, z);
+    rim.setMatrixAt(i, m4.compose(v.set(x, y, z), q.setFromEuler(e.set(0, R_(0, 6), 0)), sc.set(s, s, s)));
+    frSolid({ x, z, y, r: 1.0 * s, h: 1.1 * s, name: 'Hit a rock' });
+  });
+  frGroup.add(rim);
+  // the chairlift: towers up the mountain, a cable both ways and chairs going round
+  for (let z = FR.BASE; z >= FR.SUMMIT - 0.1; z -= (FR.BASE - FR.SUMMIT) / 14) frLift.push({ z, y: frTerrain(FR.LIFT_X, z) + 12 });
+  const grey = lam(0x5b6573), red = lam(0xe63946);
+  for (const t of frLift) {
+    const g_ = frTerrain(FR.LIFT_X, t.z);
+    const pole = new THREE.Mesh(box(0.6, t.y - g_ + 1, 0.6), grey); pole.position.set(FR.LIFT_X, (t.y + g_) / 2 + 0.5, t.z); frGroup.add(pole);
+    const bar = new THREE.Mesh(box(5.4, 0.35, 0.35), grey); bar.position.set(FR.LIFT_X, t.y + 1, t.z); frGroup.add(bar);
+    frSolid({ x: FR.LIFT_X, z: t.z, y: g_, r: 0.5, h: 30, name: 'Hit a lift tower' });
+  }
+  for (let i = 1; i < frLift.length; i++) for (const side of [-1, 1]) {
+    const a = frLift[i - 1], b = frLift[i], L = Math.hypot(b.z - a.z, b.y - a.y);
+    const cab = new THREE.Mesh(box(0.06, 0.06, L), grey); cab.position.set(FR.LIFT_X + side * 2.2, (a.y + b.y) / 2 + 1, (a.z + b.z) / 2);
+    cab.rotation.x = Math.atan2(b.y - a.y, -(b.z - a.z)); frGroup.add(cab);
+  }
+  const chairGeo = merged([
+    { geo: new THREE.BoxGeometry(0.06, 1.6, 0.06), color: 0x5b6573, m: T(0, 0.8, 0.3) },
+    { geo: new THREE.BoxGeometry(1.4, 0.12, 0.6), color: 0xe63946, m: T(0, 0, 0) },
+    { geo: new THREE.BoxGeometry(1.4, 0.7, 0.1), color: 0xe63946, m: T(0, 0.4, 0.3) },
+  ]);
+  frChairs = new THREE.InstancedMesh(chairGeo, vcol, 48); frChairs.frustumCulled = false; frGroup.add(frChairs);
+  // stations: a hut and a big bullwheel at each end
+  const station = (z, sign) => {
+    const g_ = frTerrain(FR.LIFT_X, z), grp = new THREE.Group(); grp.position.set(FR.LIFT_X, g_, z); frGroup.add(grp);
+    const hut = new THREE.Mesh(box(8, 5, 8), lam(0x34506b)); hut.position.set(-7, 2.5, 0); grp.add(hut);
+    const roof = new THREE.Mesh(box(8.6, 0.5, 8.6), mat.snow); roof.position.set(-7, 5.2, 0); grp.add(roof);
+    const wheel = new THREE.Mesh(new THREE.TorusGeometry(2.2, 0.25, 6, 22), red); wheel.rotation.x = Math.PI / 2; wheel.position.set(0, frLift[0].y - frTerrain(FR.LIFT_X, frLift[0].z) + 1, sign * 2); grp.add(wheel);
+    const mast = new THREE.Mesh(box(0.8, 12, 0.8), grey); mast.position.set(0, 6, sign * 2); grp.add(mast);
+    const sgn = new THREE.Mesh(box(4.4, 1.2, 0.15), [postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: signTex(sign > 0 ? 'LIFT ↑' : 'SUMMIT') }), postMat]);
+    sgn.position.set(-7, 6.3, 4.1); grp.add(sgn);
+    frSolid({ x: FR.LIFT_X - 7, z, y: g_, r: 4.6, h: 6, name: 'Ran into the lift hut' });
+  };
+  station(FR.BASE - 4, 1); station(FR.SUMMIT - 4, -1);
+  // the lodge where everyone starts
+  const lodge = new THREE.Group(); lodge.position.set(42, 0, 18); frGroup.add(lodge);
+  const L_ = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); lodge.add(o); return o; };
+  L_(box(18, 7, 11), cabinWall, 0, 3.5, 0);
+  const roof = L_(new THREE.ConeGeometry(13, 5, 4), cabinRoof, 0, 9.5, 0); roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.62);
+  const cap = L_(new THREE.ConeGeometry(12.2, 1.6, 4), mat.snow, 0, 11.3, 0); cap.rotation.y = Math.PI / 4; cap.scale.set(1, 1, 0.62);
+  for (const x of [-6, -2, 2, 6]) L_(box(2.2, 2, 0.1), lam(0xffd166, { emissive: 0x7a5a00 }), x, 3.8, -5.55);
+  L_(box(3, 4, 0.1), lam(0x4a2c17), 0, 2, -5.56);
+  const lsign = L_(box(9, 1.6, 0.2), [postMat, postMat, postMat, postMat, postMat, new THREE.MeshBasicMaterial({ map: signTex('PEAK LODGE') })], 0, 7.6, -5.7); void lsign;
+  L_(box(20, 0.4, 5), cabinWall, 0, 0.2, -8);
+  for (const x of [-7, -3, 3, 7]) L_(box(2.4, 0.5, 0.8), lam(0x6b4423), x, 0.7, -9.5);
+  const flagPole = L_(box(0.15, 10, 0.15), grey, -12, 5, -9); void flagPole;
+  L_(box(2.2, 1.3, 0.05), red, -10.8, 9.2, -9);
+  frSolid({ x: 42, z: 18, y: 0, r: 8, h: 12, name: 'Ran into the lodge' });
+  // arrows on the snow from the lodge to the lift
+  for (let i = 0; i < 6; i++) {
+    const t = i / 6, x = lerp(4, FR.LIFT_X + 2.2, t), z = lerp(26, FR.BASE + 8, t);
+    const ch = chevron(lam(0xff7b00, { emissive: 0x7a3500 }), 1.6, 0.3); ch.rotation.x = -Math.PI / 2; ch.rotation.z = Math.atan2(FR.LIFT_X + 2.2 - 4, -(FR.BASE + 8 - 26)); ch.position.set(x, 0.06, z); frGroup.add(ch);
+  }
+  // a few snowmen and cabins dotted around the lower slopes
+  for (let i = 0; i < 6; i++) {
+    const x = R_(-200, 200), z = R_(-500, -80); if (Math.abs(x - FR.LIFT_X) < 20) continue;
+    const g_ = new THREE.Group(), y = frTerrain(x, z); g_.position.set(x, y, z); frGroup.add(g_);
+    for (const [r, yy] of [[0.9, 0.75], [0.65, 1.95], [0.45, 2.85]]) { const b = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 1), snowmanParts.body); b.position.y = yy; g_.add(b); }
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.08, 0.4, 5), snowmanParts.carrot); nose.rotation.x = Math.PI / 2; nose.position.set(0, 2.85, 0.5); g_.add(nose);
+    frSolid({ x, z, y, r: 0.9, h: 3.2, name: 'Flattened a snowman' });
+  }
+}
+
+// ---- other riders ----
+const frColor = id => `hsl(${hashStr(id) % 360}, 85%, 62%)`;
+const frMats = new Map();
+function frOther(s) {
+  let o = fr.others.get(s.id);
+  if (!o) {
+    const color = frColor(s.id), root = skier.root.clone(true);
+    const m = frMats.get(color) || frMats.set(color, lam(new THREE.Color(color))).get(color);
+    root.traverse(x => { if (x.isMesh) x.material = m; });
+    const tag = nameTag(String(s.n || 'Rider').slice(0, 18), color); root.add(tag);
+    frGroup.add(root);
+    o = { root, body: root.children[0], x: s.x / 10, y: s.y / 10, z: s.z / 10 };
+    fr.others.set(s.id, o);
+  }
+  Object.assign(o, { tx: s.x / 10, ty: s.y / 10, tz: s.z / 10, h: s.h / 100, p: s.p / 100, yw: s.w / 100, r: s.r / 100 });
+}
+function frDropOther(id) { const o = fr.others.get(id); if (o) { frGroup.remove(o.root); fr.others.delete(id); } }
+
+// ---- in and out ----
+function startFreeride() {
+  mode = 'freeride'; demo = false; Sfx.quiet = false; clearTouch(); Sfx.init(); Music.play('mountain');
+  if (closet.on) setCloset(false);
+  clearWorld(); resetPlayer(); resetRun(); SkiTracks.clear(); Debris.clear(); fixRider();
+  if (!frGroup) buildFreeride();
+  frGroup.visible = true; world.visible = false; mountains.visible = false;   // our own mountain replaces the backdrop
+  frGroup.add(skier.root); frGroup.add(skier.shadow); frGroup.add(Particles.obj);
+  setTheme('day'); scene.fog.near = 160; scene.fog.far = 900; camera.far = 1600; camera.updateProjectionMatrix();
+  Object.assign(fr, { on: true, x: 6, z: 34, vy: 0, vyG: 0, heading: -0.64, s: 0, grounded: true, air: 0, crashT: -1, lift: null, safe: null, prevSafe: null });
+  fr.y = frGround(fr.x, fr.z);
+  fr.id = save.pid.slice(0, 12) + Math.random().toString(36).slice(2, 6);
+  fr.name = save.name || `Guest ${1000 + (hashStr(save.pid) % 9000)}`;
+  fr.net = joinRoom('peakflip-freeride', { onState: frOther, onLeave: frDropOther, onStatus: st => { fr.status = st; } });
+  state = 'freeride'; paused = false; snapCam = true;
+  show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true); show('raceInfo', true);
+  lastScore = lastCoins = -1; hintT = 0; hud.hint.style.opacity = 0;
+  showTrick('Peak Lodge', 'Follow the arrows to the lift', true);
+  Platform.gameplayStart();
+}
+function leaveFreeride() {
+  if (!fr.on) return;
+  fr.on = false; fr.net?.close(fr.id); fr.net = null;
+  for (const id of [...fr.others.keys()]) frDropOther(id);
+  frGroup.visible = false; world.visible = true; mountains.visible = true;
+  world.add(skier.root); world.add(skier.shadow); world.add(Particles.obj);
+  camera.far = 500; camera.updateProjectionMatrix();
+  Platform.gameplayStop();
+}
+
+// ---- riding ----
+const frDir = () => [Math.sin(fr.heading), -Math.cos(fr.heading)];
+function frCrash(reason) {
+  if (fr.crashT >= 0) return;
+  fr.crashT = 0; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
+  Sfx.crash(); Sfx.noise(0.3, 0.6, 2400, 'highpass'); shake = 0.3;
+  Particles.emit(fr.x, fr.y + 0.6, fr.z, 50, 5, 6, 0xffffff, 0);
+  showTrick('Wipeout!', reason, false);
+}
+function frStartAir(vy) {
+  fr.grounded = false; fr.vy = vy; fr.air = 0;
+  latchAtTakeoff();
+  p.fromRamp = true; p.maxH = 0; p.airTime = 0;
+  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: GRABS[(Math.random() * GRABS.length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false, pro: false };
+}
+function updateFreeride(dt) {
+  const inp = readInput();
+  // the hold-to-grab and flip/spin input work just like on the main mountain
+  if (fr.lift) updateFrLift(dt, inp);
+  else if (fr.crashT >= 0) {
+    fr.crashT += dt; fr.s = damp(fr.s, 0, 2, dt);
+    const [dx, dz] = frDir(); fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt; fr.y = frGround(fr.x, fr.z);
+    p.pitch += 9 * dt; p.roll += 5 * dt;
+    if (fr.crashT > 1.4) {
+      const sp = fr.prevSafe || fr.safe || { x: 6, z: 34, heading: -0.64 };
+      Object.assign(fr, { x: sp.x, z: sp.z, heading: sp.heading, s: 0, crashT: -1, grounded: true, vy: 0, vyG: null });
+      fr.y = frGround(fr.x, fr.z); Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0 }); snapCam = true;
+    }
+  } else if (fr.grounded) {
+    fr.heading = wrap(fr.heading + inp.h * (fr.s > 2 ? 1.9 : 2.6) * dt);
+    const [dx, dz] = frDir();
+    const sl = (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2;   // rise along your skis
+    let acc = -G * 0.75 * sl / Math.sqrt(1 + sl * sl) - 0.0095 * fr.s * fr.s - 0.6 - 3 * Math.abs(inp.h);
+    if (inp.v > 0 && fr.s < 9) acc += 7;   // skate / push on the flat
+    if (inp.v < 0) acc -= 10;               // snowplough
+    fr.s = Math.max(0, fr.s + acc * dt);
+    const nx = fr.x + dx * fr.s * dt, nz = fr.z + dz * fr.s * dt, nh = frGround(nx, nz), nvy = (nh - fr.y) / Math.max(dt, 1e-3);
+    // off a kicker's lip, or over a crest that drops away faster than gravity can pull you down
+    // (right after a landing or a respawn there's no ground speed yet: vyG is null for that frame)
+    const vyPrev = fr.vyG ?? nvy;
+    if (fr.s > 7 && (nh < fr.y + vyPrev * dt - 0.35 || vyPrev - nvy > G * 1.1 * dt + 0.6)) { fr.x = nx; fr.z = nz; frStartAir(vyPrev); }
+    else {
+      fr.vyG = (nh - fr.y) / Math.max(dt, 1e-3); fr.x = nx; fr.z = nz; fr.y = nh;
+      if (inp.jump) { frStartAir(Math.max(fr.vyG ?? 0, 0) + 10); Sfx.ollie(); }
+    }
+    p.lean = damp(p.lean, -inp.h * 0.45 * clamp(fr.s / 15, 0.3, 1), 8, dt);
+    if (fr.s > 18 && Math.random() < 0.5) Particles.emit(fr.x, fr.y + 0.1, fr.z, 2, 1.2, 1.6, 0xffffff, 0);   // powder spray
+    if (time - fr.safeT > 1.5 && fr.s > 2) { fr.prevSafe = fr.safe; fr.safe = { x: fr.x, z: fr.z, heading: fr.heading }; fr.safeT = time; }
+    // the lift: ride into the boarding area in front of the bottom station
+    if (Math.abs(fr.x - (FR.LIFT_X + 2.2)) < 3.6 && fr.z < FR.BASE + 6 && fr.z > FR.BASE - 2) {
+      fr.lift = { d: 0 }; fr.s = 0; showTrick('Chairlift', 'Up to the summit · jump to skip', true); Sfx.tone(660, 0.12, 'triangle', 0.12); Sfx.tone(880, 0.16, 'triangle', 0.12, null, 0.1);
+    }
+  } else {
+    // in the air: flips, spins, sideflips and grabs, then land it
+    fr.air += dt; p.airTime = fr.air;
+    const [dx, dz] = frDir();
+    fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt;
+    fr.vy -= G * (fr.vy < 0 ? 1.15 : 1) * dt; fr.y += fr.vy * dt;
+    const gh = frGround(fr.x, fr.z);
+    p.maxH = Math.max(p.maxH, fr.y - gh);
+    p.grabbing = inp.grab && fr.air > 0.12;
+    const mul = p.grabbing ? 0.65 : 1;
+    const diag = Math.abs(inp.v) > 0.35 && Math.abs(inp.h) > 0.35;
+    if (diag) { p.rollVel = damp(p.rollVel, -Math.sign(inp.h) * ROLL_RATE * mul, 10, dt); p.pitchVel = settle(p.pitch, p.pitchVel, TAU, FLIP_RATE, dt); p.yawVel = settle(p.yaw, p.yawVel, Math.PI, SPIN_RATE, dt); }
+    else {
+      p.rollVel = settle(p.roll, p.rollVel, TAU, ROLL_RATE, dt);
+      p.pitchVel = inp.v ? damp(p.pitchVel, -inp.v * FLIP_RATE * mul, 10, dt) : settle(p.pitch, p.pitchVel, TAU, FLIP_RATE, dt);
+      p.yawVel = inp.h ? damp(p.yawVel, -inp.h * SPIN_RATE * mul, 10, dt) : settle(p.yaw, p.yawVel, Math.PI, SPIN_RATE, dt);
+    }
+    p.pitch += p.pitchVel * dt; p.yaw += p.yawVel * dt; p.roll += p.rollVel * dt;
+    if (p.trick) { const t = p.trick; t.pitch += p.pitchVel * dt; t.yaw += p.yawVel * dt; t.roll += p.rollVel * dt; if (p.grabbing) { t.grab += dt; t.grabTotal += dt; t.longest = Math.max(t.longest, t.grab); if (!t.locked && t.grab > 0.25) { t.locked = true; grabLocked(t.grabName); } } }
+    if (fr.y <= gh) {
+      fr.y = gh; fr.grounded = true; fr.vyG = null; p.grabbing = false;
+      const lc = landingCheck();
+      if (!lc.ok) frCrash('Landed on your head');
+      else {
+        if (fr.air > 0.4) scoreAirTrick(lc.perfect, lc.sketchy);
+        if (lc.sketchy) fr.s *= 0.8;
+        p.yaw = Math.abs(lc.ny) > Math.PI / 2 ? Math.sign(lc.ny) * Math.PI : 0;
+        Sfx.land(fr.air > 1);
+      }
+      p.trick = null; p.pitch = 0; p.roll = 0; p.pitchVel = p.yawVel = p.rollVel = 0;
+    }
+  }
+  if (!fr.lift && fr.crashT < 0) {
+    const o = frHit(fr.x, fr.z, fr.y);
+    if (o) frCrash(o.name);
+    // the edges of the mountain turn you back
+    if (Math.abs(fr.x) > FR.W) { fr.x = Math.sign(fr.x) * FR.W; fr.heading = wrap(-fr.heading); }
+    if (fr.z > 85) { fr.z = 85; fr.heading = wrap(Math.PI - fr.heading); }
+    if (fr.z < FR.SUMMIT - 12) { fr.z = FR.SUMMIT - 12; fr.heading = wrap(Math.PI - fr.heading); }
+  }
+  if (p.comboTimer > 0 && fr.grounded) { p.comboTimer -= dt; if (p.comboTimer <= 0) p.combo = 0; }
+  // chairs going round
+  if (frChairs) {
+    const L = liftLen(), m4 = new THREE.Matrix4();
+    for (let i = 0; i < 48; i++) {
+      const u = ((time * 5 + i * (2 * L / 48)) % (2 * L)), up = u < L, pt = liftPoint(up ? u : 2 * L - u, up ? 1 : -1);
+      frChairs.setMatrixAt(i, m4.makeTranslation(pt.x, pt.y - 1.6, pt.z));
+    }
+    frChairs.instanceMatrix.needsUpdate = true;
+  }
+  // the rider, posed by the normal visuals and then placed on the mountain
+  Object.assign(p, { x: fr.x, y: fr.y, z: fr.z, heading: 0, grounded: fr.grounded && !fr.lift, speed: fr.s, crashed: false });
+  updateSkierVisual(dt);
+  const [dx, dz] = frDir(), gh = frGround(fr.x, fr.z);
+  const sl = fr.grounded && !fr.lift ? (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2 : 0;
+  skier.root.position.set(fr.x, fr.y, fr.z);
+  skier.body.rotation.y = p.yaw - fr.heading;
+  skier.body.rotation.x = p.pitch + Math.atan(sl) + (p.arch || 0);
+  skier.body.rotation.z = p.lean + p.roll;
+  skier.shadow.position.set(fr.x, gh + 0.05, fr.z); skier.shadow.visible = !fr.lift;
+  // everyone else
+  for (const o of fr.others.values()) {
+    const k = 1 - Math.exp(-10 * dt);
+    o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k; o.z += (o.tz - o.z) * k;
+    o.root.position.set(o.x, o.y, o.z);
+    o.body.rotation.set(o.p || 0, (o.yw || 0) - (o.h || 0), o.r || 0);
+  }
+  if ((fr.sendT -= dt) <= 0 && fr.net) {
+    fr.sendT = 0.15;
+    fr.net.send({ id: fr.id, n: fr.name, x: Math.round(fr.x * 10), y: Math.round(fr.y * 10), z: Math.round(fr.z * 10), h: Math.round(fr.heading * 100), p: Math.round(p.pitch * 100), w: Math.round(p.yaw * 100), r: Math.round(p.roll * 100) });
+  }
+  // HUD
+  const s = totalScore(); if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
+  if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
+  hud.speed.textContent = `${Math.round(fr.s * 3.6)} km/h`;
+  const n = fr.others.size, where = fr.lift ? 'on the chairlift' : fr.z > -40 ? 'at the lodge' : `${Math.round(frTerrain(fr.x, fr.z))} m up`;
+  hud.race.textContent = `FREERIDE  ·  ${fr.status === 'online' ? `${n + 1} rider${n ? 's' : ''} on the mountain` : fr.status === 'connecting' ? 'connecting…' : 'offline'}  ·  ${where}  ·  Esc to leave`;
+  const showCombo = p.combo > 1 && p.comboTimer > 0;
+  hud.combo.classList.toggle('hidden', !showCombo);
+  if (showCombo) { hud.comboText.textContent = `COMBO x${Math.min(1 + 0.5 * (p.combo - 1), 8)}  ·  ${p.comboTotal.toLocaleString()}`; hud.comboFill.style.width = `${(p.comboTimer / COMBO_WINDOW) * 100}%`; }
+}
+function updateFrLift(dt, inp) {
+  const L = liftLen();
+  fr.lift.d += (inp.jump || fr.lift.skip ? 260 : 60) * dt;
+  if (inp.jump && !fr.lift.skip) { fr.lift.skip = true; fadeScreen('#fff'); }
+  const pt = liftPoint(Math.min(fr.lift.d, L), 1);
+  fr.x = pt.x; fr.y = pt.y - 1.95; fr.z = pt.z; fr.heading = 0; fr.s = 0; fr.grounded = true;
+  p.pitch = 0; p.roll = 0; p.yaw = 0; p.lean = 0;
+  if (!fr.liftChair) {
+    fr.liftChair = new THREE.Mesh(frChairs.geometry, vcol); frGroup.add(fr.liftChair);
+  }
+  fr.liftChair.visible = true; fr.liftChair.position.set(pt.x, pt.y - 1.6, pt.z);
+  if (fr.lift.d >= L) {
+    // hop off at the summit, facing down the mountain
+    fr.lift = null; fr.liftChair.visible = false;
+    fr.x = FR.LIFT_X + 12; fr.z = FR.SUMMIT + 6; fr.y = frGround(fr.x, fr.z); fr.heading = Math.PI; fr.s = 4; fr.vyG = null;
+    fr.safe = fr.prevSafe = { x: fr.x, z: fr.z, heading: fr.heading };
+    snapCam = true; showTrick('The Summit', 'Ride anywhere you like', true); Sfx.perfect();
+  }
+}
+function frCamera(dt) {
+  let cx, cy, cz, lx, ly, lz;
+  if (fr.lift) { cx = fr.x + 6; cy = fr.y + 3; cz = fr.z + 11; lx = fr.x - 2; ly = fr.y - 1; lz = fr.z - 22; }
+  else {
+    const [dx, dz] = frDir();
+    cx = fr.x - dx * 9; cz = fr.z - dz * 9; cy = Math.max(fr.y + 4, frTerrain(cx, cz) + 2.2);
+    lx = fr.x + dx * 7; ly = fr.y + 1.2; lz = fr.z + dz * 7;
+  }
+  const k = snapCam ? 1 : 1 - Math.exp(-6 * dt);
+  camera.position.x += (cx - camera.position.x) * k; camera.position.y += (cy - camera.position.y) * k; camera.position.z += (cz - camera.position.z) * k;
+  camLook.lerp(tmpV.set(lx, ly, lz), snapCam ? 1 : 1 - Math.exp(-10 * dt));
+  camera.up.set(0, 1, 0); camera.lookAt(camLook);
+  const fov = 64 + clamp((fr.s - 15) * 0.5, 0, 12);
+  if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
+  if (shake > 0) { camera.position.x += rand(-1, 1) * shake * 0.4; camera.position.y += rand(-1, 1) * shake * 0.4; shake = Math.max(0, shake - dt * 1.8); }
+  snapCam = false;
+}
+
 // ---------- player ----------
 const p = {};
 function resetPlayer() {
@@ -3124,9 +3519,9 @@ addEventListener('keydown', e => {
   latched.delete(e.code);
   Sfx.init();
   // hold jump to crouch & charge, release to pop
-  if (JUMP_KEYS.includes(e.code) && state === 'play') { jumpQueued = true; jumpPower = JUMP_POP; }
+  if (JUMP_KEYS.includes(e.code) && (state === 'play' || state === 'freeride')) { jumpQueued = true; jumpPower = JUMP_POP; }
   if (e.code === 'KeyG' && state === 'play') nextGrab();
-  if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play')) togglePause();
+  if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play' || state === 'freeride')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
   if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
   if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy && $('panel').classList.contains('hidden')) startRun();
@@ -3142,7 +3537,7 @@ document.addEventListener('visibilitychange', () => { if (document.hidden && sta
 const STICK_R = 56;
 const touch = { stick: null, jump: null };
 const stickEl = $('tStick'), knobEl = $('tKnob'), jumpEl = $('tJump');
-const touchPlay = () => isTouch && (state === 'play' || state === 'crash') && !paused;
+const touchPlay = () => isTouch && (state === 'play' || state === 'crash' || state === 'freeride') && !paused;
 function drawStick() {
   const st = touch.stick;
   stickEl.classList.toggle('on', !!st);
@@ -3167,7 +3562,7 @@ canvas.addEventListener('pointerdown', e => {
     if (!touch.stick) { touch.stick = { id: e.pointerId, ax: e.clientX, ay: e.clientY, x: e.clientX, y: e.clientY }; drawStick(); }
   } else if (!touch.jump) {
     touch.jump = { id: e.pointerId };
-    if (state === 'play') { jumpQueued = true; jumpPower = JUMP_POP; }
+    if (state === 'play' || state === 'freeride') { jumpQueued = true; jumpPower = JUMP_POP; }
     if (p.trick && !p.grounded && !p.grinding && p.airTime > 0.2) nextGrab();   // tap again in the air: switch grab
     jumpEl.classList.add('down');
   }
@@ -3747,6 +4142,7 @@ function cycleView() {
 let snapCam = false;
 const eyeV = new THREE.Vector3(), lookV = new THREE.Vector3(), upV = new THREE.Vector3();
 function updateCamera(dt) {
+  if (state === 'freeride') return frCamera(dt);
   let view = VIEWS[viewIdx].id;
   if (view === 'first' && (p.crashed || state === 'menu')) view = 'chase';   // tumbling in first person is unreadable
   skier.upper.visible = view !== 'first';
@@ -3910,6 +4306,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 function show(id, on) { $(id).classList.toggle('hidden', !on); }
 
 function startRun(m = mode) {
+  leaveFreeride();
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
   Quality.cap = Infinity; Quality.apply();
   if (mode === 'level') level.def = LEVELS[level.n], level.idx = 0;
@@ -4011,6 +4408,7 @@ async function restartWithAd() {
 }
 
 function toMenu() {
+  leaveFreeride();
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
@@ -4126,6 +4524,7 @@ function demoStep(dt) {
 }
 
 function togglePause(force) {
+  if (state === 'freeride') return toMenu();   // leaving the mountain
   if (state !== 'play') return;
   paused = force === true ? true : !paused;
   show('pause', paused);
@@ -4159,6 +4558,7 @@ function frame(now) {
   if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
   if (paused) return;
   time += dt;
+  if (state === 'freeride') updateFreeride(dt);
   if (state === 'cabin') { for (const pl of allPools) pl.flush(); updateCabin(dt); return; }
   if (state === 'island') { updateIsland(dt); return; }
   if (state === 'play') {
@@ -4223,7 +4623,7 @@ function frame(now) {
   }
   Snowfall.update(dt, camera);
   aurora.update(time); if (clouds.group.visible) clouds.update(dt);
-  updateSkierVisual(dt);
+  if (state !== 'freeride') updateSkierVisual(dt);
   updateCamera(dt);
   if (state === 'play' || state === 'crash') updateHUD(dt);
   for (const pl of allPools) pl.flush();
@@ -4242,7 +4642,7 @@ initUI({
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
   closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
   music: Music, soundUI: () => updateMuteBtn(),
-  levels: levelInfo(), onLevel: n => startLevel(n),
+  levels: levelInfo(), onLevel: n => startLevel(n), onFreeride: () => startFreeride(),
 });
 toMenu();
 requestAnimationFrame(frame);
@@ -4251,4 +4651,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRamps() { return frRamps; }, frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
