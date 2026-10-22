@@ -768,6 +768,16 @@ export function initUI(c) {
   };
   const chat = initChat({ openPanel, nameForm });
   $('globalChatBtn').onclick = () => chat.openChat();
+  // a one-time note to every player asking for ideas in the global chat
+  setTimeout(() => {
+    if (save.feedbackAsked || !$('panel').classList.contains('hidden') || $('menu').classList.contains('hidden')) return;
+    save.feedbackAsked = true; persist();
+    openPanel('Ideer?', `<div class="note" style="font-size:16px;line-height:1.5;color:#fff">Skriv hva dere vil jeg skal fikse/adde i global chat i main menu</div>
+      <button class="btn primary big" id="feedbackChat" style="width:100%;margin-top:12px">Åpne global chat</button>
+      <button class="btn" id="feedbackOk" style="width:100%;margin-top:8px">OK</button>`);
+    $('feedbackChat').onclick = () => chat.openChat();
+    $('feedbackOk').onclick = closePanel;
+  }, 1200);
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };
   addEventListener('keydown', e => {
