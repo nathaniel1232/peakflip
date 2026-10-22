@@ -2569,14 +2569,17 @@ function startChase() {
   chase.on = true; chase.t = 0; chase.gap = 7; chase.knock = 0;
   chase.folks = [makeResident('bibi'), makeResident('tung')];
   for (const r of chase.folks) world.add(r.g);
+  ensureRearFrame();
+  rearFrame.style.display = '';
+  showTrick('THEY\'RE COMING!', 'Keep your speed up!', true);
+}
+function ensureRearFrame() {
   if (!rearFrame) {
     rearFrame = document.createElement('div');
-    rearFrame.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);border:3px solid #fff;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.4);pointer-events:none;z-index:1;font:800 12px system-ui,sans-serif;color:#fff;text-shadow:0 1px 3px #000;letter-spacing:.08em';
+    rearFrame.style.cssText = 'position:fixed;right:12px;top:58px;border:3px solid #fff;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.4);pointer-events:none;z-index:1;font:800 12px system-ui,sans-serif;color:#fff;text-shadow:0 1px 3px #000;letter-spacing:.08em';
     rearFrame.innerHTML = '<span style="position:absolute;left:8px;top:4px">REAR VIEW</span><span style="position:absolute;right:8px;top:4px;color:#ff5a5a" id="chaseGap"></span>';
     document.body.appendChild(rearFrame);
   }
-  rearFrame.style.display = '';
-  showTrick('THEY\'RE COMING!', 'Keep your speed up!', true);
 }
 function endChase(result) {
   if (rearFrame) rearFrame.style.display = 'none';
@@ -2607,8 +2610,10 @@ function updateChase(dt) {
   const el = $('chaseGap'); if (el) el.textContent = `${Math.max(0, chase.gap).toFixed(0)} m`;
 }
 function renderRearView() {
-  if (!chase.on || !rearFrame) return;
-  const w = Math.min(360, innerWidth * 0.42), h = w * 0.5, x = (innerWidth - w) / 2, y = 64;
+  const want = chase.on || (ava.on && (state === 'play' || state === 'crash'));
+  if (!want) { if (rearFrame && !chase.on) rearFrame.style.display = 'none'; return; }
+  ensureRearFrame(); rearFrame.style.display = '';
+  const w = Math.min(300, innerWidth * 0.36), h = w * 0.56, x = innerWidth - w - 12, y = 58;
   rearFrame.style.width = `${w}px`; rearFrame.style.height = `${h}px`;
   rearCam.aspect = w / h; rearCam.updateProjectionMatrix();
   tmpV.set(p.x, Math.max(0, p.y) + 2.2, p.z - 1); world.localToWorld(tmpV); rearCam.position.copy(tmpV);
@@ -2620,6 +2625,7 @@ function renderRearView() {
 }
 // ---------- Heaven Island: past 500,000 points, fly so high the mountain whites out, and you land on a bright
 // island in the clouds. Ski anywhere you like for a while (no crashes), then drop back onto the run ----------
+const ISLAND_ON = false;   // switched off for now; flip back to true to bring the island back
 const ISLAND_SCORE = 500000, ISLAND_FADE = [24, 40], ISLAND_TIME = 20, ISLAND_R = 72;
 let islandDone = false, skyWhite = 0;
 const islandH = (x, z) => {
@@ -2716,7 +2722,7 @@ const isl = { x: 0, y: 0, z: 0, vy: 0, heading: 0, speed: 0, t: 0, grounded: tru
 
 // the sky turns white as you climb, and at the very top you're through
 function updateSkyWhite() {
-  const want = mode === 'endless' && !islandDone && !special() && state === 'play' && totalScore() > ISLAND_SCORE
+  const want = ISLAND_ON && mode === 'endless' && !islandDone && !special() && state === 'play' && totalScore() > ISLAND_SCORE
     ? clamp((p.y - ISLAND_FADE[0]) / (ISLAND_FADE[1] - ISLAND_FADE[0]), 0, 1) : 0;
   if (want === 0 && skyWhite === 0) return;
   skyWhite = want;
@@ -2911,6 +2917,54 @@ function cleanup(pz) {
 function clearWorld() {
   cleanup(-1e9); secretCabin = null; endChase();
   if (finish) { world.remove(finish.mesh); finish = null; }
+}
+
+
+// ---------- Avalanche mode: a wall of snow comes down the mountain behind you and keeps getting faster.
+// Tricks give you a burst of speed; smash into things or carve too much and it swallows you ----------
+const ava = { on: false, gap: 0, t: 0, rumble: 0 };
+const avaWall = (() => {
+  const g = new THREE.Group(), layers = [];
+  const white = lam(0xf7fbff), shade = lam(0xd8e6f2);
+  for (let l = 0; l < 3; l++) {
+    const parts = [];
+    for (let i = 0; i < 26; i++) {
+      const r = rand(1.6, 3.4) * (1 + l * 0.35);
+      parts.push({ geo: new THREE.IcosahedronGeometry(r, 0), color: Math.random() < 0.7 ? 0xf7fbff : 0xd8e6f2, m: T(rand(-20, 20), rand(-1, 3) + l * 2.5, rand(-2, 2)) });
+    }
+    const m = new THREE.Mesh(merged(parts), vcol); m.position.set(0, 1.5 + l * 1.5, l * 5); g.add(m); layers.push(m);
+  }
+  const back = new THREE.Mesh(box(46, 16, 20), white); back.position.set(0, 8, 16); g.add(back);
+  const dust = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
+  dust.scale.set(60, 26, 1); dust.position.set(0, 9, 2); g.add(dust);
+  g.visible = false; world.add(g);
+  void shade;
+  return { g, layers };
+})();
+function startAvalanche() {
+  Object.assign(ava, { on: true, gap: 45, t: 0, rumble: 0 });
+  avaWall.g.visible = true;
+  showTrick('AVALANCHE!', 'Go go go!', true);
+  Sfx.noise(1.5, 0.5, 200); Sfx.tone(60, 1.4, 'sawtooth', 0.15, 40);
+}
+function stopAvalanche() { ava.on = false; avaWall.g.visible = false; hud.race.style.color = ''; }
+const avaSpeed = () => baseSpeed(-(p.z + ava.gap)) * (1.0 + Math.min(ava.t, 150) * 0.0035);
+function updateAvalanche(dt) {
+  if (!ava.on) return;
+  if (state === 'play') {
+    ava.t += dt;
+    ava.gap += (p.speed - avaSpeed()) * dt;
+    ava.gap = Math.min(ava.gap, 60);   // it never falls hopelessly far behind
+    if (ava.gap <= 0) { ava.gap = 0; return crash('Buried by the avalanche'); }
+    // the closer it gets, the more the ground shakes and the louder it roars
+    const near = clamp(1 - ava.gap / 25, 0, 1);
+    if (near > 0) shake = Math.max(shake, near * 0.18);
+    if ((ava.rumble -= dt) < 0) { ava.rumble = 0.35; Sfx.noise(0.45, 0.08 + near * 0.35, 180 + near * 200); }
+  } else if (state === 'crash' && p.reason === 'Buried by the avalanche') ava.gap = damp(ava.gap, -12, 2, dt);   // and rolls right over you
+  avaWall.g.position.set(0, 0, p.z + ava.gap);
+  if (!chase.on) { const el = $('chaseGap'); if (el) el.textContent = `${Math.max(0, ava.gap).toFixed(0)} m`; }
+  avaWall.layers.forEach((m, i) => { m.rotation.x -= dt * (2.5 - i * 0.6); m.position.y = 1.5 + i * 1.5 + Math.sin(time * 6 + i) * 0.3; });
+  if (Math.random() < 0.5) Particles.emit(rand(-14, 14), rand(0.5, 6), p.z + ava.gap - 1, 3, 3, 4, 0xffffff, -1);
 }
 
 // ---------- player ----------
@@ -3110,20 +3164,35 @@ function readInput() {
 }
 
 // ---------- tricks & scoring ----------
-const GRABS = ['Mute', 'Safety', 'Japan', 'Tail', 'Indy'], BOARD_GRABS = ['Indy', 'Melon', 'Method', 'Stalefish', 'Nose'];
+const GRABS = ['Mute', 'Safety', 'Japan', 'Tail', 'Indy', 'Truck Driver', 'Critical', 'Seatbelt'], BOARD_GRABS = ['Indy', 'Melon', 'Method', 'Stalefish', 'Nose', 'Crail', 'Roast Beef', 'Tail'];
 // arm angles per grab: [left x, left z, right x, right z, body arch]; positive x swings an arm forward
 const GRAB_POSE = {
   Mute: [1.3, -0.3, 1.3, 0.3, 0], Safety: [0.35, -0.6, -0.1, 1.0, 0], Japan: [1.4, -0.2, -1.2, 0.4, 0.15],
   Tail: [0.6, -1.2, -1.4, 0.3, -0.25], Indy: [-0.3, -1.3, 1.1, 0.5, 0],
   Melon: [1.2, -0.2, 0.3, 1.4, 0], Method: [-1.2, -0.3, 0.2, 1.5, 0.4], Stalefish: [0.1, -1.5, -1.3, 0.4, 0], Nose: [1.6, 0, 0.4, 1.2, -0.2],
+  'Truck Driver': [1.5, -0.35, 1.5, 0.35, -0.2], Critical: [1.1, -0.5, -0.6, 1.2, 0.1], Seatbelt: [1.3, 0.6, 0.2, 0.3, 0.3],
+  Crail: [1.4, -0.4, -0.8, 0.9, 0.2], 'Roast Beef': [0.2, -0.4, -0.9, 1.4, -0.1],
 };
+// what the skis (or board) do during each grab: [pitch, yaw, roll] of the lower body, swung from the hips
+const GRAB_TWEAK = {
+  Mute: [0.15, 0.25, 0.35], Safety: [-0.2, 0, -0.45], Japan: [0.35, -0.3, 0.6], Tail: [0.6, 0, 0], Indy: [0.1, 0, 0.55],
+  'Truck Driver': [-0.55, 0, 0], Critical: [0.2, 0.7, 0.2], Seatbelt: [0.55, 0.15, -0.2],
+  Melon: [0.1, 0.2, -0.6], Method: [0.5, 0, 0.7], Stalefish: [-0.1, -0.2, 0.6], Nose: [-0.5, 0, 0], Crail: [-0.35, 0.3, 0.4], 'Roast Beef': [0.2, -0.3, -0.5],
+};
+const tweakE = new THREE.Euler(0, 0, 0, 'YXZ'), legsV = new THREE.Vector3();
+// a grab held long enough "locks in": a sparkle, a click and its name pops up
+function grabLocked(name) {
+  showTrick(name, '', false);
+  Sfx.tone(1175, 0.06, 'triangle', 0.1); Sfx.tone(1568, 0.08, 'triangle', 0.08, null, 0.05);
+  Particles.emit(p.x, p.y + 0.9, p.z, 14, 2.5, 2, 0xffe27a, 0);
+}
 // G in the air: switch to the next grab; grabs you hold long enough all count toward the trick name
 function nextGrab() {
   const t = p.trick; if (!t || p.grounded || p.grinding) return;
   const list = isBoard() ? BOARD_GRABS : GRABS;
   if (t.grab > 0.25 && !t.grabs.includes(t.grabName)) t.grabs.push(t.grabName);
   t.grabName = list[(list.indexOf(t.grabName) + 1) % list.length];
-  t.grab = 0;
+  t.grab = 0; t.locked = false;
 }
 function startAir() {
   p.fromRamp = p.y > 0.3 || !!p.grinding;   // hops from flat snow can never crash
@@ -3132,7 +3201,7 @@ function startAir() {
   if (p.charging) {          // held jump off a lip → auto-pop with the stored charge
     p.charging = false; p.vy += popFromCharge(p.chargeT) * 0.8; Sfx.ollie();
   }
-  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * 5) | 0], grabs: [], grabTotal: 0 };
+  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * (isBoard() ? BOARD_GRABS : GRABS).length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false };
   ptr.ax = ptr.x;   // keep the vertical anchor: a held up/down drag starts a flip right away
   if (touch.stick) { touch.stick.ax = touch.stick.x; drawStick(); }   // same for the stick: steering isn't a spin
 }
@@ -3144,6 +3213,7 @@ function award(name, pts, perfect) {
   const total = Math.round(pts * mult * (special() ? 2 : 1));   // special worlds pay double
   p.trickScore += total; p.comboTotal += total;
   showTrick(name, `+${total.toLocaleString()}${mult > 1 ? `  x${mult}` : ''}`, perfect);
+  if (mode === 'avalanche' && !demo) { p.speed += 2 + Math.min(4, pts / 1500); p.boostT = 1; }   // tricks outrun the snow
   missionToast(track('combo', p.combo, 'max'));
   if (!p.happy && !demo && (p.combo >= 6 || total >= 6000)) { p.happy = true; Platform.happytime(); }
 }
@@ -3186,6 +3256,9 @@ function scoreAirTrick(perfect, sketchy) {
   if (grabbed) parts.push(t.grabs.join(' to '));
   if (!parts.length) parts.push('Big Air');
   missionToast([...track('flips', flips + rolls), ...track('spin', spins, 'max'), ...(p.fromRamp ? track('oneFlips', flips, 'max') : []), ...track('grab', t.grabTotal, 'max'), ...(perfect && !sketchy ? track('perfect', 1) : [])]);
+  // hold one grab a long time and it's tweaked out
+  if (grabbed && t.longest > 1.8) { pts = Math.round(pts * 1.5); parts.unshift('Boned'); }
+  else if (grabbed && t.longest > 1.0) { pts = Math.round(pts * 1.25); parts.unshift('Tweaked'); }
   if (sketchy) { pts = Math.round(pts * 0.4); parts.unshift('Sketchy'); p.comboTimer = 0; Sfx.trick(0); }
   else if (perfect) { pts = Math.round(pts * 1.5); parts.unshift('Perfect'); p.speed += 4; Sfx.perfect(); }
   if (t.switch && isBoard()) pts = Math.round(pts * 1.25);   // tricks out of switch are harder on a board
@@ -3396,7 +3469,7 @@ function updatePlayer(dt) {
       else p.yawVel = settle(p.yaw, p.yawVel, Math.PI, SPIN_RATE, dt);
     }
     p.pitch += p.pitchVel * dt; p.yaw += p.yawVel * dt; p.roll += p.rollVel * dt;
-    if (p.trick) { p.trick.pitch += p.pitchVel * dt; p.trick.yaw += p.yawVel * dt; p.trick.roll += p.rollVel * dt; if (p.grabbing) { p.trick.grab += dt; p.trick.grabTotal += dt; } }
+    if (p.trick) { p.trick.pitch += p.pitchVel * dt; p.trick.yaw += p.yawVel * dt; p.trick.roll += p.rollVel * dt; if (p.grabbing) { const t = p.trick; t.grab += dt; t.grabTotal += dt; t.longest = Math.max(t.longest, t.grab); if (!t.locked && t.grab > 0.25) { t.locked = true; grabLocked(t.grabName); } } }
 
     const r = p.vy < 0 ? railAt(p.x, p.z) : null;
     if (r && prevY >= r.top - 0.2 && p.y <= r.top + 0.1) {
@@ -3547,6 +3620,12 @@ function updateSkierVisual(dt) {
   skier.arms[1].rotation.x += (tgt[2] - skier.arms[1].rotation.x) * k; skier.arms[1].rotation.z += (tgt[3] - skier.arms[1].rotation.z) * k;
   p.arch = damp(p.arch || 0, gp ? gp[4] : p.butter ? 0.28 : 0, 10, dt);
   b.rotation.x += p.arch;
+  // the skis/board swing out into the grab's tweak (the boots go with them), and the poles tuck away
+  const tw = gp && GRAB_TWEAK[p.trick.grabName] || [0, 0, 0], tk = 1 - Math.exp(-14 * dt);
+  tweakE.set(tweakE.x + (tw[0] - tweakE.x) * tk, tweakE.y + (tw[1] - tweakE.y) * tk, tweakE.z + (tw[2] - tweakE.z) * tk);
+  for (const g of [skier.skis, skier.board]) g.rotation.copy(tweakE);
+  skier.legs.rotation.set(tweakE.x, tweakE.y + (isBoard() ? Math.PI / 2 : 0), tweakE.z, 'YXZ'); skier.legs.position.copy(legsV.set(0, -0.85, 0).applyEuler(tweakE));
+  for (const pl of skier.poles) pl.rotation.x = damp(pl.rotation.x, gp ? -1.2 : -0.25, 12, dt);
   // blob shadow
   const sh = gh, height = Math.max(0, p.y - sh);
   skier.shadow.position.set(p.x, sh + 0.03, p.z);
@@ -3703,8 +3782,11 @@ function updateHUD(dt) {
   } else {
     const s = totalScore();
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
-    hud.race.classList.toggle('hidden', !special());
-    if (special()) hud.race.textContent = `${WORLDS[zone].name}  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
+    hud.race.classList.toggle('hidden', !special() && mode !== 'avalanche');
+    if (mode === 'avalanche') {
+      hud.race.textContent = `AVALANCHE  ·  ${Math.max(0, ava.gap).toFixed(0)} m behind you`;
+      hud.race.style.color = ava.gap < 15 ? '#ff5a5a' : '';
+    } else if (special()) hud.race.textContent = `${WORLDS[zone].name}  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
   }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
   hud.speed.textContent = `${Math.round(p.speed * 3.6)} km/h`;
@@ -3728,7 +3810,7 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 function startRun(m = mode) {
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
   Quality.cap = Infinity; Quality.apply();
-  zone = 'normal'; portal = null; islandDone = false; nextCaveD = 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  zone = 'normal'; portal = null; islandDone = false; nextCaveD = mode === 'avalanche' ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); fixRider();
   if (closet.on) setCloset(false);
@@ -3757,7 +3839,8 @@ function startRun(m = mode) {
   while (decorZ > -VIEW) { spawnDecor(decorZ); decorZ -= 4; }
   state = 'play'; paused = false;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
-  show('raceInfo', mode === 'race');
+  show('raceInfo', mode === 'race' || mode === 'avalanche');
+  if (mode === 'avalanche') startAvalanche(); else stopAvalanche();
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
@@ -3777,6 +3860,7 @@ function endCommon() {
 }
 
 function gameOver() {
+  if (mode === 'avalanche') return avalancheOver();
   state = 'over';
   const score = totalScore();
   const newBest = score > save.best;
@@ -3785,6 +3869,16 @@ function gameOver() {
   save.coins += bonus;
   const missions = endCommon();
   showResults({ mode: 'endless', score, newBest: newBest && score > 300, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z) });
+}
+
+function avalancheOver() {
+  state = 'over';
+  const score = totalScore(), newBest = score > (save.avaBest || 0);
+  if (newBest) save.avaBest = score;
+  const bonus = Math.floor(score / 300);   // a little more than Endless: it's harder
+  save.coins += bonus;
+  const missions = endCommon();
+  showResults({ mode: 'avalanche', score, newBest: newBest && score > 300, best: save.avaBest, reason: p.reason, coins: p.coins, bonus, missions, dist: Math.floor(-p.z), time: ava.t });
 }
 
 function finishRace() {
@@ -3823,6 +3917,7 @@ async function restartWithAd() {
 function toMenu() {
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
+  stopAvalanche();
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   if (closet.on) menuStill(); else startDemo();
@@ -4023,6 +4118,7 @@ function frame(now) {
   updatePads(dt);
   updateAnimals(dt);
   updateChase(dt);
+  updateAvalanche(dt);
   updateSkyWhite();
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
@@ -4060,4 +4156,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get ava() { return ava; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

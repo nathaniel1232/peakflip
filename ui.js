@@ -146,6 +146,7 @@ export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
   const rs = save.raceScores?.[today()];
+  if ($('avaSub') && save.avaBest) $('avaSub').textContent = `Outrun the snow · best ${save.avaBest.toLocaleString()}`;
   $('raceSub').textContent = rs ? `Forest course · ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
@@ -546,6 +547,7 @@ let skippedName = false;
 export function showResults(r) {
   const token = ++resultToken;
   setTimeout(checkRewards, 1200);
+  if (r.mode === 'avalanche') { resultsCard(r, token); return; }   // its own local best, no world board
   if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
   else { resultsCard(r, token); }
 }
@@ -563,6 +565,11 @@ function resultsCard(r, token = resultToken) {
       <div class="big-num"><small>RACE POINTS</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${fmtTime(r.time)} elapsed · ${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · points rank first, time breaks ties</div>
       ${field}`;
+  } else if (r.mode === 'avalanche') {
+    body = `
+      ${r.newBest ? '<div class="tag">NEW AVALANCHE RECORD</div>' : ''}
+      <div class="big-num"><small>AVALANCHE SCORE</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
+      <div class="sub">${esc(r.reason)} · ${r.dist.toLocaleString()} m · survived ${Math.floor(r.time)} s · best ${r.best.toLocaleString()}</div>`;
   } else {
     body = `
       ${r.newBest ? '<div class="tag">NEW RECORD</div>' : ''}
@@ -590,9 +597,9 @@ function resultsCard(r, token = resultToken) {
   $('againBtn').onclick = () => { const b = $('againBtn'); b.disabled = true; b.innerHTML = `${icon('retry')}Loading…`; cfg.onAgain(); };
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop(); };
-  $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
+  $('toLb').onclick = () => { lbTab = r.mode === 'race' ? 'race' : 'endless'; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
-  rankRow(r, token);
+  if (r.mode !== 'avalanche') rankRow(r, token);
   miniCache = {};
 }
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
@@ -723,6 +730,7 @@ async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
     ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race in ${fmtTime(r.time)}. Race points rank first, with elapsed time as the tiebreak. Can you beat my ghost?`
+    : r.mode === 'avalanche' ? `I outran the avalanche for ${Math.floor(r.time)} s and scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -735,12 +743,13 @@ async function share(r) {
 export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
-  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
+  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag'); put('icAva', 'mountain');
   put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help'); put('icGear', 'gear');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
+  $('avaBtn').onclick = () => c.onPlay('avalanche');
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
