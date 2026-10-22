@@ -3429,7 +3429,7 @@ function exitWorld() {
 
 // ---------- per-frame player update ----------
 function updatePlayer(dt) {
-  const inp = readInput();
+  const inp = readInput(), y0 = p.y;
   const [gh0, gs0] = groundAt(p.x, p.z);
   p.distScore += p.speed * dt * Math.max(1, p.speed / 25) * (special() ? 2 : 1);   // going faster scores faster
 
@@ -3573,6 +3573,16 @@ function updatePlayer(dt) {
         o.passed = true;
         if (Math.abs(dx) < o.r + 1.1 && p.y < o.h + 0.8) { p.trickScore += 50; showTrick('Close call!', '+50', false); Sfx.near(); missionToast(track('near', 1)); }
       }
+      continue;
+    }
+    // dropping onto the very top of a tree bounces you off it instead of killing you
+    if (o.kind === 'tree' && o.topT && time - o.topT < 0.6) continue;
+    if (o.kind === 'tree' && !p.grounded && !p.grinding && p.vy <= 0 && y0 >= o.h * 0.72 && Math.abs(dz) < o.r + 0.5 && Math.abs(dx) < o.r + 0.32 && p.y < o.h) {
+      o.topT = time; o.passed = true;
+      p.y = o.h; p.vy = 9;
+      p.trickScore += 300; showTrick('Treetop bounce!', '+300', false);
+      Sfx.tone(520, 0.12, 'triangle', 0.14, 780); Sfx.noise(0.15, 0.3, 1400);
+      Particles.emit(o.x, o.h, o.z, 24, 3, 3, 0xffffff, -2); Particles.emit(o.x, o.h - 0.4, o.z, 10, 2, 2, 0x2f6b3a, -3);
       continue;
     }
     if (Math.abs(dz) < o.r + 0.5 && Math.abs(dx) < o.r + 0.32 && p.y < o.h)
