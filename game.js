@@ -1291,22 +1291,29 @@ const finishTex = (() => {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 })();
 
-function addRamp(x, z0, L, H, W) {
+function addRamp(x, z0, L, H, W, pro = false) {
   L = Math.round(L * 2) / 2; H = Math.round(H * 4) / 4;
   const g = new THREE.Group(); g.position.set(x, 0, z0);
   g.add(new THREE.Mesh(rampGeo(L, H, W), mat.ramp));
   const lip = new THREE.Mesh(box(W + 0.05, 0.1, 0.35), mat.rampEdge); lip.position.set(0, H - 0.02, -L + 0.15); g.add(lip);
   for (const sx of [-1, 1]) { const st = new THREE.Mesh(box(0.12, 0.12, L * 0.9), mat.rampEdge); st.position.set(sx * W / 2, H * 0.35, -L * 0.62); st.rotation.x = Math.atan(H / L) * 1.2; g.add(st); }
+  if (pro) {   // the big line: black-and-gold flags on both sides
+    for (const sx of [-1, 1]) {
+      const pole = new THREE.Mesh(box(0.1, 3.2, 0.1), mat.railPost); pole.position.set(sx * (W / 2 + 0.6), 1.6, -L + 0.5); g.add(pole);
+      const flag = new THREE.Mesh(box(0.06, 0.9, 1.4), proFlagMat); flag.position.set(sx * (W / 2 + 0.6), 2.8, -L + 1); g.add(flag);
+    }
+  }
   world.add(g);
-  ramps.push({ x, z0, L, H, W, mesh: g });
+  ramps.push({ x, z0, L, H, W, pro, mesh: g });
   keepClear(x, W / 2 + 1, z0 + 20, z0 - L - 2);
 }
-function addRail(x, z0, L, top = 0.9) {
+// a rail; with a drop it runs downhill from `top` at the start to `top - drop` at the end
+function addRail(x, z0, L, top = 0.9, drop = 0) {
   const g = new THREE.Group(); g.position.set(x, 0, z0);
-  const bar = new THREE.Mesh(box(0.16, 0.14, L), mat.rail); bar.position.set(0, top, -L / 2); g.add(bar);
-  for (const pz of [-0.4, -L / 2, -L + 0.4]) { const p = new THREE.Mesh(box(0.1, top, 0.1), mat.railPost); p.position.set(0, top / 2, pz); g.add(p); }
+  const bar = new THREE.Mesh(box(0.16, 0.14, Math.hypot(L, drop)), mat.rail); bar.position.set(0, top - drop / 2, -L / 2); bar.rotation.x = -Math.atan2(drop, L); g.add(bar);
+  for (const pz of [-0.4, -L / 2, -L + 0.4]) { const h = top + drop * pz / L; const p = new THREE.Mesh(box(0.1, h, 0.1), mat.railPost); p.position.set(0, h / 2, pz); g.add(p); }
   world.add(g);
-  rails.push({ x, z0, L, top, mesh: g });
+  rails.push({ x, z0, L, top, drop, mesh: g });
   keepClear(x, 1.8, z0 + 24, z0 - L - 3);
 }
 const blocked = (x, z, pad = 1.5) => checkpoints.some(c => Math.abs(z - c.z) < 5 && Math.abs(x - c.x) < c.w / 2 + pad);
@@ -1587,6 +1594,39 @@ function featureRail(z, sp, withKicker) {
   let len = L + 20;
   if (withKicker) { addRamp(x, z - L - 12, 7, 2.25, 5); len += 12 + 7 + sp * airTime(sp, 2.25, 7); }
   return [len, x];
+}
+// kicker straight onto a long down rail: land on it and slide
+function featureGapRail(z, sp) {
+  const x = wr(-6, 6), L = 34;
+  addRamp(x, z, 6, 1.5, 4);
+  addRail(x, z - 9, L, 2, 1.1);
+  for (let i = 1; i < L / 3; i++) addCoin(x, 3.2 - 1.1 * i * 3 / L, z - 9 - i * 3);
+  return [6 + 9 + L + 20, x];
+}
+// three staggered rails side by side: jump off one sideways (jump + steer) onto the next for a Transfer
+function featureRailGarden(z) {
+  const dir = crng() < 0.5 ? -1 : 1, L = 26;
+  [-5, 0, 5].forEach((x, i) => { addRail(dir * x, z - i * 7, L); addCoin(dir * x, 2.2, z - i * 7 - L / 2); });
+  return [14 + L + 20, 0];
+}
+// pick your line: a normal kicker, or the big PRO kicker next to it that pays x1.3
+function featureProLine(z, sp) {
+  const side = crng() < 0.5 ? -1 : 1, xs = -side * 6, xb = side * 5;
+  addRamp(xs, z, 7, 2.2, 5);
+  addRamp(xb, z + 2, 11, 4.4, 6.5, true);
+  const at = airTime(sp, 4.4, 11), ls = lipSpeed(sp, 4.4);
+  for (let i = 1; i < 8; i++) { const t = at * i / 8; addCoin(xb, arcY(sp, 4.4, 11, t) + 1.2, z + 2 - 11 - ls * t); }
+  return [11 + ls * at + 26, xs];
+}
+// rail, kicker, rail: a line built for combos
+function featureJibLine(z, sp) {
+  const x = wr(-5, 5);
+  addRail(x, z, 14);
+  const kz = z - 14 - 10; addRamp(x, kz, 7, 2.3, 5);
+  const at = airTime(sp, 2.3, 7), ls = lipSpeed(sp, 2.3), rz = kz - 7 - ls * at - 6;
+  for (let k = 1; k < 5; k++) { const t = at * k / 5; addCoin(x, arcY(sp, 2.3, 7, t) + 1.2, kz - 7 - ls * t); }
+  addRail(x, rz, 16);
+  return [z - rz + 16 + 20, x];
 }
 function featureRocks(z, d) {
   const n = 4 + Math.floor(d * 5);
@@ -2241,12 +2281,19 @@ function pickSpecial() {
   for (const [k, v] of w) if ((r -= v) < 0) return k;
   return 'ramp';
 }
+const raceDayBefore = day => race.day < day;
 function pickFeature(d) {
+  const race_ = mode === 'race';
   const w = [
-    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['rail', 10], ['railKick', 7], ['rocks', 9 + 5 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
-    ['crevasse', d > 0.05 ? 7 + 10 * d : 0], ['logs', d > 0.02 ? 6 + 10 * d : 0], ['balls', d > 0.12 ? 12 * d : 0], ['field', d > 0.2 ? 12 * d : 0],
+    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['rail', 10], ['railKick', 7], ['rocks', 9 + 5 * d], ['slalom', 10 + 6 * d], ['snake', race_ ? 6 - 4 * d : 3 - 2 * d],
+    // crevasses are gone; the daily race keeps today's course as it was until tomorrow
+    ['crevasse', race_ && raceDayBefore('2026-10-23') && d > 0.05 ? 7 + 10 * d : 0],
+    ['gapRail', race_ ? 0 : 8], ['garden', race_ ? 0 : 7], ['proLine', race_ ? 0 : 9], ['jibLine', race_ ? 0 : 7], ['logs', d > 0.02 ? 6 + 10 * d : 0], ['balls', d > 0.12 ? 12 * d : 0], ['field', d > 0.2 ? 12 * d : 0],
     ['bear', mode === 'race' ? 0 : d > 0.08 ? 6 : 0],
   ];
+  // featureWeights in config.js can change how often each thing shows up in Endless (0 = never)
+  const cw = !race_ && window.PEAKFLIP_CONFIG?.featureWeights || {};
+  for (const e of w) if (Number.isFinite(cw[e[0]])) e[1] = Math.max(0, cw[e[0]]);
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of w) if ((r -= v) < 0) return k;
   return 'ramp';
@@ -2258,6 +2305,7 @@ function pickDemo() {
   for (const [k, v] of DEMO_FEATURES) if ((r -= v) < 0) return k;
   return 'ramp';
 }
+let forcedFeature = null;   // for testing: window.__game.forceFeature('garden')
 function spawnFeature() {
   const z = spawnZ, D = -z, d = clamp(D / 1600, 0, 1), sp = baseSpeed(D);
   if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
@@ -2265,7 +2313,7 @@ function spawnFeature() {
     if (special()) { if (D > -zoneEndZ - 60) { if (!portal) addPortal(zoneEndZ); spawnZ -= 80; return; } }
     else if (D > nextCaveD) { nextCaveD = Infinity; spawnZ -= featureEntrance(z)[0]; return; }
   }
-  const k = special() ? pickSpecial() : demo ? pickDemo() : pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d);
+  const k = forcedFeature || (special() ? pickSpecial() : demo ? pickDemo() : pickFeature(mode === 'race' ? Math.min(1, d * 1.6) : d)); forcedFeature = null;
   const f = {
     ramp: () => featureRamp(z, false, sp), big: () => featureRamp(z, true, sp), rail: () => featureRail(z, sp, false), railKick: () => featureRail(z, sp, true),
     rocks: () => featureRocks(z, d), slalom: () => featureSlalom(z, d), snake: () => featureCoinSnake(z), crevasse: () => featureCrevasse(z, d),
@@ -2273,10 +2321,11 @@ function spawnFeature() {
     rollers: () => featureRollers(z, d), table: () => featureTabletop(z, sp, d), stepdown: () => featureStepDown(z, sp),
     mega: () => featureMega(z, sp), line: () => featureKickerLine(z, sp),
     bear: () => featureBear(z, d),
+    gapRail: () => featureGapRail(z, sp), garden: () => featureRailGarden(z), proLine: () => featureProLine(z, sp), jibLine: () => featureJibLine(z, sp),
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers'].includes(k) && crng() < 0.12 + d * 0.4) {
+  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine'].includes(k) && crng() < 0.12 + d * 0.4) {
     for (let i = 0, n = 1 + Math.floor(d * 2.5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
@@ -2970,6 +3019,8 @@ function bounce() {
   Sfx.tone(180, 0.3, 'sine', 0.3, 720); Sfx.tone(90, 0.15, 'square', 0.12, 60); shake = 0.25;
   Particles.emit(p.x, 0.5, p.z, 18, 3, 6, 0xff2d78, 0); Particles.emit(p.x, 0.5, p.z, 10, 2, 5, 0xffc93c, 0);
 }
+const railTop = (r, z) => r.top - r.drop * clamp((r.z0 - z) / r.L, 0, 1);
+const proFlagMat = lam(0xffc400, { emissive: 0x7a5200 });
 function railAt(x, z) {
   for (const r of rails) if (z <= r.z0 && z >= r.z0 - r.L && Math.abs(x - r.x) < 0.8) return r;
   return null;
@@ -3148,12 +3199,13 @@ function nextGrab() {
 }
 function startAir() {
   p.fromRamp = p.y > 0.3 || !!p.grinding;   // hops from flat snow can never crash
+  const pro = ramps.some(r => r.pro && Math.abs(p.x - r.x) < r.W / 2 + 0.5 && p.z <= r.z0 + 0.5 && p.z >= r.z0 - r.L - 1.5);
   p.grounded = false; p.airTime = 0; p.maxH = 0; p.butter = false;
   latchAtTakeoff();
   if (p.charging) {          // held jump off a lip → auto-pop with the stored charge
     p.charging = false; p.vy += popFromCharge(p.chargeT) * 0.8; Sfx.ollie();
   }
-  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * (isBoard() ? BOARD_GRABS : GRABS).length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false };
+  p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: (isBoard() ? BOARD_GRABS : GRABS)[(Math.random() * (isBoard() ? BOARD_GRABS : GRABS).length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false, pro };
   ptr.ax = ptr.x;   // keep the vertical anchor: a held up/down drag starts a flip right away
   if (touch.stick) { touch.stick.ax = touch.stick.x; drawStick(); }   // same for the stick: steering isn't a spin
 }
@@ -3214,6 +3266,7 @@ function scoreAirTrick(perfect, sketchy) {
   else if (perfect) { pts = Math.round(pts * 1.5); parts.unshift('Perfect'); p.speed += 4; Sfx.perfect(); }
   if (t.switch && isBoard()) pts = Math.round(pts * 1.25);   // tricks out of switch are harder on a board
   if (t.tramp) { pts = Math.round(pts * 1.5); parts.unshift('Tramp'); }
+  if (t.pro) { pts = Math.round(pts * 1.3); parts.unshift('Pro'); }
   else Sfx.trick(flips + spins / 360);
   award(parts.join(' '), pts, perfect);
 }
@@ -3243,12 +3296,14 @@ function land(groundSlope) {
 }
 
 function startGrind(r) {
-  p.grinding = r; p.grindTime = 0; p.grounded = false; p.vy = 0; p.y = r.top; p.lastRail = r; p.pitch = 0; p.pitchVel = 0; p.yawVel = 0; p.roll = 0; p.rollVel = 0;
+  if (p.lastRail && p.lastRail !== r && !p.grounded) { award('Transfer!', 600, false); Sfx.trick(1); }   // rail to rail through the air
+  p.grinding = r; p.grindTime = 0; p.grounded = false; p.vy = 0; p.y = railTop(r, p.z); p.lastRail = r; p.pitch = 0; p.pitchVel = 0; p.yawVel = 0; p.roll = 0; p.rollVel = 0;
   p.yaw = Math.abs(wrap(p.yaw)) > Math.PI / 2 ? Math.PI : 0;
   Sfx.land(false);
 }
-function leaveRail(pop) {
+function leaveRail(pop, h = 0) {
   const r = p.grinding; p.grinding = null;
+  if (h) { p.heading = Math.sign(h) * 0.24; p.vx = Math.sin(p.heading) * p.speed; }   // hop off sideways (onto the next rail)
   if (p.grindTime > 0.2) {
     const name = isBoard() ? (p.grindTime > 0.9 ? 'Long Boardslide' : 'Boardslide') : (r.L > 17 ? 'Long Rail Slide' : 'Rail Slide');
     award(name, (isBoard() ? 180 : 150) + Math.round(p.grindTime * 600), false); missionToast(track('rails', 1));
@@ -3334,13 +3389,14 @@ function updatePlayer(dt) {
 
   if (p.grinding) {
     const r = p.grinding;
-    p.x = damp(p.x, r.x, 20, dt); p.y = r.top; p.vx = 0; p.heading = 0;
+    p.x = damp(p.x, r.x, 20, dt); p.y = railTop(r, p.z); p.vx = 0; p.heading = 0;
+    if (r.drop) p.speed = Math.min(p.speed + 3 * dt, baseSpeed(-p.z) * 1.25);   // a down rail picks up speed
     p.z -= p.speed * dt;
     p.grindTime += dt;
     if (Math.random() < 0.6) Particles.emit(p.x, p.y + 0.05, p.z + 0.4, 2, 1.5, 3, 0xffb347, 4);
     if (Math.random() < 0.25) Sfx.grind();
     if (p.z < r.z0 - r.L) leaveRail(4);
-    else if (inp.jump) leaveRail(jumpPop + 1);
+    else if (inp.jump) leaveRail(jumpPop + 1, inp.h);
   } else if (p.grounded) {
     p.groundTime += dt;
     // --- carving: steer sets a heading; velocity follows the skis ---
@@ -3422,8 +3478,13 @@ function updatePlayer(dt) {
     p.pitch += p.pitchVel * dt; p.yaw += p.yawVel * dt; p.roll += p.rollVel * dt;
     if (p.trick) { p.trick.pitch += p.pitchVel * dt; p.trick.yaw += p.yawVel * dt; p.trick.roll += p.rollVel * dt; if (p.grabbing) { const t = p.trick; t.grab += dt; t.grabTotal += dt; t.longest = Math.max(t.longest, t.grab); if (!t.locked && t.grab > 0.25) { t.locked = true; grabLocked(t.grabName); } } }
 
+    // coming down near a rail pulls you onto it a little, so rail-to-rail transfers and gap-to-rails are makeable
+    if (p.vy < 0) for (const rr of rails) {
+      if (p.z > rr.z0 || p.z < rr.z0 - rr.L || Math.abs(p.x - rr.x) > 2.4) continue;
+      const ty = railTop(rr, p.z); if (p.y > ty - 0.2 && p.y < ty + 3) { p.x = damp(p.x, rr.x, 7, dt); break; }
+    }
     const r = p.vy < 0 ? railAt(p.x, p.z) : null;
-    if (r && prevY >= r.top - 0.2 && p.y <= r.top + 0.1) {
+    if (r && prevY >= railTop(r, p.z) - 0.2 && p.y <= railTop(r, p.z) + 0.1) {
       const lc = landingCheck();
       if (!lc.ok) return crash('Slipped off the rail');
       scoreAirTrick(lc.perfect); p.trick = null;
@@ -4090,4 +4151,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

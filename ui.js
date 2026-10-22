@@ -75,6 +75,12 @@ async function submitRun(r) {
   if (sent) { miniCache = {}; refreshLeader(true); }
   return sent;
 }
+// the server used to turn down scores over 3,000,000; a best like that is sent once more until it's taken
+async function resendBigBest() {
+  if (!save.name || save.best <= 3e6 || save.bigBestSent === save.best) return;
+  const res = await LB.submit('endless', save.best, today(), null);
+  if (res?.ok) { save.bigBestSent = save.best; persist(); miniCache = {}; }
+}
 LB.register = async name => {
   try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
   catch { return null; }
@@ -767,6 +773,7 @@ export function initUI(c) {
     if (taps >= 7) { taps = 0; findSecret('hat', 'bunny', 'Secret found! Bunny Ears are in your Locker.'); }
   };
   const chat = initChat({ openPanel, nameForm });
+  setTimeout(resendBigBest, 3000);
   $('globalChatBtn').onclick = () => chat.openChat();
   // a one-time note to every player asking for ideas in the global chat
   setTimeout(() => {
