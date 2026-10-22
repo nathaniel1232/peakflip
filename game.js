@@ -12,6 +12,7 @@ const FLIP_RATE = 8.5;     // rad/s
 const SPIN_RATE = 10.5;    // rad/s
 const STEER = 13;          // lateral m/s
 let X_LIMIT = 13;           // course half-width (narrower in the forest race)
+const OFF_LIMIT = 18.4;     // Endless: you can leave the run into deep powder up to here (slow going)
 const ROLL_RATE = 8;        // sideflip rad/s
 const VIEW = 260;          // how far ahead we spawn
 const COMBO_WINDOW = 3.0;  // seconds on the ground before a combo banks
@@ -2360,10 +2361,15 @@ function addLiftTower(z) {
   // Keep the lift on the flat shoulder just outside the run so its supports and cable follow the same slope.
   const m = new THREE.Mesh(liftGeo, vcol); m.position.set(-17.5, 0, z);
   world.add(m); decor.push({ z: z - 50, mesh: m });
+  solids.push({ x: -17.5, z, hx: 0.45, hz: 0.45, h: 11, name: 'Hit a lift tower' });
 }
+// things standing off the side of the run that you can now ski into (off-road)
+let solids = [];
+const offroadOK = () => mode === 'endless' && zone === 'normal' && !demo;
+const edgeX = () => offroadOK() ? OFF_LIMIT : X_LIMIT;
 function addCabin(x, z, rotation = rand(-0.4, 0.4), secret = false) {
   const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = rotation;
-  if (secret) addSecretDoor(g, x, z);
+  if (secret) { addSecretDoor(g, x, z); solids.push({ x, z, hx: 2.1, hz: 1.8, h: 4.5, name: 'Ran into a cabin' }); }
   const w = new THREE.Mesh(box(4, 2.6, 3.4), cabinWall); w.position.y = 1.3; g.add(w);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.8, 4), cabinRoof); roof.position.y = 3.5; roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.8); g.add(roof);
   const snow = new THREE.Mesh(new THREE.ConeGeometry(3.1, 0.7, 4), mat.snow); snow.position.y = 4.15; snow.rotation.y = Math.PI / 4; snow.scale.set(1, 1, 0.8); g.add(snow);
@@ -2947,7 +2953,7 @@ function spawnDecor(z) {
   if (!forest && decorN > 20 && Math.random() < 0.004) addYeti((Math.random() < 0.5 ? -1 : 1) * rand(20, 25), z);
   if (!forest && mode === 'endless' && decorN % 160 === 57) {
     addCabin(15.6, z, 0, !demo);
-    if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
+    if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); for (const lx of [14.9, 17.5]) solids.push({ x: lx, z: z + 5, hx: 0.25, hz: 0.25, h: 3, name: 'Hugged a lantern' }); }
   }
 
 }
@@ -2967,6 +2973,7 @@ function cleanup(pz) {
   keep(shapes, q => q.z0 - q.L, q => world.remove(q.mesh));
   keep(caves, c => c.z, () => {});
   keep(approaches, a => a.zBot, () => {});
+  keep(solids, o => o.z - 3, () => {});
   keep(animals, a => a.g.position.z - 4, a => { if (a.mover) world.remove(a.g); });   // decor bears are removed with the decor
 }
 function clearWorld() {
@@ -2980,18 +2987,18 @@ function clearWorld() {
 // and you start over. Reach the finish for a star; enough points earn the second and third ----------
 // seq is ridden in order (and repeats until the finish); d is how nasty the hazards are; width narrows the run
 const LEVELS = [
-  { name: 'First Tracks', diff: 'easy', theme: 'day', len: 700, d: 0.35, tricky: 1.0, seq: ['ramp', 'rocks', 'rail', 'slalom', 'line', 'logs', 'railKick', 'rocks', 'big'] },
-  { name: 'Rail Yard', diff: 'easy', theme: 'golden', len: 800, d: 0.4, tricky: 1.4, seq: ['rail', 'garden', 'rocks', 'jibLine', 'gapRail', 'slalom', 'railKick', 'garden', 'logs', 'jibLine'] },
-  { name: 'Tree Run', diff: 'medium', theme: 'day', len: 800, d: 0.6, tricky: 0.6, width: 10, forest: true, seq: ['slalom', 'ramp', 'field', 'logs', 'slalom', 'rail', 'field', 'slalom'] },
-  { name: 'Sunset Kickers', diff: 'easy', theme: 'golden', len: 900, d: 0.45, tricky: 1.6, seq: ['line', 'rocks', 'proLine', 'table', 'logs', 'big', 'stepdown', 'slalom', 'mega'] },
-  { name: 'Polar Pass', diff: 'medium', theme: 'day', len: 900, d: 0.7, tricky: 0.8, seq: ['bear', 'ramp', 'balls', 'logs', 'bear', 'railKick', 'field', 'balls', 'bear'] },
-  { name: 'Night Shift', diff: 'medium', theme: 'night', len: 1000, d: 0.7, tricky: 1.2, seq: ['ramp', 'field', 'garden', 'logs', 'proLine', 'balls', 'slalom', 'jibLine', 'bear'] },
-  { name: 'North Pole', diff: 'medium', theme: 'xmas', zone: 'xmas', len: 1000, d: 0.7, tricky: 1.0, seq: ['slalom', 'ramp', 'rocks', 'logs', 'rail', 'slalom', 'big', 'rocks', 'line', 'logs'] },
+  { name: 'First Tracks', diff: 'hard', theme: 'day', len: 700, d: 0.75, tricky: 1.0, seq: ['ramp', 'rocks', 'rail', 'slalom', 'line', 'logs', 'railKick', 'rocks', 'big'] },
+  { name: 'Rail Yard', diff: 'hard', theme: 'golden', len: 800, d: 0.75, tricky: 1.4, seq: ['rail', 'garden', 'rocks', 'jibLine', 'gapRail', 'slalom', 'railKick', 'garden', 'logs', 'jibLine'] },
+  { name: 'Tree Run', diff: 'hard', theme: 'day', len: 800, d: 0.75, tricky: 0.6, width: 10, forest: true, seq: ['slalom', 'ramp', 'field', 'logs', 'slalom', 'rail', 'field', 'slalom'] },
+  { name: 'Sunset Kickers', diff: 'hard', theme: 'golden', len: 900, d: 0.75, tricky: 1.6, seq: ['line', 'rocks', 'proLine', 'table', 'logs', 'big', 'stepdown', 'slalom', 'mega'] },
+  { name: 'Polar Pass', diff: 'hard', theme: 'day', len: 900, d: 0.75, tricky: 0.8, seq: ['bear', 'ramp', 'balls', 'logs', 'bear', 'railKick', 'field', 'balls', 'bear'] },
+  { name: 'Night Shift', diff: 'hard', theme: 'night', len: 1000, d: 0.75, tricky: 1.2, seq: ['ramp', 'field', 'garden', 'logs', 'proLine', 'balls', 'slalom', 'jibLine', 'bear'] },
+  { name: 'North Pole', diff: 'hard', theme: 'xmas', zone: 'xmas', len: 1000, d: 0.75, tricky: 1.0, seq: ['slalom', 'ramp', 'rocks', 'logs', 'rail', 'slalom', 'big', 'rocks', 'line', 'logs'] },
   { name: 'Agartha Depths', diff: 'hard', theme: 'agartha', zone: 'agartha', len: 1100, d: 0.8, tricky: 1.1, seq: ['rocks', 'line', 'rocks', 'gapRail', 'table', 'rocks', 'mega', 'rocks', 'stepdown'] },
   { name: 'Snowball Alley', diff: 'hard', theme: 'golden', len: 1000, d: 0.9, tricky: 0.7, width: 11, seq: ['balls', 'ramp', 'balls', 'logs', 'balls', 'rail', 'balls', 'field'] },
-  { name: 'Big Mountain', diff: 'medium', theme: 'day', len: 1200, d: 0.6, tricky: 2.0, speed: 1.2, seq: ['big', 'mega', 'logs', 'stepdown', 'proLine', 'rocks', 'mega', 'line', 'big'] },
-  { name: 'The Gauntlet', diff: 'hard', theme: 'night', len: 1300, d: 1, tricky: 1.0, width: 11, seq: ['field', 'logs', 'bear', 'balls', 'slalom', 'jibLine', 'field', 'logs', 'proLine', 'balls'] },
-  { name: 'Peak Legend', diff: 'hard', theme: 'golden', len: 1600, d: 1, tricky: 1.4, speed: 1.15, width: 11, seq: ['mega', 'field', 'garden', 'balls', 'logs', 'proLine', 'bear', 'slalom', 'gapRail', 'field', 'stepdown', 'balls'] },
+  { name: 'Big Mountain', diff: 'hard', theme: 'day', len: 1200, d: 0.75, tricky: 2.0, speed: 1.2, seq: ['big', 'mega', 'logs', 'stepdown', 'proLine', 'rocks', 'mega', 'line', 'big'] },
+  { name: 'The Gauntlet', diff: 'hard', theme: 'night', len: 1300, d: 1.0, tricky: 1.0, width: 11, seq: ['field', 'logs', 'bear', 'balls', 'slalom', 'jibLine', 'field', 'logs', 'proLine', 'balls'] },
+  { name: 'Peak Legend', diff: 'hard', theme: 'golden', len: 1600, d: 1.0, tricky: 1.4, speed: 1.15, width: 11, seq: ['mega', 'field', 'garden', 'balls', 'logs', 'proLine', 'bear', 'slalom', 'gapRail', 'field', 'stepdown', 'balls'] },
 ];
 // easy: fewer hazards and rocks only slow you down · hard: twice the hazards, faster, narrower,
 // rocks/crystals/presents end the run and a sketchy landing is a crash
@@ -3435,7 +3442,7 @@ function updatePlayer(dt) {
 
   // --- speed: gravity pulls you downhill, drag caps it (cap rises with distance) ---
   if (p.grounded) {
-    const vt = baseSpeed(-p.z) * 1.1;   // you're always tucked
+    const vt = baseSpeed(-p.z) * 1.1 * (Math.abs(p.x) > X_LIMIT ? 0.55 : 1);   // you're always tucked; deep powder off the run holds you back
     let acc = 12 * (1 - (p.speed / vt) ** 2);              // downhill pull vs drag
     acc -= 0.35 * G * gs0 / Math.sqrt(1 + gs0 * gs0);      // climbing a kicker costs a bit of speed
     acc -= (isBoard() ? 4.5 : 7) * Math.abs(Math.sin(p.heading));   // carving scrubs speed (a board holds its edge better)
@@ -3462,13 +3469,17 @@ function updatePlayer(dt) {
     // --- carving: steer sets a heading; velocity follows the skis ---
     const maxHead = isBoard() ? 0.72 * clamp(26 / p.speed, 0.6, 1) : 0.62 * clamp(24 / p.speed, 0.55, 1);
     let targetHead = inp.h * maxHead;
-    if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading) && !nearSecretDoor()) targetHead = -Math.sign(p.x) * 0.25;
+    if (Math.abs(p.x) > edgeX() - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading) && !nearSecretDoor()) targetHead = -Math.sign(p.x) * 0.25;
     p.heading = damp(p.heading, targetHead, isBoard() ? (inp.h ? 10 : 9) : (inp.h ? 7 : 8), dt);
     p.vx = Math.sin(p.heading) * p.speed;
     const prevX = p.x;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
-    if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.heading *= 0.5; }
+    if (Math.abs(p.x) > edgeX()) { p.x = Math.sign(p.x) * edgeX(); p.heading *= 0.5; }
+    if (Math.abs(p.x) > X_LIMIT) {   // off the run: deep powder sprays up
+      if (Math.random() < 0.7) Particles.emit(p.x, p.y + 0.2, p.z + 0.5, 3, 1.5, 2.5, 0xffffff, 2);
+      if (!p.powderT || time - p.powderT > 6) { p.powderT = time; showTrick('Deep powder', 'Slow going off the run', false); }
+    }
     const [gh, gs] = groundAt(p.x, p.z);
     if (gh - p.y > 1.3) {
       // ran into the side wall of a ramp/tabletop: bounce off it instead of dying
@@ -3513,7 +3524,7 @@ function updatePlayer(dt) {
     p.airTime += dt;
     p.x += p.vx * dt;
     p.z -= Math.cos(p.heading) * p.speed * dt;
-    if (Math.abs(p.x) > X_LIMIT) { p.x = Math.sign(p.x) * X_LIMIT; p.vx = 0; }
+    if (Math.abs(p.x) > edgeX()) { p.x = Math.sign(p.x) * edgeX(); p.vx = 0; }
     const prevY = p.y;
     p.vy -= G * (p.vy < 0 ? 1.15 : 1) * dt; p.y += p.vy * dt;   // slightly heavier fall = snappier
     p.maxH = Math.max(p.maxH, p.y - gh0);
@@ -3591,6 +3602,12 @@ function updatePlayer(dt) {
     if (!o.passed && p.z < o.z - o.r) {
       o.passed = true;
       if (Math.abs(dx) < o.r + 1.1 && p.y < o.h + 0.8) { p.trickScore += 50; showTrick('Close call!', '+50', false); Sfx.near(); missionToast(track('near', 1)); }
+    }
+  }
+  if (Math.abs(p.x) > X_LIMIT - 0.5) for (const o of solids) {
+    if (Math.abs(o.z - p.z) < o.hz + 0.3 && Math.abs(o.x - p.x) < o.hx + 0.3 && p.y < o.h) {
+      if (o.name === 'Ran into a cabin' && secretCabin && !secretCabin.used && Math.abs(p.z - secretCabin.z) < 1.9) continue;   // that's the door
+      return crash(o.name);
     }
   }
   // the cave mouth (ride in to go underground) and the way back out
