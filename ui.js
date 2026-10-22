@@ -88,16 +88,6 @@ export async function fetchGhosts(day) {
   try { return (await rpc('get_ghosts_v2', { p_day: day, p_pid: save.pid })) || []; }
   catch { return []; }
 }
-// the terrain park keeps every player's best run (score + ghost) for good; the best few ride along with you
-export async function fetchParkGhosts() {
-  try { return (await rpc('get_park_ghosts', { p_pid: save.pid })) || []; }
-  catch { return []; }
-}
-export async function submitParkRun(value, time, ghost) {
-  if (!save.name) return null;
-  try { return await rpc('submit_park_run', { p_pid: save.pid, p_name: save.name, p_value: value, p_time: time, p_ghost: ghost }); }
-  catch { return null; }
-}
 
 // ---------- swatches ----------
 const RAINBOW = 'linear-gradient(90deg,#ff5a5a,#ffb35a,#ffe45a,#5aff8a,#5ac8ff,#b05aff)';
@@ -156,7 +146,6 @@ export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
   const rs = save.raceScores?.[today()];
-  if ($('parkSub') && save.parkBest) $('parkSub').textContent = `Terrain park · best ${save.parkBest.toLocaleString()}`;
   $('raceSub').textContent = rs ? `Forest course · ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
@@ -557,7 +546,6 @@ let skippedName = false;
 export function showResults(r) {
   const token = ++resultToken;
   setTimeout(checkRewards, 1200);
-  if (r.mode === 'park') { resultsCard(r, token); return; }   // its own best; laps go to the park ghost board
   if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
   else { resultsCard(r, token); }
 }
@@ -575,12 +563,6 @@ function resultsCard(r, token = resultToken) {
       <div class="big-num"><small>RACE POINTS</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${fmtTime(r.time)} elapsed · ${r.gates}/${r.gateTotal} checkpoints${r.penalty ? ` · +${r.penalty}s penalty` : ''} · points rank first, time breaks ties</div>
       ${field}`;
-  } else if (r.mode === 'park') {
-    body = `
-      ${r.newBest ? '<div class="tag">NEW PARK RECORD</div>' : ''}
-      <div class="big-num"><small>PARK SCORE · ${r.laps} RUNS</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
-      <div class="sub">Best run ${r.bestLap.toLocaleString()} points · best ever ${r.best.toLocaleString()}</div>
-      ${r.laps > 1 ? `<div class="list">${r.lapScores.map((v, i) => rowHtml(i + 1, `Run ${i + 1}`, v.toLocaleString(), v === r.bestLap, '', '')).join('')}</div>` : ''}`;
   } else {
     body = `
       ${r.newBest ? '<div class="tag">NEW RECORD</div>' : ''}
@@ -595,7 +577,7 @@ function resultsCard(r, token = resultToken) {
     <div class="earn"><span>Coins earned</span><b>${coin} +${earned}</b></div>
     ${missions}
     <div id="resLb"></div>
-    <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : r.mode === 'park' ? 'Back to the park' : 'Ride again'}</button>
+    <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : 'Ride again'}</button>
     <div class="row btnGrid">
       <button class="btn" id="menuBtn">${icon('home')}Menu</button>
       <button class="btn" id="toLb">${icon('trophy')}Ranks</button>
@@ -608,9 +590,9 @@ function resultsCard(r, token = resultToken) {
   $('againBtn').onclick = () => { const b = $('againBtn'); b.disabled = true; b.innerHTML = `${icon('retry')}Loading…`; cfg.onAgain(); };
   $('menuBtn').onclick = () => cfg.onMenu();
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop(); };
-  $('toLb').onclick = () => { lbTab = r.mode === 'race' ? 'race' : 'endless'; cfg.onMenu(); renderLeaderboard(); };
+  $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
-  if (r.mode !== 'park') rankRow(r, token);
+  rankRow(r, token);
   miniCache = {};
 }
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
@@ -741,7 +723,6 @@ async function share(r) {
   const url = location.origin + location.pathname;
   const text = r.mode === 'race'
     ? `I scored ${r.score.toLocaleString()} points in today's Peak Flip race in ${fmtTime(r.time)}. Race points rank first, with elapsed time as the tiebreak. Can you beat my ghost?`
-    : r.mode === 'park' ? `I scored ${r.score.toLocaleString()} in the Peak Flip terrain park. Can you beat my ghost?`
     : `I scored ${r.score.toLocaleString()} in Peak Flip. Can you beat it?`;
   try {
     if (navigator.share) { await navigator.share({ title: 'Peak Flip', text, url }); return; }
@@ -754,13 +735,12 @@ async function share(r) {
 export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
-  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag'); put('icPark', 'mountain');
+  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
   put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help'); put('icGear', 'gear');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
   $('raceBtn').onclick = () => c.onPlay('race');
-  $('parkBtn').onclick = () => c.onPlay('park');
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
