@@ -1299,6 +1299,7 @@ function addRamp(x, z0, L, H, W) {
   for (const sx of [-1, 1]) { const st = new THREE.Mesh(box(0.12, 0.12, L * 0.9), mat.rampEdge); st.position.set(sx * W / 2, H * 0.35, -L * 0.62); st.rotation.x = Math.atan(H / L) * 1.2; g.add(st); }
   world.add(g);
   ramps.push({ x, z0, L, H, W, mesh: g });
+  keepClear(x, W / 2 + 1, z0 + 20, z0 - L - 2);
 }
 function addRail(x, z0, L, top = 0.9) {
   const g = new THREE.Group(); g.position.set(x, 0, z0);
@@ -1306,14 +1307,28 @@ function addRail(x, z0, L, top = 0.9) {
   for (const pz of [-0.4, -L / 2, -L + 0.4]) { const p = new THREE.Mesh(box(0.1, top, 0.1), mat.railPost); p.position.set(0, top / 2, pz); g.add(p); }
   world.add(g);
   rails.push({ x, z0, L, top, mesh: g });
+  keepClear(x, 1.8, z0 + 24, z0 - L - 3);
 }
 const blocked = (x, z, pad = 1.5) => checkpoints.some(c => Math.abs(z - c.z) < 5 && Math.abs(x - c.x) < c.w / 2 + pad);
 // A smooth, always-steerable lane that hazards can't fill, so every section has a way through.
 let laneSeed = [0, 0];
 const laneX = z => clamp(Math.sin(z * 0.02 + laneSeed[0]) * 7 + Math.sin(z * 0.05 + laneSeed[1]) * 2.5, -X_LIMIT + 2.5, X_LIMIT - 2.5);
 const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < 2.2 + r;
+// The run-up to rails, kickers, cave mouths and the exit portal stays free of rocks, crystals, presents and trees:
+// whatever is already there is removed, and nothing new is placed there afterwards.
+const CLEARABLE = new Set(['rock', 'crystal', 'gift', 'tree']);
+let approaches = [];   // { x, hw, zTop, zBot }
+const inApproach = (x, z, r) => approaches.some(a => z < a.zTop && z > a.zBot && Math.abs(x - a.x) < a.hw + r);
+function keepClear(x, hw, zTop, zBot) {
+  approaches.push({ x, hw, zTop, zBot });
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    if (!o.pool || !CLEARABLE.has(o.kind) || o.z >= zTop || o.z <= zBot || Math.abs(o.x - x) >= hw + o.r) continue;
+    o.pool.remove(o.idx); obstacles.splice(i, 1);
+  }
+}
 function addTree(x, z, s, obstacle, ry = rand(0, 6), variant = 0) {
-  if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, 0.55 * s)) return; }
+  if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, 0.55 * s) || inApproach(x, z, 0.55 * s)) return; }
   const pool = zone === 'xmas' ? xmasTrees : !obstacle && zone === 'normal' ? sceneryTrees[variant % 2] : trees;
   // A small buried base follows the faceted hillside without leaving trunks hanging above it.
   const idx = pool.add(x, obstacle ? 0 : Math.max(0, wallH(x, z) - 0.18), z, s, ry);
@@ -1321,7 +1336,7 @@ function addTree(x, z, s, obstacle, ry = rand(0, 6), variant = 0) {
   else decor.push({ z, idx, pool });
 }
 function addRock(x, z, s) {
-  x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, s)) return;
+  x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, s) || inApproach(x, z, s)) return;
   if (zone === 'agartha') {
     const idx = crystals.add(x, 0, z, s * 1.1, rand(0, 6), s * 1.5);
     obstacles.push({ kind: 'crystal', x, z, r: 0.75 * s, h: 3 * s, idx, pool: crystals });
@@ -2169,6 +2184,7 @@ function featureXmasGate(z) {
   }
   world.add(g); decor.push({ z: mz - 10, mesh: g });
   caves.push({ x: cx, z: mz, used: false, to: 'xmas' });
+  keepClear(cx / 2, Math.abs(cx) / 2 + 3, mz + 45, mz - 3);
   for (const sx of [3.4, -3.4]) { const px = cx + sx; if (Math.abs(px) < 13.5) obstacles.push({ kind: 'cane', x: px, z: mz, r: 0.6, h: 9, mesh: new THREE.Group() }); }
   for (let i = 0; i < 12; i++) { const t = i / 11; addCoin(cx * (1 - Math.cos(Math.PI * t)) / 2, 1.2, mz + 40 - t * 40); }
   return [90, 0];
@@ -2202,6 +2218,7 @@ function featureCave(z) {
   }
   world.add(g); decor.push({ z: mz - 40, mesh: g });
   caves.push({ x: cx, z: mz, used: false, to: 'agartha' });
+  keepClear(cx / 2, Math.abs(cx) / 2 + 3, mz + 45, mz - 3);
   for (const sx of [7, 14]) obstacles.push({ kind: 'rock', x: side * sx, z: mz - 0.8, r: 0.9, h: 7, mesh: new THREE.Group() });
   for (let i = 0; i < 12; i++) { const t = i / 11; addCoin(cx * (1 - Math.cos(Math.PI * t)) / 2, 1.2, mz + 40 - t * 40); }
   return [90, 0];
@@ -2215,6 +2232,7 @@ function addPortal(z) {
   disc.position.y = 4; g.add(disc);
   world.add(g); decor.push({ z: z - 5, mesh: g });
   portal = { z, mesh: g, disc };
+  keepClear(0, Infinity, z + 35, z - 5);
 }
 function pickSpecial() {
   const w = [['ramp', 16], ['big', 12], ['rollers', 9], ['table', 9], ['stepdown', 6], ['mega', 6], ['line', 9], ['rail', 9], ['railKick', 7], ['rocks', 8], ['snake', 7]];
@@ -2286,13 +2304,319 @@ function addLiftTower(z) {
   const m = new THREE.Mesh(liftGeo, vcol); m.position.set(-17.5, 0, z);
   world.add(m); decor.push({ z: z - 50, mesh: m });
 }
-function addCabin(x, z, rotation = rand(-0.4, 0.4)) {
+function addCabin(x, z, rotation = rand(-0.4, 0.4), secret = false) {
   const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = rotation;
+  if (secret) addSecretDoor(g, x, z);
   const w = new THREE.Mesh(box(4, 2.6, 3.4), cabinWall); w.position.y = 1.3; g.add(w);
   const roof = new THREE.Mesh(new THREE.ConeGeometry(3.4, 1.8, 4), cabinRoof); roof.position.y = 3.5; roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.8); g.add(roof);
   const snow = new THREE.Mesh(new THREE.ConeGeometry(3.1, 0.7, 4), mat.snow); snow.position.y = 4.15; snow.rotation.y = Math.PI / 4; snow.scale.set(1, 1, 0.8); g.add(snow);
   const win = new THREE.Mesh(box(0.9, 0.7, 0.05), lam(0xffd166, { emissive: 0x7a5a00 })); win.position.set(0, 1.5, 1.72); g.add(win);
   world.add(g); decor.push({ z: z - 4, mesh: g });
+}
+// ---------- Easter egg: the secret cabin. Ride into its side door and meet who lives there... then run ----------
+// The face on the suited guy is read from secret/bibi.png (drop your own picture there); until then a cartoon face stands in.
+let secretCabin = null;
+const doorMat = lam(0x4a2c17), doorDark = new THREE.MeshBasicMaterial({ color: 0x1a0d05 }), doorLight = new THREE.MeshBasicMaterial({ color: 0xffb04a });
+function addSecretDoor(g, x, z) {
+  // a door in the wall that faces the run, left ajar with firelight spilling out, and a doormat
+  const frame = new THREE.Mesh(box(0.12, 2.1, 1.5), doorMat); frame.position.set(-2.02, 1.05, 0); g.add(frame);
+  const glow = new THREE.Mesh(box(0.05, 1.8, 1.1), doorLight); glow.position.set(-2.06, 0.95, 0); g.add(glow);
+  const leaf = new THREE.Mesh(box(0.08, 1.8, 1.1), doorMat); leaf.position.set(-2.35, 0.95, 0.45); leaf.rotation.y = -0.9; g.add(leaf);
+  const mat_ = new THREE.Mesh(box(1, 0.04, 1.3), lam(0x9b2226)); mat_.position.set(-2.6, 0.02, 0); g.add(mat_);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.36), new THREE.MeshBasicMaterial({ map: knockTex, transparent: true })); sign.rotation.y = -Math.PI / 2; sign.position.set(-2.1, 2.3, 0); g.add(sign);
+  secretCabin = { x: x - 2, z, used: false };
+  keepClear(X_LIMIT, 4, z + 30, z - 3);
+}
+const knockTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 100; const g = c.getContext('2d');
+  g.fillStyle = '#5a3418'; g.fillRect(0, 0, 256, 100); g.strokeStyle = '#2b170a'; g.lineWidth = 8; g.strokeRect(4, 4, 248, 92);
+  g.fillStyle = '#ffe2a0'; g.font = '900 34px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('COME IN :)', 128, 62);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const nearSecretDoor = () => secretCabin && !secretCabin.used && p.x > 0 && Math.abs(p.z - secretCabin.z) < 14;
+
+// ---- the two residents ----
+const bibiFace = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 300; const g = c.getContext('2d');
+  g.fillStyle = '#e8b796'; g.beginPath(); g.ellipse(128, 160, 100, 125, 0, 0, TAU); g.fill();
+  g.fillStyle = '#c9ccd1'; for (const sx of [-1, 1]) { g.beginPath(); g.ellipse(128 + sx * 92, 120, 22, 60, sx * 0.2, 0, TAU); g.fill(); }
+  g.beginPath(); g.ellipse(128, 48, 80, 28, 0, Math.PI, TAU); g.fill();
+  g.fillStyle = '#444'; for (const sx of [-1, 1]) g.fillRect(128 + sx * 42 - 22, 112, 44, 9);
+  g.fillStyle = '#fff'; for (const sx of [-1, 1]) { g.beginPath(); g.ellipse(128 + sx * 42, 140, 18, 12, 0, 0, TAU); g.fill(); }
+  g.fillStyle = '#2a3a55'; for (const sx of [-1, 1]) { g.beginPath(); g.arc(128 + sx * 42, 141, 7, 0, TAU); g.fill(); }
+  g.strokeStyle = '#a8705a'; g.lineWidth = 5; g.beginPath(); g.moveTo(128, 150); g.lineTo(118, 196); g.lineTo(132, 198); g.stroke();
+  g.strokeStyle = '#7a3b2e'; g.lineWidth = 7; g.beginPath(); g.arc(128, 214, 34, 0.15 * Math.PI, 0.85 * Math.PI); g.stroke();
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const bibiFaceMat = new THREE.MeshBasicMaterial({ map: bibiFace, transparent: true, alphaTest: 0.05 });
+let bibiTried = false;
+function loadBibi() {
+  if (bibiTried) return; bibiTried = true;
+  new THREE.TextureLoader().load('secret/bibi.png', t => { t.colorSpace = THREE.SRGBColorSpace; bibiFaceMat.map = t; bibiFaceMat.needsUpdate = true; }, undefined, () => {});
+}
+const wood = lam(0xb98250), woodDark = lam(0x6b4423), woodRing = lam(0xe0b07a), suit = lam(0x1f2a44), shirt = lam(0xf4f4f4), tie = lam(0x1d4ed8), skin = lam(0xe8b796), hairGrey = lam(0xc9ccd1);
+const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff }), pupil = new THREE.MeshBasicMaterial({ color: 0x111111 });
+const glassMat = new THREE.MeshLambertMaterial({ color: 0xdff3ff, transparent: true, opacity: 0.35 }), milkMat = lam(0x7b4a2a), strawMat = lam(0xff4fa3);
+const bangTex = (() => {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#ff2d2d'; g.strokeStyle = '#fff'; g.lineWidth = 6; g.font = '900 120px system-ui, sans-serif'; g.textAlign = 'center';
+  g.strokeText('!', 32, 112); g.fillText('!', 32, 112);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+function chocolateMilk() {
+  const g = new THREE.Group();
+  const gl = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.075, 0.26, 10), glassMat); gl.position.y = 0.13; g.add(gl);
+  const milk = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.068, 0.2, 10), milkMat); milk.position.y = 0.11; g.add(milk);
+  const straw = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.36, 5), strawMat); straw.position.set(0.03, 0.27, 0); straw.rotation.z = -0.25; g.add(straw);
+  return g;
+}
+// a resident: origin at the feet, front facing +z. Returns the limbs so the cutscene and the chase can pose them.
+function makeResident(kind) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const M = (geo, m, x, y, z, parent = body) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); parent.add(o); return o; };
+  const limb = (x, y, geo, m, len, parent = body) => { const pv = new THREE.Group(); pv.position.set(x, y, 0); parent.add(pv); M(geo, m, 0, -len / 2, 0, pv); return pv; };
+  let legs, arms, head, hipY, glass, bat;
+  if (kind === 'tung') {
+    // Tung Tung Tung Sahur: a tall wooden log with a face, skinny limbs and a baseball bat
+    hipY = 0.75;
+    M(new THREE.CylinderGeometry(0.36, 0.4, 1.45, 12), wood, 0, 1.47, 0);
+    M(new THREE.CylinderGeometry(0.34, 0.34, 0.02, 12), woodRing, 0, 2.2, 0);
+    for (const y of [1.0, 1.3, 1.95]) M(new THREE.TorusGeometry(0.39, 0.012, 3, 16), woodDark, 0, y, 0).rotation.x = Math.PI / 2;
+    head = new THREE.Group(); head.position.set(0, 1.75, 0); body.add(head);
+    for (const sx of [-1, 1]) {
+      M(new THREE.SphereGeometry(0.1, 10, 8), eyeWhite, sx * 0.14, 0.02, 0.33, head).scale.z = 0.5;
+      M(new THREE.SphereGeometry(0.045, 8, 6), pupil, sx * 0.13, 0.01, 0.38, head);
+      M(box(0.17, 0.045, 0.04), woodDark, sx * 0.15, 0.15, 0.37, head).rotation.z = sx * 0.3;   // angry brows
+    }
+    M(box(0.18, 0.035, 0.03), woodDark, 0, -0.2, 0.38, head);
+    legs = [-1, 1].map(sx => limb(sx * 0.16, hipY, new THREE.CylinderGeometry(0.045, 0.045, 0.75, 6), woodDark, 0.75));
+    arms = [-1, 1].map(sx => limb(sx * 0.42, 1.65, new THREE.CylinderGeometry(0.04, 0.04, 0.7, 6), woodDark, 0.7));
+    bat = new THREE.Group(); bat.position.set(0, -0.68, 0.05); arms[1].add(bat);
+    M(new THREE.CylinderGeometry(0.07, 0.035, 0.95, 8), woodRing, 0, 0.42, 0, bat);
+    glass = chocolateMilk(); glass.position.set(0, -0.72, 0.06); arms[0].add(glass);
+  } else {
+    // the guy in the suit, with a cardboard-cutout face
+    hipY = 0.88;
+    M(box(0.62, 0.8, 0.34), suit, 0, 1.28, 0);
+    M(box(0.2, 0.55, 0.02), shirt, 0, 1.4, 0.175); M(box(0.07, 0.42, 0.02), tie, 0, 1.36, 0.19);
+    M(box(0.14, 0.12, 0.14), skin, 0, 1.74, 0);
+    head = new THREE.Group(); head.position.set(0, 2.0, 0); body.add(head);
+    M(box(0.44, 0.5, 0.36), hairGrey, 0, 0, -0.03, head);
+    M(new THREE.PlaneGeometry(0.66, 0.78), bibiFaceMat, 0, 0, 0.17, head);
+    legs = [-1, 1].map(sx => limb(sx * 0.16, hipY, box(0.2, 0.88, 0.22), suit, 0.88));
+    for (const l of legs) M(box(0.22, 0.1, 0.32), pupil, 0, -0.86, 0.05, l);
+    arms = [-1, 1].map(sx => limb(sx * 0.4, 1.62, box(0.15, 0.68, 0.17), suit, 0.68));
+    glass = chocolateMilk(); glass.position.set(0, -0.72, 0.06); arms[1].add(glass);
+  }
+  const bang = new THREE.Sprite(new THREE.SpriteMaterial({ map: bangTex, transparent: true, depthTest: false })); bang.scale.set(0.35, 0.7, 1); bang.position.set(0, 2.75, 0); bang.visible = false; g.add(bang);
+  return { g, body, legs, arms, head, hipY, glass, bat, bang, kind };
+}
+function poseSit(r, sip) {
+  r.body.position.y = 0.5 - r.hipY;
+  for (const l of r.legs) l.rotation.x = -Math.PI / 2;
+  const cup = r.kind === 'tung' ? r.arms[0] : r.arms[1], other = r.arms[r.kind === 'tung' ? 1 : 0];
+  cup.rotation.x = -0.9 - sip * 1.6; cup.rotation.z = (r.kind === 'tung' ? 1 : -1) * sip * 0.5;
+  r.glass.rotation.x = 0.9 + sip * 1.4;
+  other.rotation.x = r.bat ? -0.4 : -0.2;
+  if (r.bat) r.bat.rotation.x = 1.1;
+}
+function poseRun(r, t) {
+  const s = Math.sin(t * 15);
+  r.body.position.y = Math.abs(Math.cos(t * 15)) * 0.12;
+  r.legs[0].rotation.x = s * 0.9; r.legs[1].rotation.x = -s * 0.9;
+  r.arms[0].rotation.x = -s * 1.1; r.arms[1].rotation.x = s * 1.1;
+  r.arms[0].rotation.z = r.arms[1].rotation.z = 0;
+  r.glass.rotation.x = 0;
+  if (r.bat) { r.arms[1].rotation.x = -2.6 + Math.sin(t * 9) * 0.6; r.bat.rotation.x = 0.4; }   // bat raised, ready to tung
+}
+
+// ---- the inside of the cabin: a separate little scene, lit by the fire ----
+const cabinScene = new THREE.Scene(); cabinScene.background = new THREE.Color(0x1a0e07);
+const cabinCam = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.1, 60);
+const fireLight = new THREE.PointLight(0xff8a2a, 3, 16, 1);
+const fireParts = [];
+const cabinFolks = [makeResident('bibi'), makeResident('tung')];
+(() => {
+  const S = cabinScene, A = (geo, m, x, y, z) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); S.add(o); return o; };
+  S.add(new THREE.HemisphereLight(0xffd6a8, 0x3a2414, 0.55));
+  fireLight.position.set(0, 1.3, 0); S.add(fireLight);
+  const logA = lam(0x8a5a35), logB = lam(0x76492a), floor = lam(0x5e3a1e), stone = lam(0x8d8f94), stoneDark = lam(0x55575c);
+  A(box(11, 0.1, 15), floor, 0, -0.05, 2);
+  for (let i = -5; i <= 5; i++) A(box(0.03, 0.02, 15), woodDark, i, 0.005, 2);
+  // log walls
+  for (let i = 0; i < 9; i++) {
+    const y = 0.2 + i * 0.4, m = i % 2 ? logA : logB;
+    A(new THREE.CylinderGeometry(0.21, 0.21, 11, 8), m, 0, y, -4.6).rotation.z = Math.PI / 2;
+    for (const sx of [-1, 1]) A(new THREE.CylinderGeometry(0.21, 0.21, 15, 8), m, sx * 5.4, y, 2).rotation.x = Math.PI / 2;
+  }
+  A(box(11, 0.15, 15), lam(0x3e2613), 0, 3.6, 2);
+  for (const z of [-3, 0, 3, 6]) A(box(11, 0.3, 0.3), woodDark, 0, 3.4, z);
+  // a window onto the snowy night, antlers above it, a shelf of mugs
+  A(box(1.8, 1.2, 0.05), new THREE.MeshBasicMaterial({ color: 0x1b2f5c }), -2.6, 2, -4.38);
+  A(box(1.9, 0.08, 0.1), lam(0xf5f9fc), -2.6, 1.42, -4.34); A(box(0.08, 1.25, 0.08), woodDark, -2.6, 2, -4.33); A(box(1.85, 0.08, 0.08), woodDark, -2.6, 2, -4.33);
+  for (let i = 0; i < 14; i++) A(new THREE.SphereGeometry(0.025, 4, 3), eyeWhite, -2.6 + rand(-0.8, 0.8), 2 + rand(-0.5, 0.5), -4.34);
+  for (const sx of [-1, 1]) { const an = A(new THREE.ConeGeometry(0.05, 0.7, 5), woodRing, 2.6 + sx * 0.3, 3.0, -4.4); an.rotation.z = -sx * 0.6; }
+  A(box(0.35, 0.3, 0.15), woodDark, 2.6, 2.75, -4.4);
+  A(box(2, 0.08, 0.4), woodDark, 2.6, 1.9, -4.25);
+  for (let i = 0; i < 4; i++) A(new THREE.CylinderGeometry(0.09, 0.08, 0.2, 8), [lam(0xe63946), lam(0x1d70d6), lam(0xffd166), lam(0x2a9d4f)][i], 1.9 + i * 0.45, 2.04, -4.25);
+  A(new THREE.CylinderGeometry(2.2, 2.2, 0.02, 24), lam(0x9b2226), 0, 0.01, 0.6);
+  // the fireplace: a low stone hearth in the middle of the room with a fire on top
+  A(box(2.4, 0.7, 1.5), stone, 0, 0.35, 0);
+  A(box(2.6, 0.12, 1.7), stoneDark, 0, 0.74, 0);
+  for (let i = 0; i < 3; i++) { const lg = A(new THREE.CylinderGeometry(0.1, 0.1, 1.1, 6), logA, 0, 0.88, -0.25 + i * 0.25); lg.rotation.z = Math.PI / 2; lg.rotation.y = (i - 1) * 0.5; }
+  [[0xff4a12, 0.3, 0.7], [0xff9a1a, 0.22, 0.55], [0xffe066, 0.12, 0.38]].forEach(([c, r, h], i) => {
+    for (let k = 0; k < 3; k++) {
+      const f = A(new THREE.ConeGeometry(r * (k === 1 ? 1 : 0.7), h, 6), new THREE.MeshBasicMaterial({ color: c }), (k - 1) * 0.38, 0.85 + h / 2, (k - 1) * 0.05 + i * 0.02);
+      fireParts.push({ m: f, h, ph: rand(0, 6) });
+    }
+  });
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff9a3c, transparent: true, depthWrite: false, opacity: 0.7, blending: THREE.AdditiveBlending }));
+  halo.scale.set(4, 4, 1); halo.position.set(0, 1.3, 0); S.add(halo);
+  // a sofa behind the fire, where the two of them sit
+  const sofa = lam(0x2f5d50);
+  A(box(3.2, 0.45, 1.0), sofa, 0, 0.25, -2.6); A(box(3.2, 0.9, 0.3), sofa, 0, 0.75, -3.05);
+  for (const sx of [-1, 1]) A(box(0.3, 0.7, 1.0), sofa, sx * 1.65, 0.45, -2.6);
+  cabinFolks.forEach((r, i) => { r.g.position.set(i ? 0.7 : -0.7, 0, -2.75); S.add(r.g); });
+})();
+
+// ---- the cutscene: in through the door, they notice you, and come for you ----
+const cabin = { phase: '', t: 0 };
+function enterCabin() {
+  state = 'cabin'; cabin.phase = 'in'; cabin.t = 0; loadBibi();
+  const f = $('fade'); f.style.transition = 'opacity 0.45s ease-in'; f.style.background = '#000'; f.style.opacity = 1;
+  Sfx.tone(300, 0.25, 'triangle', 0.12, 120); Sfx.noise(0.4, 0.25, 600);
+  p.trickScore += 2500; showTrick('SECRET CABIN!', '+2,500', true);
+}
+function updateCabin(dt) {
+  cabin.t += dt;
+  const t = cabin.t, [bibi, tung] = cabinFolks;
+  if (cabin.phase === 'in') {
+    // ride on into the doorway while the screen goes dark
+    p.x += 6 * dt; p.z -= p.speed * 0.3 * dt; p.y = 0;
+    updateSkierVisual(dt); updateCamera(dt);
+    renderer.render(scene, camera);
+    if (t > 0.55) {
+      cabin.phase = 'inside'; cabin.t = 0;
+      fadeScreen('#000');
+      for (const r of cabinFolks) { r.g.position.z = -2.75; r.g.position.x = r.kind === 'tung' ? 0.7 : -0.7; r.g.rotation.y = 0; r.bang.visible = false; }
+    }
+    return;
+  }
+  // fire flicker
+  for (const f of fireParts) f.m.scale.set(1, 0.75 + 0.35 * Math.abs(Math.sin(time * 9 + f.ph) + 0.4 * Math.sin(time * 23 + f.ph)), 1);
+  fireLight.intensity = 3 + Math.sin(time * 17) * 0.4 + Math.sin(time * 41) * 0.25;
+  if (Math.random() < dt * 6) Sfx.noise(0.04, 0.12, 3200, 'highpass');
+  const NOTICE = 4.2, RUN = 5.1, OUT = 6.6;
+  cabinCam.aspect = camera.aspect;
+  let fov = 62;
+  if (t < NOTICE) {
+    // a slow swoop from the doorway in towards the fire; they sip their chocolate milk
+    const k = 1 - Math.pow(1 - Math.min(1, t / 3.2), 3);
+    cabinCam.position.set(lerp(3.2, 0.6, k), lerp(2.9, 2.35, k), lerp(8.5, 4.2, k));
+    cabinCam.lookAt(0, lerp(1.6, 1.45, k), lerp(-1.5, -2.7, k));
+    cabinCam.rotateZ(Math.sin(t * 0.9) * 0.03);
+    fov = lerp(75, 58, k);
+    poseSit(bibi, Math.max(0, Math.sin(t * 2.1)) ** 2);
+    poseSit(tung, Math.max(0, Math.sin(t * 2.1 + 2.4)) ** 2);
+    for (const r of cabinFolks) r.head.rotation.set(0, Math.sin(t * 0.8 + r.g.position.x) * 0.25, 0);
+    if (Math.floor(t * 2.1 / Math.PI) !== Math.floor((t - dt) * 2.1 / Math.PI)) Sfx.noise(0.3, 0.18, 900);   // slurp
+  } else if (t < RUN) {
+    // they freeze and stare straight at you
+    if (!bibi.bang.visible) {
+      for (const r of cabinFolks) { r.bang.visible = true; r.head.rotation.set(0, 0, 0); }
+      Sfx.tone(880, 0.12, 'square', 0.16); Sfx.tone(880, 0.12, 'square', 0.16, null, 0.15);
+      Sfx.tone(196, 0.9, 'sawtooth', 0.18, 98, 0.3);
+    }
+    for (const r of cabinFolks) { r.bang.position.y = 2.75 + Math.abs(Math.sin(t * 18)) * 0.12; poseSit(r, 0); }
+    cabinCam.position.set(0.15, 2.25, lerp(4.2, 2.6, Math.min(1, (t - NOTICE) * 4)));
+    cabinCam.lookAt(0, 1.75, -2.7);
+    fov = 46;
+  } else {
+    // up and over the hearth, straight at the camera
+    if (bibi.bang.visible) { for (const r of cabinFolks) r.bang.visible = false; showTrick('RUN!!!', 'They saw you', true); }
+    const rt = t - RUN;
+    for (const r of cabinFolks) {
+      poseRun(r, rt + (r.kind === 'tung' ? 0.2 : 0));
+      r.g.position.z = -2.75 + rt * 6.5;
+      r.g.position.x = (r.kind === 'tung' ? 1 : -1) * (0.7 + Math.min(1, rt * 2) * 0.9);
+      r.g.position.y = Math.max(0, Math.sin(clamp((r.g.position.z + 1.6) / 3.2, 0, 1) * Math.PI)) * 1.1;   // leap the fireplace
+    }
+    if (Math.floor(rt * 6) !== Math.floor((rt - dt) * 6)) Sfx.tone(170, 0.07, 'square', 0.2, 120);   // tung tung tung
+    cabinCam.position.set(0.15 + rand(-1, 1) * 0.05, 2 + rand(-1, 1) * 0.05, 2.6 + rt * 3.2);
+    cabinCam.lookAt(0, 1.3, -1);
+    fov = 64;
+    if (t > OUT - 0.4 && cabin.phase === 'inside') { cabin.phase = 'leaving'; const f = $('fade'); f.style.transition = 'opacity 0.35s ease-in'; f.style.opacity = 1; }
+    if (t > OUT) return leaveCabin();
+  }
+  if (Math.abs(cabinCam.fov - fov) > 0.05) cabinCam.fov = damp(cabinCam.fov, fov, 8, dt);
+  cabinCam.updateProjectionMatrix();
+  renderer.render(cabinScene, cabinCam);
+}
+function leaveCabin() {
+  state = 'play';
+  p.x = X_LIMIT - 2.5; p.y = 0; p.vy = 0; p.heading = -0.15; p.grounded = true; p.speed = Math.max(p.speed, baseSpeed(-p.z));
+  snapCam = true; fadeScreen('#000');
+  keepClear(0, Infinity, p.z + 5, p.z - 45);   // a clean getaway, not a rock in the face
+  startChase();
+}
+
+// ---- the chase: they run after you down the slope. Keep your speed up and they'll give up ----
+const chase = { on: false, t: 0, gap: 0, folks: [], knock: 0 };
+const rearCam = new THREE.PerspectiveCamera(48, 16 / 9, 0.25, 200);
+let rearFrame = null;
+function startChase() {
+  endChase();
+  chase.on = true; chase.t = 0; chase.gap = 7; chase.knock = 0;
+  chase.folks = [makeResident('bibi'), makeResident('tung')];
+  for (const r of chase.folks) world.add(r.g);
+  if (!rearFrame) {
+    rearFrame = document.createElement('div');
+    rearFrame.style.cssText = 'position:fixed;left:50%;top:64px;transform:translateX(-50%);border:3px solid #fff;border-radius:10px;box-shadow:0 4px 18px rgba(0,0,0,.4);pointer-events:none;z-index:1;font:800 12px system-ui,sans-serif;color:#fff;text-shadow:0 1px 3px #000;letter-spacing:.08em';
+    rearFrame.innerHTML = '<span style="position:absolute;left:8px;top:4px">REAR VIEW</span><span style="position:absolute;right:8px;top:4px;color:#ff5a5a" id="chaseGap"></span>';
+    document.body.appendChild(rearFrame);
+  }
+  rearFrame.style.display = '';
+  showTrick('THEY\'RE COMING!', 'Keep your speed up!', true);
+}
+function endChase(result) {
+  if (rearFrame) rearFrame.style.display = 'none';
+  for (const r of chase.folks) world.remove(r.g);
+  chase.folks = []; chase.on = false;
+  if (result === 'escaped') { p.trickScore += 5000; showTrick('ESCAPED!', '+5,000', true); Sfx.perfect(); }
+}
+function updateChase(dt) {
+  if (!chase.on) return;
+  if (zone !== 'normal' || state === 'menu') return endChase();
+  chase.t += dt;
+  if (state === 'crash' && chase.t > 3) return endChase();   // they wander off once you're down
+  if (state === 'play') {
+    // they run a touch faster than an easy cruise: tuck and ride clean, and you pull away; smash a rock or carve too hard and they close in
+    chase.gap += (p.speed - baseSpeed(-p.z) * 1.04) * dt;
+    if (chase.gap < 0.9) { chase.gap = 2; chase.t = 0; return crash('Caught by Bibi and Tung Tung Tung Sahur'); }
+    if (chase.gap > 24 || chase.t > 16) return endChase('escaped');
+  }
+  chase.folks.forEach((r, i) => {
+    const caught = state === 'crash';
+    const x = p.x + (i ? 2.6 : -2.6), z = p.z + (caught ? 2 : chase.gap) + i * 0.6;
+    r.g.position.set(damp(r.g.position.x || x, x, 4, dt), groundAt(x, z)[0], z);
+    r.g.rotation.y = Math.PI;   // facing downhill, after you
+    if (caught) { poseRun(r, 0); r.body.position.y = Math.abs(Math.sin(time * 8 + i)) * 0.6; r.arms[0].rotation.x = r.arms[1].rotation.x = -3; }   // victory hop
+    else poseRun(r, time + i * 0.3);
+  });
+  if (state === 'play' && (chase.knock -= dt) < 0) { chase.knock = 0.18 + chase.gap * 0.02; Sfx.tone(170, 0.06, 'square', clamp(0.25 - chase.gap * 0.008, 0.05, 0.22), 120); }
+  const el = $('chaseGap'); if (el) el.textContent = `${Math.max(0, chase.gap).toFixed(0)} m`;
+}
+function renderRearView() {
+  if (!chase.on || !rearFrame) return;
+  const w = Math.min(360, innerWidth * 0.42), h = w * 0.5, x = (innerWidth - w) / 2, y = 64;
+  rearFrame.style.width = `${w}px`; rearFrame.style.height = `${h}px`;
+  rearCam.aspect = w / h; rearCam.updateProjectionMatrix();
+  tmpV.set(p.x, Math.max(0, p.y) + 2.2, p.z - 1); world.localToWorld(tmpV); rearCam.position.copy(tmpV);
+  tmpV.set(p.x, 1.2, p.z + 10); world.localToWorld(tmpV); rearCam.lookAt(tmpV);
+  const vy = innerHeight - y - h;   // GL viewports count from the bottom
+  renderer.setScissorTest(true); renderer.setViewport(x, vy, w, h); renderer.setScissor(x, vy, w, h);
+  renderer.render(scene, rearCam);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, innerWidth, innerHeight);
 }
 const lanternGlow = new THREE.SpriteMaterial({ map: glowTex, color: 0xffc56b, transparent: true, depthWrite: false, opacity: 0.8 });
 const floatGlows = [0x7cf7d4, 0xc264ff].map(c => new THREE.SpriteMaterial({ map: glowTex, color: c, transparent: true, depthWrite: false, opacity: 0.8 }));
@@ -2378,7 +2702,7 @@ function spawnDecor(z) {
   if (!forest && decorN % 12 === 0) addLiftTower(z);
   if (!forest && decorN > 20 && Math.random() < 0.004) addYeti((Math.random() < 0.5 ? -1 : 1) * rand(20, 25), z);
   if (!forest && decorN % 160 === 57) {
-    addCabin(16.5, z, -0.12);
+    addCabin(15.6, z, 0, !demo);
     if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
   }
 
@@ -2398,10 +2722,11 @@ function cleanup(pz) {
   keep(decor, o => o.z, o => { if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh); if (o.dispose) o.dispose.dispose(); });
   keep(shapes, q => q.z0 - q.L, q => world.remove(q.mesh));
   keep(caves, c => c.z, () => {});
+  keep(approaches, a => a.zBot, () => {});
   keep(animals, a => a.g.position.z - 4, a => { if (a.mover) world.remove(a.g); });   // decor bears are removed with the decor
 }
 function clearWorld() {
-  cleanup(-1e9);
+  cleanup(-1e9); secretCabin = null; endChase();
   if (finish) { world.remove(finish.mesh); finish = null; }
 }
 
@@ -2814,7 +3139,7 @@ function updatePlayer(dt) {
     // --- carving: steer sets a heading; velocity follows the skis ---
     const maxHead = isBoard() ? 0.72 * clamp(26 / p.speed, 0.6, 1) : 0.62 * clamp(24 / p.speed, 0.55, 1);
     let targetHead = inp.h * maxHead;
-    if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading)) targetHead = -Math.sign(p.x) * 0.25;
+    if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading) && !nearSecretDoor()) targetHead = -Math.sign(p.x) * 0.25;
     p.heading = damp(p.heading, targetHead, isBoard() ? (inp.h ? 10 : 9) : (inp.h ? 7 : 8), dt);
     p.vx = Math.sin(p.heading) * p.speed;
     const prevX = p.x;
@@ -2933,6 +3258,10 @@ function updatePlayer(dt) {
   // the cave mouth (ride in to go underground) and the way back out
   for (const c of caves) if (!c.used && p.z < c.z - 1.5) { c.used = true; if (Math.abs(p.x - c.x) < 3.2 && p.y < 6) return enterWorld(c.to); }
   if (special() && portal && p.z < portal.z) return exitWorld();
+  if (secretCabin && !secretCabin.used) {
+    if (p.x > X_LIMIT - 1.4 && Math.abs(p.z - secretCabin.z) < 1.9 && p.y < 2.5 && !p.grinding) { secretCabin.used = true; return enterCabin(); }
+    if (p.z < secretCabin.z - 3) secretCabin.used = true;
+  }
   for (const c of crevasses) {
     if (!c.passed && p.z < c.z0 - c.L) { c.passed = true; p.trickScore += 300; showTrick('Crevasse cleared!', '+300', false); Sfx.trick(1); missionToast(track('crevasse', 1)); }
   }
@@ -3457,6 +3786,7 @@ function frame(now) {
   if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
   if (paused) return;
   time += dt;
+  if (state === 'cabin') { for (const pl of allPools) pl.flush(); updateCabin(dt); return; }
   if (state === 'play') {
     const x0 = p.x, y0 = p.y, z0 = p.z;
     updatePlayer(dt);
@@ -3508,6 +3838,7 @@ function frame(now) {
   Debris.update(dt);
   updatePads(dt);
   updateAnimals(dt);
+  updateChase(dt);
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
   sleigh.update(time); agarthaSky.update(time); updateYetis();
@@ -3522,6 +3853,7 @@ function frame(now) {
   if (state === 'play' || state === 'crash') updateHUD(dt);
   for (const pl of allPools) pl.flush();
   renderer.render(scene, camera);
+  renderRearView();
 }
 
 // ---------- boot ----------
@@ -3543,4 +3875,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

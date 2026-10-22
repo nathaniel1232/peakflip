@@ -1,0 +1,2 @@
+-- Replaces Roblox's default character sounds (footsteps, jumping, landing, falling) with nothing:
+-- a LocalScript with this name in StarterPlayerScripts takes the place of the built-in one.

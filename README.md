@@ -83,6 +83,10 @@ or simply publish on CrazyGames/Poki and let them handle ads.
 `npm run zip:crazygames` → upload `peak-flip-crazygames.zip`.
 Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). CrazyGames doesn't allow third-party ads, and online leaderboards there should use their SDK instead.
 
+## Roblox version
+`roblox/` is a Roblox port of Endless mode (same physics, tricks and course), with DataStore saves and
+global leaderboards. See `roblox/README.md` to open it in Roblox Studio and publish it.
+
 ## Files
 - `game.js` — rendering, physics, controls, world generation, sky themes, 3D closet, race mode
 - `landscape.js` — alpine heightfield and world-space tree groves

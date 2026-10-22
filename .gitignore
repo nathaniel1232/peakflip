@@ -5,3 +5,6 @@
 .cg/
 
 supabase/.temp/
+roblox/*.rbxlx
+roblox/*.rbxl
+roblox/assets/icons/

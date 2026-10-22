@@ -1,0 +1,130 @@
+{
+  "name": "PeakFlip",
+  "tree": {
+    "$className": "DataModel",
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": true,
+        "RespawnTime": 1
+      }
+    },
+    "Lighting": {
+      "$properties": {
+        "Technology": "ShadowMap",
+        "ClockTime": 14,
+        "GeographicLatitude": 35,
+        "Brightness": 2.4,
+        "Ambient": [
+          0.52,
+          0.5,
+          0.5
+        ],
+        "OutdoorAmbient": [
+          0.6,
+          0.62,
+          0.68
+        ],
+        "EnvironmentDiffuseScale": 1,
+        "EnvironmentSpecularScale": 0.2,
+        "ShadowSoftness": 0.35,
+        "ExposureCompensation": 0.15,
+        "GlobalShadows": true
+      },
+      "Atmosphere": {
+        "$className": "Atmosphere",
+        "$properties": {
+          "Density": 0.24,
+          "Offset": 0.1,
+          "Color": [
+            0.86,
+            0.93,
+            0.98
+          ],
+          "Decay": [
+            0.7,
+            0.8,
+            0.9
+          ],
+          "Glare": 0,
+          "Haze": 0.8
+        }
+      },
+      "ColorCorrection": {
+        "$className": "ColorCorrectionEffect",
+        "$properties": {
+          "Saturation": 0.1,
+          "Contrast": 0.05,
+          "Brightness": 0.02,
+          "TintColor": [
+            1,
+            0.99,
+            0.97
+          ]
+        }
+      },
+      "Bloom": {
+        "$className": "BloomEffect",
+        "$properties": {
+          "Intensity": 0.35,
+          "Size": 20,
+          "Threshold": 1.6
+        }
+      }
+    },
+    "ReplicatedStorage": {
+      "PeakFlip": {
+        "$path": "src/shared",
+        "Remotes": {
+          "$className": "Folder",
+          "Action": {
+            "$className": "RemoteFunction"
+          },
+          "RunFinished": {
+            "$className": "RemoteFunction"
+          },
+          "GetLeaderboards": {
+            "$className": "RemoteFunction"
+          },
+          "Profile": {
+            "$className": "RemoteEvent"
+          },
+          "Notify": {
+            "$className": "RemoteEvent"
+          },
+          "Revive": {
+            "$className": "RemoteEvent"
+          }
+        }
+      }
+    },
+    "ServerScriptService": {
+      "PeakFlipServer": {
+        "$path": "src/server"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "PeakFlip": {
+          "$path": "src/client"
+        },
+        "RbxCharacterSounds": {
+          "$path": "src/silence/RbxCharacterSounds.client.luau"
+        }
+      },
+      "$properties": {
+        "CameraMaxZoomDistance": 60,
+        "CharacterWalkSpeed": 20
+      }
+    },
+    "Workspace": {
+      "$properties": {
+        "FallenPartsDestroyHeight": -2000
+      }
+    },
+    "ReplicatedFirst": {
+      "PeakFlipLoading": {
+        "$path": "src/first/Loading.client.luau"
+      }
+    }
+  }
+}
