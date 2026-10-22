@@ -19,7 +19,7 @@ const TAU = Math.PI * 2;
 
 // gets brutal past ~3 km; the steeper Endless slope (and Agartha) run a little faster, the race is unchanged
 const baseSpeed = d => Math.min(62, 22 + d * 0.0105) * speedK();
-const speedK = () => mode === 'race' ? 1 : mode === 'level' ? (level.def.speed ?? 1.1) : (WORLDS[zone]?.speed ?? 1.07);
+const speedK = () => mode === 'race' ? 1 : mode === 'level' ? (level.def.speed ?? 1.1) * levelDiff().speed : (WORLDS[zone]?.speed ?? 1.07);
 
 // ---------- helpers ----------
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -2312,7 +2312,7 @@ function spawnFeature() {
   if (mode === 'level') {
     // the level's own sequence, then the finish line
     if (D > level.def.len - 40) { if (!finish) addFinish(-level.def.len); spawnZ -= 400; return; }
-    k = level.def.seq[level.idx++ % level.def.seq.length]; d = level.def.d;
+    k = level.def.seq[level.idx++ % level.def.seq.length]; d = level.def.d * levelDiff().dK;
   } else {
     if (mode === 'race' && D > RACE_LEN - 40) { if (!finish) addFinish(-RACE_LEN); spawnZ -= 400; return; }
     if (mode !== 'race') {
@@ -2332,8 +2332,9 @@ function spawnFeature() {
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine'].includes(k) && crng() < (mode === 'level' ? 0.35 + d * 0.4 : 0.12 + d * 0.4)) {
-    for (let i = 0, n = 1 + Math.floor(d * 2.5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
+  // (hard levels scatter them around the jumps and rails too; their run-ups stay clear)
+  if (!demo && (hardLevel() || !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine'].includes(k)) && crng() < (mode === 'level' ? levelDiff().extra + d * 0.3 : 0.12 + d * 0.4)) {
+    for (let i = 0, n = 1 + Math.floor(d * 2.5) + (mode === 'level' ? levelDiff().more : 0); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
 }
@@ -2979,19 +2980,28 @@ function clearWorld() {
 // and you start over. Reach the finish for a star; enough points earn the second and third ----------
 // seq is ridden in order (and repeats until the finish); d is how nasty the hazards are; width narrows the run
 const LEVELS = [
-  { name: 'First Tracks', theme: 'day', len: 700, d: 0.35, tricky: 1.0, seq: ['ramp', 'rocks', 'rail', 'slalom', 'line', 'logs', 'railKick', 'rocks', 'big'] },
-  { name: 'Rail Yard', theme: 'golden', len: 800, d: 0.4, tricky: 1.4, seq: ['rail', 'garden', 'rocks', 'jibLine', 'gapRail', 'slalom', 'railKick', 'garden', 'logs', 'jibLine'] },
-  { name: 'Tree Run', theme: 'day', len: 800, d: 0.6, tricky: 0.6, width: 10, forest: true, seq: ['slalom', 'ramp', 'field', 'logs', 'slalom', 'rail', 'field', 'slalom'] },
-  { name: 'Sunset Kickers', theme: 'golden', len: 900, d: 0.45, tricky: 1.6, seq: ['line', 'rocks', 'proLine', 'table', 'logs', 'big', 'stepdown', 'slalom', 'mega'] },
-  { name: 'Polar Pass', theme: 'day', len: 900, d: 0.7, tricky: 0.8, seq: ['bear', 'ramp', 'balls', 'logs', 'bear', 'railKick', 'field', 'balls', 'bear'] },
-  { name: 'Night Shift', theme: 'night', len: 1000, d: 0.7, tricky: 1.2, seq: ['ramp', 'field', 'garden', 'logs', 'proLine', 'balls', 'slalom', 'jibLine', 'bear'] },
-  { name: 'North Pole', theme: 'xmas', zone: 'xmas', len: 1000, d: 0.7, tricky: 1.0, seq: ['slalom', 'ramp', 'rocks', 'logs', 'rail', 'slalom', 'big', 'rocks', 'line', 'logs'] },
-  { name: 'Agartha Depths', theme: 'agartha', zone: 'agartha', len: 1100, d: 0.8, tricky: 1.1, seq: ['rocks', 'line', 'rocks', 'gapRail', 'table', 'rocks', 'mega', 'rocks', 'stepdown'] },
-  { name: 'Snowball Alley', theme: 'golden', len: 1000, d: 0.9, tricky: 0.7, width: 11, seq: ['balls', 'ramp', 'balls', 'logs', 'balls', 'rail', 'balls', 'field'] },
-  { name: 'Big Mountain', theme: 'day', len: 1200, d: 0.6, tricky: 2.0, speed: 1.2, seq: ['big', 'mega', 'logs', 'stepdown', 'proLine', 'rocks', 'mega', 'line', 'big'] },
-  { name: 'The Gauntlet', theme: 'night', len: 1300, d: 1, tricky: 1.0, width: 11, seq: ['field', 'logs', 'bear', 'balls', 'slalom', 'jibLine', 'field', 'logs', 'proLine', 'balls'] },
-  { name: 'Peak Legend', theme: 'golden', len: 1600, d: 1, tricky: 1.4, speed: 1.15, width: 11, seq: ['mega', 'field', 'garden', 'balls', 'logs', 'proLine', 'bear', 'slalom', 'gapRail', 'field', 'stepdown', 'balls'] },
+  { name: 'First Tracks', diff: 'easy', theme: 'day', len: 700, d: 0.35, tricky: 1.0, seq: ['ramp', 'rocks', 'rail', 'slalom', 'line', 'logs', 'railKick', 'rocks', 'big'] },
+  { name: 'Rail Yard', diff: 'easy', theme: 'golden', len: 800, d: 0.4, tricky: 1.4, seq: ['rail', 'garden', 'rocks', 'jibLine', 'gapRail', 'slalom', 'railKick', 'garden', 'logs', 'jibLine'] },
+  { name: 'Tree Run', diff: 'medium', theme: 'day', len: 800, d: 0.6, tricky: 0.6, width: 10, forest: true, seq: ['slalom', 'ramp', 'field', 'logs', 'slalom', 'rail', 'field', 'slalom'] },
+  { name: 'Sunset Kickers', diff: 'easy', theme: 'golden', len: 900, d: 0.45, tricky: 1.6, seq: ['line', 'rocks', 'proLine', 'table', 'logs', 'big', 'stepdown', 'slalom', 'mega'] },
+  { name: 'Polar Pass', diff: 'medium', theme: 'day', len: 900, d: 0.7, tricky: 0.8, seq: ['bear', 'ramp', 'balls', 'logs', 'bear', 'railKick', 'field', 'balls', 'bear'] },
+  { name: 'Night Shift', diff: 'medium', theme: 'night', len: 1000, d: 0.7, tricky: 1.2, seq: ['ramp', 'field', 'garden', 'logs', 'proLine', 'balls', 'slalom', 'jibLine', 'bear'] },
+  { name: 'North Pole', diff: 'medium', theme: 'xmas', zone: 'xmas', len: 1000, d: 0.7, tricky: 1.0, seq: ['slalom', 'ramp', 'rocks', 'logs', 'rail', 'slalom', 'big', 'rocks', 'line', 'logs'] },
+  { name: 'Agartha Depths', diff: 'hard', theme: 'agartha', zone: 'agartha', len: 1100, d: 0.8, tricky: 1.1, seq: ['rocks', 'line', 'rocks', 'gapRail', 'table', 'rocks', 'mega', 'rocks', 'stepdown'] },
+  { name: 'Snowball Alley', diff: 'hard', theme: 'golden', len: 1000, d: 0.9, tricky: 0.7, width: 11, seq: ['balls', 'ramp', 'balls', 'logs', 'balls', 'rail', 'balls', 'field'] },
+  { name: 'Big Mountain', diff: 'medium', theme: 'day', len: 1200, d: 0.6, tricky: 2.0, speed: 1.2, seq: ['big', 'mega', 'logs', 'stepdown', 'proLine', 'rocks', 'mega', 'line', 'big'] },
+  { name: 'The Gauntlet', diff: 'hard', theme: 'night', len: 1300, d: 1, tricky: 1.0, width: 11, seq: ['field', 'logs', 'bear', 'balls', 'slalom', 'jibLine', 'field', 'logs', 'proLine', 'balls'] },
+  { name: 'Peak Legend', diff: 'hard', theme: 'golden', len: 1600, d: 1, tricky: 1.4, speed: 1.15, width: 11, seq: ['mega', 'field', 'garden', 'balls', 'logs', 'proLine', 'bear', 'slalom', 'gapRail', 'field', 'stepdown', 'balls'] },
 ];
+// easy: fewer hazards and rocks only slow you down · hard: twice the hazards, faster, narrower,
+// rocks/crystals/presents end the run and a sketchy landing is a crash
+const LEVEL_DIFF = {
+  easy: { dK: 0.7, extra: 0.15, more: 0, speed: 1, narrow: 0 },
+  medium: { dK: 1, extra: 0.35, more: 0, speed: 1.04, narrow: 0 },
+  hard: { dK: 1.3, extra: 0.85, more: 2, speed: 1.12, narrow: 1.5 },
+};
+const levelDiff = () => LEVEL_DIFF[level.def.diff] || LEVEL_DIFF.medium;
+const hardLevel = () => mode === 'level' && level.def.diff === 'hard';
 // points for the 2nd and 3rd star (special worlds pay double, so their targets are doubled too)
 const levelStars = L => {
   const k = L.zone ? 2 : 1, r = v => Math.round(v / 500) * 500;
@@ -2999,7 +3009,7 @@ const levelStars = L => {
   return [r(L.len * (12 + 10 * L.tricky) * k), r(L.len * (12 + 25 * L.tricky) * k)];
 };
 const level = { n: 0, def: LEVELS[0], idx: 0 };
-const levelInfo = () => LEVELS.map((L, i) => ({ name: L.name, theme: L.theme, len: L.len, stars: levelStars(L), n: i }));
+const levelInfo = () => LEVELS.map((L, i) => ({ name: L.name, theme: L.theme, diff: L.diff, len: L.len, stars: levelStars(L), n: i }));
 function startLevel(n) { level.n = clamp(n, 0, LEVELS.length - 1); startRun('level'); }
 function levelOver(done) {
   state = 'over';
@@ -3014,7 +3024,7 @@ function levelOver(done) {
   save.coins += bonus;
   const missions = endCommon();
   if (done) Sfx.perfect();
-  showResults({ mode: 'level', done, level: level.n, name: L.name, score, stars, prevStars: rec.stars, best: save.levels[level.n].best, targets: [s2, s3], newBest, last: level.n === LEVELS.length - 1, reason: p.reason, dist: Math.floor(Math.min(-p.z, L.len)), len: L.len, coins: p.coins, bonus, missions });
+  showResults({ mode: 'level', done, level: level.n, name: L.name, diff: L.diff, score, stars, prevStars: rec.stars, best: save.levels[level.n].best, targets: [s2, s3], newBest, last: level.n === LEVELS.length - 1, reason: p.reason, dist: Math.floor(Math.min(-p.z, L.len)), len: L.len, coins: p.coins, bonus, missions });
 }
 
 // ---------- player ----------
@@ -3329,6 +3339,7 @@ function land(groundSlope) {
   p.yaw = Math.abs(lc.ny) > Math.PI / 2 ? Math.sign(lc.ny) * Math.PI : 0;
   p.vy = groundSlope * p.speed;
   if (!padAt(p.x, p.z, 'bounce')) p.bounceN = 0;   // a bounce chain ends when you land on snow
+  if (lc.sketchy && hardLevel() && p.fromRamp) return crash('Sketchy landing (hard level)');
   if (lc.sketchy) {
     p.speed *= 0.8; p.lean = rand(-0.5, 0.5); shake = 0.3;
     if (!p.trick || (Math.abs(p.trick.pitch) < 2 && Math.abs(p.trick.yaw) < 2)) showTrick('Wobble!', '', false);
@@ -3555,7 +3566,7 @@ function updatePlayer(dt) {
       if (!o.passed && p.z < o.z - 0.6) { o.passed = true; if (Math.abs(dx) < o.hw + 0.3 && p.y >= o.h) { p.trickScore += 100; showTrick('Log hop!', '+100', false); Sfx.near(); missionToast(track('near', 1)); } }
       continue;
     }
-    if (SMASHABLE.has(o.kind)) {
+    if (SMASHABLE.has(o.kind) && !hardLevel()) {
       // a smaller, fairer hitbox, and hitting one is a stumble, not the end of the run
       if (Math.abs(dz) < o.r * 0.6 + 0.25 && Math.abs(dx) < o.r * 0.7 + 0.15 && p.y < o.h * 0.85) smash(o);
       else if (!o.passed && p.z < o.z - o.r) {
@@ -3842,7 +3853,7 @@ function updateHUD(dt) {
     const s = totalScore(), [s2, s3] = levelStars(level.def);
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
     const stars = s >= s3 ? '★★★' : s >= s2 ? '★★☆' : '★☆☆', next = s >= s3 ? '' : `  ·  next ★ at ${(s >= s2 ? s3 : s2).toLocaleString()}`;
-    hud.race.textContent = `LEVEL ${level.n + 1}  ·  ${Math.max(0, Math.ceil(level.def.len + p.z))} m to go  ·  ${stars}${next}`;
+    hud.race.textContent = `LEVEL ${level.n + 1} ${level.def.diff.toUpperCase()}  ·  ${Math.max(0, Math.ceil(level.def.len + p.z))} m to go  ·  ${stars}${next}`;
   } else if (mode === 'race') {
     hud.score.textContent = (totalScore() + race.gates * 500).toLocaleString();
     hud.race.textContent = `${fmtTime(race.t)} elapsed  ·  ${Math.max(0, Math.ceil(RACE_LEN + p.z))} m  ·  CP ${race.gates}/${checkpoints.length}`;
@@ -3886,7 +3897,7 @@ function startRun(m = mode) {
   clearWorld();
   resetPlayer(); resetRun();
   Object.assign(race, { t: 0, gates: 0, penalty: 0, day: today(), splits: [], rec: [], recT: 0 });
-  X_LIMIT = mode === 'race' ? 11 : LV?.width ?? 13;
+  X_LIMIT = mode === 'race' ? 11 : LV ? Math.max(8.5, (LV.width ?? 13) - levelDiff().narrow) : 13;
   scene.fog.near = mode === 'race' ? 45 : 70; scene.fog.far = mode === 'race' ? 170 : 230;
   checkpoints = [];
   clearGhosts();
@@ -3908,7 +3919,7 @@ function startRun(m = mode) {
   state = 'play'; paused = false;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
   show('raceInfo', mode === 'race' || mode === 'level');
-  if (LV) showTrick(`Level ${level.n + 1}: ${LV.name}`, 'One crash and you start over', true);
+  if (LV) showTrick(`Level ${level.n + 1}: ${LV.name}`, LV.diff === 'hard' ? 'HARD: rocks kill, no sketchy landings' : 'One crash and you start over', true);
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;

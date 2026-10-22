@@ -461,11 +461,11 @@ const starRow = (n, cls = 'stars') => `<div class="${cls}">${[0, 1, 2].map(i => 
 const levelUnlocked = n => n === 0 || (save.levels?.[n - 1]?.stars || 0) > 0;
 function renderLevels() {
   const lv = cfg.levels, total = lv.reduce((a, l) => a + (save.levels?.[l.n]?.stars || 0), 0);
-  openPanel('Levels', `<div class="note">Hand-made courses, much harder than Endless: one crash and you start over. Reach the finish for ★, score enough for ★★ and ★★★. Finishing a level unlocks the next. <b>${total} / ${lv.length * 3} ★</b></div>
+  openPanel('Levels', `<div class="note">Hand-made courses, harder than Endless: one crash and you start over. <b class="diff easy">easy</b> <b class="diff medium">medium</b> <b class="diff hard">hard</b> (hard: rocks end your run and sketchy landings crash). Reach the finish for ★, score enough for ★★ and ★★★. Finishing a level unlocks the next. <b>${total} / ${lv.length * 3} ★</b></div>
     <div class="levelGrid">${lv.map(l => {
       const rec = save.levels?.[l.n], open = levelUnlocked(l.n), [a, b] = LEVEL_COLORS[l.theme] || LEVEL_COLORS.day;
       return `<button class="lvl" data-level="${l.n}" style="--a:${a};--b:${b}" ${open ? '' : 'disabled'}>
-        ${open ? '' : icon('lock')}<span class="num">LEVEL ${l.n + 1}</span><span class="name">${esc(l.name)}</span>
+        ${open ? '' : icon('lock')}<span class="num">LEVEL ${l.n + 1} <span class="diff ${l.diff}">${l.diff}</span></span><span class="name">${esc(l.name)}</span>
         ${starRow(rec?.stars || 0)}<span class="meta">${l.len} m · ★★ ${(l.stars[0] / 1000).toFixed(1)}k · ★★★ ${(l.stars[1] / 1000).toFixed(1)}k</span>
         ${rec?.best ? `<span class="meta">Best ${rec.best.toLocaleString()}</span>` : ''}</button>`;
     }).join('')}</div>`, true);
@@ -592,7 +592,7 @@ function resultsCard(r, token = resultToken) {
   } else if (r.mode === 'level') {
     const nextOpen = r.done && !r.last;
     body = `
-      <div class="tag">${r.done ? `LEVEL ${r.level + 1} COMPLETE` : `LEVEL ${r.level + 1} FAILED`}</div>
+      <div class="tag">${r.done ? `LEVEL ${r.level + 1} COMPLETE` : `LEVEL ${r.level + 1} FAILED`} · ${r.diff.toUpperCase()}</div>
       ${starRow(r.stars, 'stars bigStars')}
       <div class="big-num"><small>${esc(r.name).toUpperCase()}</small><span class="snowy" data-text="${r.score.toLocaleString()}">${r.score.toLocaleString()}</span></div>
       <div class="sub">${r.done ? `★★ at ${r.targets[0].toLocaleString()} · ★★★ at ${r.targets[1].toLocaleString()} · best ${r.best.toLocaleString()}` : `${esc(r.reason)} · ${r.dist} of ${r.len} m`}</div>
