@@ -44,7 +44,9 @@
   #raceInfo:not(.hidden) ~ #combo { top: 98px; }
   #comboBar { width: 110px; height: 4px; margin: 5px auto 0; border-radius: 2px; background: rgba(255,255,255,.35); overflow: hidden; }
   #comboFill { height: 100%; width: 100%; background: var(--gold); }
-  #trick { position: absolute; top: 30%; left: 0; right: 0; text-align: center; opacity: 0; }
+  /* trick names and points pop up low on the screen, under the rider, where they don't block the view ahead */
+  #trick { position: absolute; bottom: 19%; left: 0; right: 0; text-align: center; opacity: 0; }
+  body.touch #trick { bottom: 24%; }
   #trick.show { animation: pop 1.3s ease-out forwards; }
   #trickName { font-size: 30px; padding: 0 12px; letter-spacing: -.01em; }
   #trickPts { font-size: 22px; color: var(--gold); }
@@ -54,7 +56,7 @@
   #toast .ic { color: var(--good); width: 18px; height: 18px; }
   #toast.show { animation: toast 2.1s ease-out forwards; }
   @keyframes toast { 0% { opacity: 0; transform: translate(-50%, -10px); } 10%, 85% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; } }
-  #hint { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 160px); text-align: center; font-size: 13px; font-weight: 600; line-height: 1.9; transition: opacity 1s; background: rgba(13,25,42,.55); padding: 8px 14px; border-radius: 12px; text-shadow: none; }
+  #hint { position: absolute; top: 104px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 160px); text-align: center; font-size: 13px; font-weight: 600; line-height: 1.9; transition: opacity 1s; background: rgba(13,25,42,.55); padding: 8px 14px; border-radius: 12px; text-shadow: none; }
   #hint kbd { background: rgba(255,255,255,.18); }
   kbd { display: inline-block; min-width: 1.6em; text-align: center; background: rgba(255,255,255,.22); border-radius: 5px; padding: 0 5px; font: 700 12px system-ui, sans-serif; text-shadow: none; }
   .iconBtn { position: fixed; top: 14px; width: 42px; height: 42px; border-radius: 12px; background: rgba(13,25,42,.45); color: #fff; display: grid; place-items: center; pointer-events: auto; z-index: 6; }
@@ -72,7 +74,7 @@
   #tJump small { font-size: 10px; font-weight: 700; opacity: .85; }
   #tJump.down { transform: scale(.9); background: rgba(255,107,44,.85); }
   body.touch #speedo { bottom: auto; top: 64px; right: 16px; }
-  body.touch #hint { bottom: auto; top: 110px; max-width: calc(100% - 32px); font-size: 12px; }
+  body.touch #hint { top: 110px; max-width: calc(100% - 32px); font-size: 12px; }
   body.touch, body.touch * { -webkit-touch-callout: none; }
   #muteBtn { left: 64px; }
   #camBtn { left: 114px; }
@@ -250,6 +252,12 @@
   #menu #miniLb .item.me .grow { color: #ffd38a; }
   #menu #miniLb .note { color: #e6f3ff; text-shadow: 0 1px 3px rgba(8,30,62,.8); font-size: 13px; text-align: right; }
   .lbFoot { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+  .miniMore { align-self: flex-end; font-family: var(--snow-font); font-size: 17px; color: #fff; padding: 2px 10px; border-radius: 99px; background: rgba(10,32,64,.55); text-shadow: 0 1px 0 #4a8fc4; }
+  .miniMore:hover { background: rgba(10,32,64,.8); }
+  @media (max-width: 760px) { .miniMore { align-self: flex-start; } }
+  .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .setRow > span { font-family: var(--snow-font); font-size: 18px; }
+  .setRow .tabs { flex: 0 1 260px; }
   .hl.small { display: block; }
   .hl.small .snowy { font-size: clamp(30px, 3.4vw, 48px); }
   .lbFoot .btn { padding: 9px 16px; font-size: 14px; border-radius: 99px; background: rgba(10,32,64,.5);  }
@@ -259,8 +267,9 @@
   #musicBtn { display: none; }
   body:has(#menu:not(.hidden)) #musicBtn { display: grid; left: auto; right: 64px; top: auto; bottom: 14px; }
   #musicBtn.off { opacity: .45; }
+  body:has(#panel:not(.hidden)) #muteBtn, body:has(#panel:not(.hidden)) #musicBtn { display: none; }
   #musicBtn.off::after { content: ''; position: absolute; width: 26px; height: 2px; background: #fff; transform: rotate(-45deg); border-radius: 2px; }
-  @media (pointer: coarse) { .spaceHint { display: none; } }
+  @media (pointer: coarse), (max-height: 640px) { .spaceHint { display: none; } }
   @media (max-width: 760px) {
     #menu { background: linear-gradient(180deg, rgba(10,32,64,.35), transparent 26%, transparent 40%, rgba(10,32,64,.55) 62%); overflow-y: auto; }
     .home { display: flex; flex-direction: column; justify-content: flex-start; gap: 16px; padding: max(18px, env(safe-area-inset-top)) 16px 80px; }
@@ -498,6 +507,17 @@
   .lookArt { width: 100%; display: grid; place-items: center; background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--c) 40%, transparent), transparent 70%); border-radius: 12px; }
   .look .thumb { width: 150px; height: 150px; }
   .look .row { width: 100%; margin-top: 4px; } .look .btn { padding: 9px 6px; font-size: 14px; } .look .btn s { opacity: .6; font-size: 12px; }
+
+  /* the shop's buy bar sticks to the bottom of the panel */
+  .buyDock { position: sticky; bottom: -22px; z-index: 3; margin: 4px -22px -22px; padding: 12px 16px 14px; display: flex; align-items: center; gap: 12px;
+    background: linear-gradient(180deg, #1d3d6b, #10264a); border-top: 1px solid rgba(190,228,255,.28); box-shadow: 0 -10px 24px rgba(5,15,30,.45); border-radius: 0 0 22px 22px; }
+  .buyDock .thumb, .buyDock .sw { width: 58px; height: 58px; margin: 0; flex: none; border-radius: 12px; background: radial-gradient(circle at 50% 55%, rgba(220,240,255,.45), rgba(220,240,255,.08) 70%); }
+  .buyDock span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .buyDock b { font-family: var(--snow-font); font-weight: 400; font-size: 19px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .buyDock small { font-size: 12px; color: var(--muted); }
+  .buyDock .btn { padding: 11px 14px; font-size: 16px; white-space: nowrap; }
+  .buyDock .btn.go { animation: claimPulse 2s ease-in-out infinite; }
+  @media (max-width: 480px) { .buyDock { gap: 8px; padding: 10px 10px 12px; } .buyDock .thumb { width: 44px; height: 44px; } .buyDock .btn { padding: 10px 10px; font-size: 14px; } }
   /* ---------- optional side ad rails (web hosting only) ---------- */
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
   .adrail.left { left: 8px; } .adrail.right { right: 8px; }
@@ -542,6 +562,7 @@
       <div class="homeMinor">
         <button id="missionsBtn"><span id="icTarget"></span>Missions <small id="missionSub"></small></button>
         <button id="helpBtn"><span id="icHelp"></span>How to play</button>
+        <button id="settingsBtn"><span id="icGear"></span>Settings</button>
       </div>
     </section>
     <section class="homeRight">
@@ -551,6 +572,7 @@
         <div class="tabs mini lbPeriods miniPeriod"><button class="tab on" data-ml-period="all">All time</button><button class="tab" data-ml-period="weekly">Weekly</button><button class="tab" data-ml-period="daily">Daily</button></div>
       </div>
       <div id="miniLb" class="list"><div class="note">Loading…</div></div>
+      <button id="miniMore" class="miniMore">see more ›</button>
       <div class="lbFoot">
         <button id="globalChatBtn" class="btn">Global chat</button>
       </div>

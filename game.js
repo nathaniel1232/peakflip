@@ -193,12 +193,14 @@ for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => Sfx.init
 
 // ---------- renderer / scene ----------
 // weaker phones/laptops (few cores or little memory) start in a lighter mode
-const LITE = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+const WEAK = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+const LITE = save.quality === 'low' || (save.quality !== 'high' && WEAK);   // Settings → Graphics (Auto / High / Low)
+const LOW = save.quality === 'low';                                         // the user asked for the smoothest mode
 const renderer = new THREE.WebGLRenderer({ antialias: !LITE && window.devicePixelRatio < 2, powerPreference: 'high-performance' });
 // Adaptive resolution: if frames get slow, render fewer pixels (the biggest cost on phones); raise it again when there's headroom
 const Quality = {
-  max: Math.min(window.devicePixelRatio, isTouch ? 1.5 : 1.75), min: 0.6,
-  ratio: Math.min(window.devicePixelRatio, LITE ? 1 : 1.5),
+  max: LOW ? 0.85 : Math.min(window.devicePixelRatio, isTouch ? 1.5 : 1.75), min: LOW ? 0.5 : 0.6,
+  ratio: LOW ? 0.75 : Math.min(window.devicePixelRatio, LITE ? 1 : 1.5),
   t: 0, frames: 0, good: 0,
   cap: Infinity,
   apply() { renderer.setPixelRatio(Math.min(this.ratio, this.cap)); renderer.setSize(innerWidth, innerHeight); },
@@ -493,8 +495,8 @@ function setTheme(name) {
   col.needsUpdate = true;
   sunDisc.material.color.set(t.disc[0]); sunDisc.position.set(t.disc[1], t.disc[2], t.disc[3]); sunDisc.scale.setScalar(t.disc[4]);
   mountMats.forEach((m, i) => m.color.set(t.mountains[i])); capMatSky.color.set(t.cap);
-  clouds.group.visible = !!t.clouds; clouds.mat.color.set(t.cloud);
-  stars.visible = !!t.stars; aurora.group.visible = !!t.aurora;
+  clouds.group.visible = !!t.clouds && !LOW; clouds.mat.color.set(t.cloud);
+  stars.visible = !!t.stars; aurora.group.visible = !!t.aurora && !LOW;
   headlamp.intensity = t.lamp || 0;
   mat.snow.color.set(t.snow ?? 0xf5f9fc); mat.patch.color.set(t.patch ?? 0xdce9f3); mat.patch.emissive.set(t.patchGlow ?? 0);
   Snowfall.style(t.fall);
@@ -679,7 +681,23 @@ function buildAccessory(kind, it) {
         const b = add(B(0.035, 0.14, 0.035), c, sx * 0.19, 0.22, 0); b.rotation.z = -sx * 1.1;
         const d = add(B(0.035, 0.12, 0.035), c, sx * 0.13, 0.27, 0.03); d.rotation.z = sx * 0.2;
       } add(S(0.025), c2, 0.1, 0.02, -0.12); break;
+    case 'ushanka': add(C(0.19, 0.19, 0.16, 10), c, 0, 0.06); add(C(0.2, 0.2, 0.05, 10), c2, 0, 0.0);
+      for (const sx of [-1, 1]) add(B(0.05, 0.16, 0.18), c2, sx * 0.18, -0.08, 0); add(B(0.2, 0.06, 0.04), c2, 0, 0.05, -0.19); break;
+    case 'bandana': add(C(0.165, 0.165, 0.07, 8), c, 0, 0.0); for (let i = 0; i < 5; i++) add(S(0.012), c2, Math.sin(i * 1.3) * 0.16, 0.0, Math.cos(i * 1.3) * 0.16);
+      { const k = add(B(0.06, 0.12, 0.03), c, 0.05, -0.04, 0.18); k.rotation.z = 0.4; } break;
+    case 'catears': for (const sx of [-1, 1]) { const e = add(new THREE.ConeGeometry(0.06, 0.13, 4), c, sx * 0.1, 0.06, 0); e.rotation.y = Math.PI / 4; const i = add(new THREE.ConeGeometry(0.035, 0.08, 4), c2, sx * 0.1, 0.05, -0.025); i.rotation.y = Math.PI / 4; } break;
+    case 'mohawk': for (let i = 0; i < 6; i++) add(new THREE.ConeGeometry(0.03, 0.14 + Math.sin(i / 5 * Math.PI) * 0.06, 4), c, 0, 0.06, -0.12 + i * 0.05, glow(0x0a3a00)); break;
+    case 'flowers': { const ring = add(new THREE.TorusGeometry(0.155, 0.02, 4, 16), c2, 0, 0.005); ring.rotation.x = Math.PI / 2;
+      for (let i = 0; i < 7; i++) { const a = i / 7 * TAU; add(S(0.035, 6, 4), i % 2 ? c : '#fff3b0', Math.sin(a) * 0.155, 0.02, Math.cos(a) * 0.155); } } break;
+    case 'gradcap': add(C(0.16, 0.17, 0.08, 10), c, 0, 0.02); add(B(0.36, 0.025, 0.36), c, 0, 0.07); add(B(0.012, 0.14, 0.012), c2, 0.15, 0.0, -0.1); add(S(0.022), c2, 0, 0.09); break;
+    case 'spikehelm': { const d = add(S(0.185, 10, 6), c, 0, -0.02); d.scale.y = 0.72; for (let i = 0; i < 5; i++) add(new THREE.ConeGeometry(0.025, 0.1, 4), c2, 0, 0.11 - Math.abs(i - 2) * 0.02, -0.12 + i * 0.06); } break;
+    case 'unicorn': { const h = add(new THREE.ConeGeometry(0.045, 0.26, 8), '#ffd23f', 0, 0.11, -0.08, glow(0x553300)); h.rotation.x = -0.35;
+      for (let i = 0; i < 5; i++) add(B(0.06, 0.05, 0.08), [c2, '#c77dff', '#4cc3ff', '#ffd23f', '#3ddc84'][i], 0, -0.02 - i * 0.02, 0.1 + i * 0.03); } break;
     // ---- face ----
+    case 'starshades': for (const sx of [-1, 1]) { add(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 5), c, sx * 0.075, 0.01, -0.012).rotation.x = Math.PI / 2; add(B(0.03, 0.012, 0.3), c2, sx * 0.152, 0.03, 0.14); } break;
+    case 'visor': add(B(0.33, 0.06, 0.03), c, 0, 0.01, -0.012, glow(0x00a0b0)); add(B(0.335, 0.025, 0.33), c2, 0, 0.01, 0.15); break;
+    case 'grin': add(B(0.11, 0.035, 0.015), c, 0, -0.085, -0.004); add(B(0.11, 0.01, 0.016), c2, 0, -0.1, -0.004); break;
+    case 'bubblegum': { const b = add(S(0.06, 10, 8), c, 0, -0.08, -0.05); b.material.transparent = true; b.material.opacity = 0.9; } break;
     case 'monocle': add(new THREE.TorusGeometry(0.045, 0.01, 5, 14), c, 0.06, 0.01, -0.012); add(C(0.04, 0.04, 0.005, 12), c2, 0.06, 0.01, -0.012).rotation.x = Math.PI / 2;
       add(B(0.006, 0.12, 0.006), c, 0.1, -0.06, -0.012); break;
     case 'eyepatch': add(B(0.07, 0.06, 0.02), c, -0.06, 0.01, -0.012); { const st = add(B(0.33, 0.015, 0.33), c2, 0, 0.02, 0.15); st.rotation.z = 0.25; } break;
@@ -697,6 +715,16 @@ function buildAccessory(kind, it) {
     case 'lasers': { const lg = new THREE.Group(); g.add(lg); accAnim.lasers = lg;
       for (const sx of [-1, 1]) { const l = new THREE.Mesh(B(0.025, 0.025, 6), new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85 })); l.position.set(sx * 0.07, 0, -3); lg.add(l); add(S(0.025), c2, sx * 0.07, 0, -0.01, glow(0xff0000)); } } break;
     // ---- back ----
+    case 'katana': { const k = new THREE.Group(); k.position.set(0, 0.02, 0.12); k.rotation.z = 0.7; g.add(k);
+      k.add(accMesh(B(0.035, 0.72, 0.012), c, 0, 0.18, 0, { emissive: 0x223344 })); k.add(accMesh(B(0.12, 0.025, 0.04), '#ffd23f', 0, -0.19, 0)); k.add(accMesh(B(0.045, 0.22, 0.045), c2, 0, -0.32, 0)); } break;
+    case 'balloons': for (const [x, y, z, col] of [[-0.12, 0.75, 0.2, c], [0.08, 0.85, 0.25, c2], [0.2, 0.7, 0.15, '#ffd23f']]) {
+        add(S(0.11, 10, 8), col, x, y, z); const st = add(B(0.006, 0.6, 0.006), '#ffffff', x * 0.5, y - 0.4, z * 0.7); st.rotation.z = -x;
+      } break;
+    case 'boardback': { const b = add(B(0.3, 0.95, 0.04), c, 0, 0.0, 0.13); b.rotation.z = 0.15; const st = add(B(0.31, 0.06, 0.045), c2, 0, 0.15, 0.13); st.rotation.z = 0.15; } break;
+    case 'quiver': { const q = add(C(0.07, 0.06, 0.42, 8), c, 0.08, 0.05, 0.13); q.rotation.z = -0.35;
+      for (let i = 0; i < 3; i++) { const a = add(B(0.012, 0.3, 0.012), '#d9c7a7', 0.17 + i * 0.025, 0.32 + i * 0.01, 0.13 - i * 0.02); a.rotation.z = -0.35; add(new THREE.ConeGeometry(0.025, 0.06, 3), c2, 0.22 + i * 0.025, 0.47, 0.13 - i * 0.02).rotation.z = -0.35; } } break;
+    case 'teddy': add(B(0.22, 0.24, 0.14), c, 0, -0.02, 0.17); add(B(0.17, 0.16, 0.13), c, 0, 0.18, 0.17); add(B(0.08, 0.06, 0.03), c2, 0, 0.16, 0.24);
+      for (const sx of [-1, 1]) { add(S(0.04, 6, 4), c, sx * 0.08, 0.28, 0.17); add(B(0.06, 0.13, 0.07), c, sx * 0.14, 0.0, 0.2); add(S(0.012), '#111111', sx * 0.035, 0.2, 0.235); } break;
     case 'guitar': { const gt = new THREE.Group(); gt.position.set(0, -0.05, 0.1); gt.rotation.z = 0.5; g.add(gt);
       gt.add(accMesh(S(0.17, 10, 6), c, 0, -0.18, 0)); gt.add(accMesh(S(0.13, 10, 6), c, 0, 0.02, 0)); gt.children.forEach(m => m.scale.z = 0.35);
       gt.add(accMesh(C(0.04, 0.04, 0.012, 10), '#111111', 0, -0.1, -0.06));
@@ -793,7 +821,7 @@ function buildAccessory(kind, it) {
 let preview = null;
 const worn = kind => preview?.[kind] ? item(kind, preview[kind]) : equipped(kind);
 // face items that cover the eyes replace the goggles, so they're never hidden inside them
-const EYE_ITEMS = new Set(['aviators', 'hearts', 'pixel', 'mask', 'lasers', 'thirdeye', 'monocle', 'eyepatch', 'nerd']);
+const EYE_ITEMS = new Set(['aviators', 'hearts', 'pixel', 'mask', 'lasers', 'thirdeye', 'monocle', 'eyepatch', 'nerd', 'starshades', 'visor']);
 function applyAccessories() {
   accAnim.prop = accAnim.cape = accAnim.lasers = accAnim.sun = accAnim.crystal = null; accAnim.wings = []; accAnim.jet = false;
   for (const kind of ['hat', 'face', 'back']) {
@@ -847,6 +875,13 @@ function outfitTexture(kind, o) {
       g.fillStyle = '#111'; g.fillRect(30, 2, 4, 26); g.fillStyle = '#333'; g.fillRect(31, 40, 2, 2); g.fillRect(31, 50, 2, 2); break;
     case 'tallit': g.fillStyle = '#1d4ed8'; for (const y of [8, 16, 44, 52]) g.fillRect(0, y, S, 4); break;
     case 'ninja': g.fillStyle = '#d00000'; g.fillRect(0, 44, S, 7); g.fillStyle = '#333'; g.fillRect(0, 0, S, 3); break;
+    case 'camo': for (let i = 0; i < 14; i++) { g.fillStyle = ['#e5e5e5', '#4a5560', '#7a8590'][i % 3]; g.beginPath(); g.ellipse((i * 37) % S, (i * 23) % S, 6 + (i % 4) * 3, 4 + (i % 3) * 3, i, 0, TAU); g.fill(); } break;
+    case 'zebra': g.fillStyle = '#111'; for (let i = -2; i < 8; i++) { g.beginPath(); g.moveTo(i * 12, 0); g.lineTo(i * 12 + 7, 0); g.lineTo(i * 12 + 22, S); g.lineTo(i * 12 + 14, S); g.fill(); } break;
+    case 'checker': g.fillStyle = '#fff'; for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) if ((x + y) % 2) g.fillRect(x * 16, y * 16, 16, 16); break;
+    case 'dots': g.fillStyle = '#fff'; for (let y = 0; y < 4; y++) for (let x = 0; x < 4; x++) { g.beginPath(); g.arc(x * 16 + 8 + (y % 2) * 8, y * 16 + 8, 4, 0, TAU); g.fill(); } break;
+    case 'grid': both(k => { k.strokeStyle = o.glow; k.lineWidth = 2; for (let i = 0; i <= S; i += 16) { k.beginPath(); k.moveTo(i, 0); k.lineTo(i, S); k.moveTo(0, i); k.lineTo(S, i); k.stroke(); } }); break;
+    case 'flames': both(k => { const grd = k.createLinearGradient(0, S, 0, 20); grd.addColorStop(0, '#ff4800'); grd.addColorStop(1, '#ffba08'); k.fillStyle = k === g ? grd : o.glow;
+      k.beginPath(); k.moveTo(0, S); for (let x = 0; x <= S; x += 8) k.lineTo(x, x % 16 ? 34 : 20 + (x % 24)); k.lineTo(S, S); k.fill(); }); break;
     case 'astro': g.strokeStyle = '#b8c2cc'; g.lineWidth = 2; g.strokeRect(6, 6, 52, 52); g.fillStyle = '#1d70d6'; g.fillRect(40, 10, 14, 9);
       g.fillStyle = '#e63946'; g.fillRect(10, 12, 12, 4); g.fillStyle = '#ffd23f'; g.fillRect(22, 34, 20, 8); break;
   }
@@ -1053,6 +1088,7 @@ const Particles = (() => {
   const c = new THREE.Color();
   return {
     emit(x, y, z, n, spread, up, color, vz = 0) {
+      if (LITE) n = Math.ceil(n * (LOW ? 0.35 : 0.6));
       c.set(color);
       for (let k = 0; k < n; k++) {
         const i = head; head = (head + 1) % N;
@@ -1077,7 +1113,7 @@ const Particles = (() => {
 
 // falling snow around the camera
 const Snowfall = (() => {
-  const N = LITE ? 220 : 500, R = 30;
+  const N = LOW ? 110 : LITE ? 220 : 500, R = 30;
   const geo = new THREE.BufferGeometry(), pos = new Float32Array(N * 3);
   for (let i = 0; i < N; i++) { pos[i * 3] = rand(-R, R); pos[i * 3 + 1] = rand(-15, 15); pos[i * 3 + 2] = rand(-R, R); }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1518,7 +1554,6 @@ function featureRamp(z, big, sp) {
   const L = big ? wr(10, 12) : wr(6, 8), H = big ? wr(3.6, 4.6) : wr(1.9, 2.7), W = big ? 7 : 5;
   const x = wr(-8, 8);
   addRamp(x, z, L, H, W);
-  if (big && crng() < 0.4) addPad('boost', x, z + 12);
   const at = airTime(sp, H, L), ls = lipSpeed(sp, H);
   if (crng() < 0.75) for (let i = 1; i < 7; i++) {
     const t = at * i / 7;
@@ -1539,8 +1574,8 @@ function featureRail(z, sp, withKicker) {
   return [len, x];
 }
 function featureRocks(z, d) {
-  const n = 5 + Math.floor(d * 10);
-  for (let i = 0; i < n; i++) addRock(wr(-12, 12), z - wr(0, 32), wr(0.7, 1.3));
+  const n = 4 + Math.floor(d * 5);
+  for (let i = 0; i < n; i++) addRock(wr(-12, 12), z - wr(0, 32), wr(0.7, 1.2));
   return [45, wr(-6, 6)];
 }
 function featureSlalom(z, d) {
@@ -1582,10 +1617,9 @@ function featureField(z, d) {
 
 function featureMega(z, sp) {
   const L = 16, H = 7, W = 9, x = wr(-4, 4);
-  addPad('boost', x, z + 14);
   addRamp(x, z, L, H, W);
-  const at = airTime(sp + 6, H, L), ls = lipSpeed(sp + 6, H);
-  for (let i = 1; i < 10; i++) { const t = at * i / 10; addCoin(x, arcY(sp + 6, H, L, t) + 1.2, z - L - ls * t); }
+  const at = airTime(sp, H, L), ls = lipSpeed(sp, H);
+  for (let i = 1; i < 10; i++) { const t = at * i / 10; addCoin(x, arcY(sp, H, L, t) + 1.2, z - L - ls * t); }
   return [L + ls * at + 30, x];
 }
 function featureKickerLine(z, sp) {
@@ -1601,34 +1635,6 @@ function featureKickerLine(z, sp) {
 // trampoline vertical speed for the n-th bounce in a row (Endless); the race keeps its original single bounce
 const bounceVy = n => 20 + 3.5 * Math.min(n, 3);
 function bounceAirTime(vy) { const up = vy / G, apex = vy * vy / (2 * G); return up + Math.sqrt(2 * apex / (G * 1.15)); }
-function featureBounce(z) {
-  if (mode !== 'race') {
-    // a line of trampolines spaced so each bounce lands you on the next; coin arcs over every hop
-    const n = 3 + (crng() < 0.4 ? 1 : 0), x = wr(-6, 6), sp = baseSpeed(-z) * 1.08;
-    let zz = z;
-    for (let i = 0; i < n; i++) {
-      addPad('bounce', x, zz);
-      if (i === n - 1) break;
-      // you ride onto the first one from its near edge; after that you take off where you landed (its middle).
-      // Air drag costs ~0.6 m/s per second, so the hop is a little shorter than speed x time.
-      const from = i === 0 ? zz + 2.4 : zz, vy = bounceVy(i), T = bounceAirTime(vy), dist = (sp - 0.3 * T) * T;
-      for (let k = 1; k < 6; k++) { const t = T * k / 6, y = t < vy / G ? vy * t - G * t * t / 2 : vy * vy / (2 * G) - G * 1.15 * (t - vy / G) ** 2 / 2; addCoin(x, y + 1.6, from - sp * t); }
-      zz = from - dist;
-    }
-    return [z - zz + 40, x];
-  }
-  const n = 2 + (crng() < 0.5 ? 1 : 0), x0 = wr(-6, 6);
-  for (let i = 0; i < n; i++) { const x = clamp(x0 + wr(-3, 3), -10, 10); addPad('bounce', x, z - i * 19); for (let k = 1; k < 4; k++) addCoin(x, 3 + k * 1.6, z - i * 19 - k * 3.5); }
-  return [n * 19 + 30, x0];
-}
-function featureBoost(z, d) {
-  const x = wr(-8, 8);
-  addPad('boost', x, z); addPad('boost', x + wr(-2, 2), z - 10);
-  for (let i = 0; i < 8; i++) addCoin(x, 1.2, z - 14 - i * 3);
-  if (d > 0.2) for (let i = 0; i < 3; i++) addRock(wr(-12, 12), z - wr(20, 40), wr(0.7, 1));
-  return [48, x];
-}
-
 function featureRollers(z, d) {
   const n = 3 + Math.floor(crng() * 3); let zz = z;
   for (let i = 0; i < n; i++) {
@@ -2070,7 +2076,8 @@ const wallMats = {
 };
 function addWallChunk(z0) {
   const pal = WALL_COLORS[zone] || WALL_COLORS.normal, pos = [], col = [], c = new THREE.Color();
-  const alpine = zone === 'normal', cols = alpine ? ALPINE_COLS : WALL_COLS;
+  const alpine = zone === 'normal', all = alpine ? ALPINE_COLS : WALL_COLS;
+  const cols = LOW ? all.filter((o, i) => i < 2 || i % 2 === 1 || i === all.length - 1) : all;   // Low: half the wall detail
   const rows = WALL_CHUNK / 4 + 1, a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3();
   for (const side of [-1, 1]) {
     const P = [];
@@ -2210,7 +2217,7 @@ function addPortal(z) {
   portal = { z, mesh: g, disc };
 }
 function pickSpecial() {
-  const w = [['ramp', 16], ['big', 12], ['rollers', 9], ['table', 9], ['stepdown', 6], ['mega', 6], ['line', 9], ['bounce', 8], ['boost', 8], ['rail', 9], ['railKick', 7], ['rocks', 12], ['snake', 7]];
+  const w = [['ramp', 16], ['big', 12], ['rollers', 9], ['table', 9], ['stepdown', 6], ['mega', 6], ['line', 9], ['rail', 9], ['railKick', 7], ['rocks', 8], ['snake', 7]];
   if (zone === 'xmas') w.push(['slalom', 10], ['logs', 7]);   // decorated-tree slaloms and yule logs
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of w) if ((r -= v) < 0) return k;
@@ -2218,7 +2225,7 @@ function pickSpecial() {
 }
 function pickFeature(d) {
   const w = [
-    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['bounce', 6], ['boost', 5], ['rail', 10], ['railKick', 7], ['rocks', 12 + 10 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
+    ['ramp', 16], ['big', 10], ['rollers', 9], ['table', 8], ['stepdown', d > 0.05 ? 5 : 0], ['mega', d > 0.1 ? 4 : 0], ['line', 7], ['rail', 10], ['railKick', 7], ['rocks', 9 + 5 * d], ['slalom', 10 + 6 * d], ['snake', 6 - 4 * d],
     ['crevasse', d > 0.05 ? 7 + 10 * d : 0], ['logs', d > 0.02 ? 6 + 10 * d : 0], ['balls', d > 0.12 ? 12 * d : 0], ['field', d > 0.2 ? 12 * d : 0],
     ['bear', mode === 'race' ? 0 : d > 0.08 ? 6 : 0],
   ];
@@ -2227,7 +2234,7 @@ function pickFeature(d) {
   return 'ramp';
 }
 // the attract-mode bot only gets the showy features: kickers, rails, tables, trampolines
-const DEMO_FEATURES = [['ramp', 14], ['big', 12], ['mega', 5], ['line', 8], ['bounce', 6], ['rail', 8], ['railKick', 8], ['table', 7], ['stepdown', 6], ['rollers', 4], ['snake', 3]];
+const DEMO_FEATURES = [['ramp', 14], ['big', 12], ['mega', 5], ['line', 8], ['rail', 8], ['railKick', 8], ['table', 7], ['stepdown', 6], ['rollers', 4], ['snake', 3]];
 function pickDemo() {
   let r = Math.random() * DEMO_FEATURES.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of DEMO_FEATURES) if ((r -= v) < 0) return k;
@@ -2246,13 +2253,13 @@ function spawnFeature() {
     rocks: () => featureRocks(z, d), slalom: () => featureSlalom(z, d), snake: () => featureCoinSnake(z), crevasse: () => featureCrevasse(z, d),
     logs: () => featureLogs(z, d), balls: () => featureBalls(z, d), field: () => featureField(z, d),
     rollers: () => featureRollers(z, d), table: () => featureTabletop(z, sp, d), stepdown: () => featureStepDown(z, sp),
-    mega: () => featureMega(z, sp), line: () => featureKickerLine(z, sp), bounce: () => featureBounce(z), boost: () => featureBoost(z, d),
+    mega: () => featureMega(z, sp), line: () => featureKickerLine(z, sp),
     bear: () => featureBear(z, d),
   }[k];
   const [len, gx] = f();
   // extra scattered hazards get more common the further you go
-  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'bounce', 'table', 'stepdown', 'rollers'].includes(k) && crng() < 0.2 + d * 0.8) {
-    for (let i = 0, n = 1 + Math.floor(d * 5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
+  if (!demo && !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers'].includes(k) && crng() < 0.12 + d * 0.4) {
+    for (let i = 0, n = 1 + Math.floor(d * 2.5); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
   }
   spawnZ -= len;
 }
@@ -2365,7 +2372,7 @@ function spawnDecor(z) {
   }
   // World-space groves have their own deterministic scatter, independent of course generation.
   // A strip owns only its actual tree positions, rather than placing a row at the strip boundary.
-  for (const tree of landscapeTrees(z, 4, forest)) {
+  for (const tree of landscapeTrees(z, 4, forest).filter((t, i) => !LITE || i % (LOW ? 3 : 2) === 0)) {
     addTree(tree.x, tree.z, tree.scale, false, tree.rotation, tree.variant);
   }
   if (!forest && decorN % 12 === 0) addLiftTower(z);
@@ -2718,6 +2725,17 @@ function leaveRail(pop) {
   if (pop > 5) Sfx.ollie();
 }
 
+const SMASHABLE = new Set(['rock', 'crystal', 'gift']);
+const SMASH_COL = { rock: 0x9aa5b1, crystal: 0x3cf2ff, gift: 0xd62839 };
+function smash(o) {
+  o.dead = true; o.passed = true;
+  if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh);
+  o.pool = null; o.mesh = new THREE.Group();
+  p.speed *= 0.72; p.lean = rand(-0.6, 0.6); p.combo = 0; p.comboTimer = 0; shake = Math.max(shake, 0.3);
+  Particles.emit(o.x, 0.6, o.z, 26, 3, 4, SMASH_COL[o.kind], -2); Particles.emit(o.x, 0.3, o.z, 12, 2, 2, 0xffffff, -1);
+  Sfx.tone(120, 0.18, 'triangle', 0.12, 60); Sfx.noise(0.2, 0.5, 600);
+  showTrick({ rock: 'Smashed a rock!', crystal: 'Shattered a crystal!', gift: 'Unwrapped a present!' }[o.kind], 'Slowed down', false);
+}
 function crash(reason) {
   if (p.crashed) return;
   if (demo) return demoRecover();
@@ -2893,6 +2911,15 @@ function updatePlayer(dt) {
     if (o.kind === 'log') {
       if (Math.abs(dz) < 0.45 && Math.abs(dx) < o.hw + 0.1 && p.y < o.h && (p.grounded || p.vy < 0)) return crash('Tripped over a log');
       if (!o.passed && p.z < o.z - 0.6) { o.passed = true; if (Math.abs(dx) < o.hw + 0.3 && p.y >= o.h) { p.trickScore += 100; showTrick('Log hop!', '+100', false); Sfx.near(); missionToast(track('near', 1)); } }
+      continue;
+    }
+    if (SMASHABLE.has(o.kind)) {
+      // a smaller, fairer hitbox, and hitting one is a stumble, not the end of the run
+      if (Math.abs(dz) < o.r * 0.6 + 0.25 && Math.abs(dx) < o.r * 0.7 + 0.15 && p.y < o.h * 0.85) smash(o);
+      else if (!o.passed && p.z < o.z - o.r) {
+        o.passed = true;
+        if (Math.abs(dx) < o.r + 1.1 && p.y < o.h + 0.8) { p.trickScore += 50; showTrick('Close call!', '+50', false); Sfx.near(); missionToast(track('near', 1)); }
+      }
       continue;
     }
     if (Math.abs(dz) < o.r + 0.5 && Math.abs(dx) < o.r + 0.32 && p.y < o.h)
@@ -3507,6 +3534,7 @@ initUI({
   onPlay: m => startRun(m), onAgain: () => restartWithAd(), onMenu: () => toMenu(),
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
   closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
+  music: Music, soundUI: () => updateMuteBtn(),
 });
 toMenu();
 requestAnimationFrame(frame);
@@ -3515,4 +3543,4 @@ Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v =>
 Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
 
 // debug handle for testing
-window.__game = { p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addPad, addBear, addCrevasse, enterWorld, exitWorld, featureBounce, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

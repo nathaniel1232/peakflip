@@ -214,6 +214,20 @@ function renderProfile() {
 }
 Cloud.onStatus(() => { const l = $('syncLine'); if (l) { l.className = `syncLine ${Cloud.status}`; l.innerHTML = statusText(); } });
 
+// ---------- settings ----------
+function renderSettings() {
+  const q = save.quality || 'auto', seg = (attr, opts, cur) => `<div class="tabs">${opts.map(([v, label]) => `<button class="tab ${String(cur) === String(v) ? 'on' : ''}" data-${attr}="${v}">${label}</button>`).join('')}</div>`;
+  openPanel('Settings', `
+    <div class="setRow"><span>Graphics</span>${seg('q', [['auto', 'Auto'], ['high', 'High'], ['low', 'Low']], q)}</div>
+    <div class="note">Low is much smoother: lower resolution, no anti-aliasing, fewer trees and particles, simpler mountains and less falling snow. Auto picks Low on slower devices. Changing this restarts the game.</div>
+    <div class="setRow"><span>Music</span>${seg('music', [[1, 'On'], [0, 'Off']], cfg.music.on ? 1 : 0)}</div>
+    <div class="setRow"><span>All sound</span>${seg('sound', [[1, 'On'], [0, 'Off']], cfg.sfx.muted ? 0 : 1)}</div>`);
+  const B = $('panelBody');
+  B.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { if (b.dataset.q === q) return; save.quality = b.dataset.q; persist(); location.reload(); });
+  B.querySelectorAll('[data-music]').forEach(b => b.onclick = () => { if (+b.dataset.music !== (cfg.music.on ? 1 : 0)) { cfg.sfx.init(); cfg.music.toggle(); cfg.soundUI(); } renderSettings(); });
+  B.querySelectorAll('[data-sound]').forEach(b => b.onclick = () => { if (+b.dataset.sound === (cfg.sfx.muted ? 1 : 0)) { cfg.sfx.init(); cfg.sfx.toggle(); } renderSettings(); });
+}
+
 // ---------- how to play ----------
 function renderHelp() {
   openPanel('How to play', `<div class="help">
@@ -302,8 +316,15 @@ function shopHtml() {
     ${cfg.ads.available ? `<button class="btn" id="adCoins" ${adUsesLeft('coins') > 0 ? '' : 'disabled'}>${icon('play')} +75 coins <small style="opacity:.7">(${adUsesLeft('coins')} left today)</small></button>` : ''}
     <div class="note">The shop changes every day at 00:00 UTC, the same for everyone. Coins are earned only by playing. No real money involved.</div>`;
 }
+// the buy bar: pinned to the bottom of the shop, so whatever you tap can be bought right where you are
 function detailBar() {
-  if (!shopSel) return tryOn ? `<div class="tryBar"><span>Trying on a whole outfit</span><button class="btn" id="tryReset">Take off</button></div>` : '';
+  if (shopSel?.fit) {
+    const f = FITS.find(x => x.id === shopSel.fit), o = fitOffer(f), owned = !o.missing.length;
+    const action = owned ? `<button class="btn" disabled>${icon('check')} Owned</button>`
+      : `<button class="btn go" data-buyfit="${f.id}" ${save.coins >= o.price && o.available ? '' : 'disabled'}>Buy ${coin} ${o.price.toLocaleString()}</button>`;
+    return `<div class="buyDock">${thumb('fit:' + f.id) || ''}<span><b>${esc(f.name)}</b><small>${owned ? 'You own the whole outfit' : save.coins >= o.price ? `Whole outfit · ${o.missing.length} item${o.missing.length > 1 ? 's' : ''} you don't have` : `You need ${(o.price - save.coins).toLocaleString()} more coins`}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
+  }
+  if (!shopSel) return '';
   const { kind, id } = shopSel, it = CATALOG[kind].find(i => i.id === id), own = owns(kind, id);
   const shop = shopToday(), offer = [...shop.featured, ...shop.daily, ...shop.limited].find(x => x.kind === kind && x.it.id === id);
   let action;
@@ -311,7 +332,7 @@ function detailBar() {
   else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`;
   else if (offer) action = `<button class="btn go" id="shopBuy" ${save.coins >= offer.price ? '' : 'disabled'}>Buy ${coin} ${offer.price.toLocaleString()}</button>`;
   else action = `<button class="btn" disabled>${icon('lock')}</button>`;
-  return `<div class="tryBar"><span><b>${esc(it.name)}</b> <small style="color:${RARITY[it.rarity].color}">${isLimited(it) ? 'Limited ' : ''}${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small><br>
+  return `<div class="buyDock">${swatch(kind, it)}<span><b>${esc(it.name)}</b><small style="color:${RARITY[it.rarity].color}">${isLimited(it) ? 'Limited ' : ''}${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small>
     <small>${own ? 'In your locker' : offer ? (save.coins >= offer.price ? 'In the shop today' : `You need ${(offer.price - save.coins).toLocaleString()} more coins`) : sourceText(it)}</small></span>${action}<button class="btn" id="tryReset" title="Take off">${icon('close')}</button></div>`;
 }
 // whole outfits: every look and themed fit, bought in one go
@@ -334,15 +355,15 @@ let shopTimer = null, shopTab = 'today';
 function renderShop(tab) {
   if (tab === 'today' || tab === 'outfits') shopTab = tab;
   const tabs = `<div class="tabs"><button class="tab ${shopTab === 'today' ? 'on' : ''}" data-stab="today">${icon('shop')} Today</button><button class="tab ${shopTab === 'outfits' ? 'on' : ''}" data-stab="outfits">${icon('gift')} Outfits</button></div>`;
-  openPanel('Item Shop', `${detailBar()}${tabs}${shopTab === 'outfits' ? `<div class="shopTop"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>${outfitsHtml()}` : shopHtml()}`, true, true);
+  openPanel('Item Shop', `${tabs}${shopTab === 'outfits' ? `<div class="shopTop"><div class="chip"><span class="coin"></span><b>${save.coins.toLocaleString()}</b></div></div>${outfitsHtml()}` : shopHtml()}${detailBar()}`, true, true);
   clearInterval(shopTimer);   // keep the countdown fresh (and roll over to the new shop at midnight UTC)
   shopTimer = setInterval(() => { if ($('panelTitle').textContent === 'Item Shop' && !$('panel').classList.contains('hidden')) renderShop(); else clearInterval(shopTimer); }, 60000);
   const B = $('panelBody');
   B.querySelectorAll('[data-stab]').forEach(b => b.onclick = () => renderShop(b.dataset.stab));
-  B.querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { shopSel = null; preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderShop(); });
+  B.querySelectorAll('[data-tryfit]').forEach(b => b.onclick = () => { shopSel = { fit: b.dataset.tryfit }; preview({ ...FITS.find(x => x.id === b.dataset.tryfit).pieces }); renderShop(); });
   B.querySelectorAll('[data-buyfit]').forEach(b => b.onclick = () => {
     const f = FITS.find(x => x.id === b.dataset.buyfit);
-    if (buyFit(f.id)) { for (const [k, id] of Object.entries(f.pieces)) if (id === 'none' || owns(k, id)) save.eq[k] = id; persist(); cfg.onCosmetics(); preview(null); cfg.sfx.perfect(); celebrate(`${f.name} is yours!`); }
+    if (buyFit(f.id)) { for (const [k, id] of Object.entries(f.pieces)) if (id === 'none' || owns(k, id)) save.eq[k] = id; persist(); shopSel = null; preview(null); cfg.onCosmetics(); cfg.sfx.perfect(); celebrate(`${f.name} is yours!`); }
     renderShop();
   });
   B.querySelectorAll('[data-offer]').forEach(b => b.onclick = () => {
@@ -715,7 +736,7 @@ export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
   put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag');
-  put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help');
+  put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help'); put('icGear', 'gear');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
@@ -725,6 +746,8 @@ export function initUI(c) {
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = 'all'; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
+  $('settingsBtn').onclick = () => { c.sfx.init(); renderSettings(); };
+  $('miniMore').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   document.querySelectorAll('[data-ml-period]').forEach(b => b.onclick = () => { miniPeriod = b.dataset.mlPeriod; miniBoard(true); });

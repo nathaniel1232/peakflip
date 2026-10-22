@@ -12,20 +12,40 @@ const ERRORS = {
 export function initChat({ openPanel, nameForm }) {
   const style = document.createElement('style');
   style.textContent = `
-    .chatIntro { color:var(--muted); font-size:13px; line-height:1.5; }
-    #chatMessages { height:min(42vh,360px); min-height:150px; overflow-y:auto; display:flex; flex-direction:column; gap:10px; padding:4px; overscroll-behavior:contain; }
-    .chatMessage { padding:10px 12px; background:rgba(255,255,255,.06); border-radius:12px; flex-shrink:0; }
-    .chatMessage.mine { border-left:3px solid var(--gold); }
-    .chatByline { display:flex; align-items:center; gap:8px; font-size:13px; }
-    .chatByline time { color:var(--muted); margin-left:auto; font-size:11px; }
-    .chatBody { white-space:pre-wrap; overflow-wrap:anywhere; margin-top:5px; font-size:14px; line-height:1.5; user-select:text; }
-    .chatActions { display:flex; gap:12px; margin-top:5px; }
-    .chatActions button { background:none; border:0; padding:2px 0; color:var(--muted); font:inherit; font-size:11px; cursor:pointer; }
-    #chatForm { display:flex; gap:8px; }
-    #chatInput { min-width:0; flex:1; font:inherit; padding:11px; border-radius:12px; border:1px solid rgba(255,255,255,.2); background:rgba(0,0,0,.18); color:var(--text,#fff); }
-    #chatStatus { min-height:20px; font-size:12px; color:var(--muted); }
-    #chatForm .btn { width:auto; margin:0; }
-    .chatCount { color:var(--muted); font-size:11px; text-align:right; }
+    .chatIntro { color:var(--muted); font-size:13px; line-height:1.5; text-align:center; }
+    #chatName { text-align:center; font-family:var(--snow-font); font-size:15px; color:#cfe8fa; }
+    #chatMessages { height:min(46vh,400px); min-height:160px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; padding:10px 6px;
+      border-radius:16px; background:linear-gradient(180deg, rgba(0,0,0,.22), rgba(0,0,0,.1)); box-shadow:inset 0 1px 0 rgba(255,255,255,.06); overscroll-behavior:contain; }
+    .chatMessage { display:flex; gap:9px; align-items:flex-end; max-width:86%; flex-shrink:0; margin-top:8px; }
+    .chatMessage.cont { margin-top:0; }
+    .chatMessage.mine { align-self:flex-end; flex-direction:row-reverse; }
+    .chatAvatar { width:30px; height:30px; flex:none; border-radius:50%; display:grid; place-items:center; font-family:var(--snow-font); font-size:15px; color:#fff;
+      background:hsl(var(--h) 65% 45%); box-shadow:inset 0 -2px 0 rgba(0,0,0,.25); }
+    .chatMessage.cont .chatAvatar { visibility:hidden; height:0; }
+    .chatBubble { position:relative; padding:8px 12px; border-radius:16px 16px 16px 5px; background:rgba(255,255,255,.1); min-width:0; }
+    .chatMessage.mine .chatBubble { border-radius:16px 16px 5px 16px; background:linear-gradient(180deg,#ff8a4c,#e5551a); }
+    .chatByline { display:flex; align-items:baseline; gap:8px; font-size:12px; margin-bottom:2px; }
+    .chatByline b { font-family:var(--snow-font); font-weight:400; font-size:14px; color:hsl(var(--h) 80% 72%); }
+    .chatMessage.mine .chatByline b { color:#fff; }
+    .chatByline time { color:var(--muted); font-size:10px; }
+    .chatMessage.mine .chatByline time { color:rgba(255,255,255,.75); }
+    .chatMessage.cont .chatByline { display:none; }
+    .chatBody { white-space:pre-wrap; overflow-wrap:anywhere; font-size:14px; line-height:1.45; user-select:text; }
+    .chatActions { display:flex; gap:10px; margin-top:3px; opacity:0; transition:opacity .15s; }
+    .chatMessage:hover .chatActions, .chatMessage:focus-within .chatActions { opacity:1; }
+    body.touch .chatActions { opacity:.7; }
+    .chatActions button { background:none; border:0; padding:0; color:var(--muted); font:inherit; font-size:10px; cursor:pointer; }
+    .chatActions button:hover { color:#fff; }
+    #chatForm { display:flex; gap:8px; align-items:center; padding:5px 5px 5px 14px; border-radius:99px; background:rgba(0,0,0,.25); box-shadow:inset 0 0 0 1px rgba(190,228,255,.18); }
+    #chatForm:focus-within { box-shadow:inset 0 0 0 2px rgba(76,195,255,.6); }
+    #chatInput { min-width:0; flex:1; font:600 15px system-ui,sans-serif; padding:8px 0; border:0; outline:none; background:none; color:#fff; }
+    #chatInput::placeholder { color:var(--muted); }
+    #chatForm .btn { width:44px; height:44px; padding:0; border-radius:50%; margin:0; flex:none; }
+    #chatForm .btn .ic { width:20px; height:20px; }
+    .chatFoot { display:flex; justify-content:space-between; gap:8px; font-size:11px; color:var(--muted); }
+    #chatStatus { min-height:16px; }
+    .chatEmpty { margin:auto; text-align:center; color:var(--muted); font-size:13px; }
+    .chatEmpty b { display:block; font-family:var(--snow-font); font-weight:400; font-size:22px; color:#fff; margin-bottom:4px; }
   `;
   document.head.appendChild(style);
   let blocked;
@@ -50,18 +70,22 @@ export function initChat({ openPanel, nameForm }) {
     const el = $('chatMessages'); if (!el) return;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 70;
     const visible = messages.filter(m => !blocked.has(m.author) && !reported.has(m.id));
-    const html = visible.length ? visible.map(m => {
+    // bubbles: everyone gets a colour from their (anonymous) author id; messages in a row from one rider are grouped
+    const html = visible.length ? visible.map((m, i) => {
       const date = new Date(m.created_at), time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      return `<article class="chatMessage ${m.isMe ? 'mine' : ''}"><div class="chatByline"><b>${escape(m.name)}${m.isMe ? ' · you' : ''}</b><time datetime="${escape(m.created_at)}" title="${escape(date.toLocaleString())}">${escape(time)}</time></div>
-        <div class="chatBody">${escape(m.body)}</div>${!m.isMe ? `<div class="chatActions"><button type="button" data-block="${escape(m.author)}">Mute player</button><button type="button" data-report="${m.id}">Report</button></div>` : ''}</article>`;
-    }).join('') : '<div class="note">The mountain is quiet. Say hello!</div>';
+      const prev = visible[i - 1], cont = prev && prev.author === m.author && date - new Date(prev.created_at) < 5 * 60000;
+      const hue = parseInt(String(m.author).slice(0, 6), 16) % 360 || 200, initial = escape([...String(m.name).trim()][0] || '?').toUpperCase();
+      return `<article class="chatMessage ${m.isMe ? 'mine' : ''} ${cont ? 'cont' : ''}" style="--h:${hue}"><div class="chatAvatar">${initial}</div>
+        <div class="chatBubble"><div class="chatByline"><b>${escape(m.name)}</b><time datetime="${escape(m.created_at)}" title="${escape(date.toLocaleString())}">${escape(time)}</time></div>
+        <div class="chatBody">${escape(m.body)}</div>${!m.isMe ? `<div class="chatActions"><button type="button" data-block="${escape(m.author)}">Mute</button><button type="button" data-report="${m.id}">Report</button></div>` : ''}</div></article>`;
+    }).join('') : '<div class="chatEmpty"><b>The mountain is quiet</b>Be the first to say hello!</div>';
     if (el.innerHTML === html) return;
     const firstRender = el.dataset.loaded !== 'true';
     el.innerHTML = html; el.dataset.loaded = 'true';
     el.querySelectorAll('[data-block]').forEach(b => b.onclick = () => {
       blocked.add(b.dataset.block);
       try { localStorage.setItem('peakflip_chat_blocked', JSON.stringify([...blocked])); } catch {}
-      render(); setStatus('Player muted on this device. Use Unmute players to undo.');
+      render(); setStatus('Player muted on this device.'); $('chatUnmute')?.classList.remove('hidden');
     });
     el.querySelectorAll('[data-report]').forEach(b => b.onclick = async () => {
       b.disabled = true;
@@ -96,12 +120,12 @@ export function initChat({ openPanel, nameForm }) {
   function openChat() {
     generation++;
     openPanel('Global chat', `<div class="chatIntro">Chat with riders across Peak Flip. Keep it friendly and don’t share personal information.</div>
-      <div id="chatName"></div><div id="chatMessages" role="log" aria-label="Global messages" aria-live="polite"><div class="note">Connecting…</div></div>
-      <form id="chatForm"><input id="chatInput" aria-label="Message" maxlength="240" autocomplete="off" placeholder="Say something to the mountain…" ${save.name ? '' : 'disabled'}><button class="btn primary" id="chatSend" type="submit" ${save.name ? '' : 'disabled'}>Send</button></form>
-      <div class="chatCount" id="chatCount">0 / 240</div><div id="chatStatus" role="status">Connected · updates every 5 seconds</div>
-      <button class="btn" id="chatUnmute" type="button">Unmute players${blocked.size ? ` (${blocked.size})` : ''}</button>`);
+      <div id="chatName"></div><div id="chatMessages" role="log" aria-label="Global messages" aria-live="polite"><div class="chatEmpty">Connecting…</div></div>
+      <form id="chatForm"><input id="chatInput" aria-label="Message" maxlength="240" autocomplete="off" placeholder="Say something to the mountain…" ${save.name ? '' : 'disabled'}><button class="btn primary" id="chatSend" type="submit" aria-label="Send" ${save.name ? '' : 'disabled'}><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h13M13 6l6 6-6 6"/></svg></button></form>
+      <div class="chatFoot"><div id="chatStatus" role="status">Connected · updates every 5 seconds</div><div class="chatCount" id="chatCount">0 / 240</div></div>
+      ${blocked.size ? `<button class="btn" id="chatUnmute" type="button">Unmute players (${blocked.size})</button>` : '<button class="btn hidden" id="chatUnmute" type="button">Unmute players</button>'}`);
     if (!save.name) nameForm($('chatName'), openChat);
-    else $('chatName').textContent = `Playing as ${save.name}`;
+    else $('chatName').textContent = `Chatting as ${save.name}`;
     $('chatUnmute').onclick = () => { blocked.clear(); try { localStorage.removeItem('peakflip_chat_blocked'); } catch {} render(); $('chatUnmute').textContent = 'Unmute players'; setStatus('All players unmuted.'); };
     const input = $('chatInput');
     input.oninput = () => { $('chatCount').textContent = `${input.value.length} / 240`; };
