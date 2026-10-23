@@ -53,7 +53,7 @@ declare
 begin
   if p_board is null or p_board not in ('endless', 'racepts') then raise exception 'bad board'; end if;
   if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
-  if p_value is null or p_value < 0 or p_value > 3000000 then raise exception 'bad value'; end if;
+  if p_value is null or p_value < 0 or p_value > 100000000 then raise exception 'bad value'; end if;
   v_name := (select name from players where pid = p_pid);
   if v_name is null then
     v_name := clean_name(p_name);

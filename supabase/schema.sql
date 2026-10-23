@@ -88,7 +88,7 @@ begin
   if v_name is null then raise exception 'register a name first'; end if;
 
   if p_board = 'endless' then
-    if p_value is null or p_value < 0 or p_value > 3000000 then raise exception 'bad value'; end if;
+    if p_value is null or p_value < 0 or p_value > 100000000 then raise exception 'bad value'; end if;
     p_day := ''; p_ghost := null;
   else
     if p_value is null or p_value < 25 or p_value > 900 then raise exception 'bad value'; end if;
