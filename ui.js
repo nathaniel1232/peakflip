@@ -151,10 +151,6 @@ const fmtCooldown = ms => { const m = Math.ceil(ms / 60000); return m >= 60 ? `$
 export function showMenuUI() {
   $('menuBest').textContent = save.best.toLocaleString();
   $('menuCoins').textContent = save.coins.toLocaleString();
-  const rs = save.raceScores?.[today()];
-  const ls = Object.values(save.levels || {}).reduce((a, r) => a + (r.stars || 0), 0);
-  $('levelsSub').textContent = ls ? `${ls} / ${cfg.levels.length * 3} stars` : `${cfg.levels.length} courses · earn stars`;
-  $('raceSub').textContent = rs ? `Forest course · ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day';
   const pb = $('profileBtn');
   pb.classList.toggle('claim', !save.name);
   pb.innerHTML = save.name ? `${icon('user')}<b>${esc(save.name)}</b>` : `${icon('user')}<b>Claim your name</b>`;
@@ -167,23 +163,38 @@ export function showMenuUI() {
   $('missionSub').textContent = `${save.missions.length} active`;
 }
 
+// ---------- other modes: everything that isn't Endless ----------
+function renderOther() {
+  const rs = save.raceScores?.[today()];
+  const ls = Object.values(save.levels || {}).reduce((a, r) => a + (r.stars || 0), 0);
+  const go = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
+  const card = (id, ic, a, b, name, sub) => `<button class="modeCard" id="${id}" style="--a:${a};--b:${b}">${icon(ic)}<span><b>${name}</b><small>${sub}</small></span>${go}</button>`;
+  openPanel('Other modes', `<div class="note">Endless is the main game. These are for a change of pace.</div>
+    <div class="modeList">
+      ${card('oRace', 'flag', '#3a7bd5', '#1f4f99', 'Daily race', rs ? `Forest course · today ${Number(rs.score || 0).toLocaleString()} points` : 'Forest course · new every day · race the ghosts')}
+      ${card('oFree', 'mountain', '#2a9d8f', '#1d6b62', 'Off-piste', 'Open mountain · ride anywhere with other players')}
+      ${card('oLevels', 'target', '#c0392b', '#7d2318', 'Levels', ls ? `${ls} / ${cfg.levels.length * 3} stars` : `${cfg.levels.length} hard courses · earn stars`)}
+    </div>`);
+  $('oRace').onclick = () => cfg.onPlay('race');
+  $('oFree').onclick = () => cfg.onFreeride();
+  $('oLevels').onclick = () => renderLevels();
+}
+
 // ---------- menu leaderboard preview ----------
-let miniTab = 'endless', miniPeriod = 'all', miniCache = {}, miniRequest = 0, leaderRequest = 0;
+let miniPeriod = 'all', miniCache = {}, miniRequest = 0, leaderRequest = 0;
 let leaderPromise = null, leaderFetchedAt = 0;
 async function miniBoard(force) {
   const el = $('miniLb'); if (!el) return;
-  document.querySelectorAll('[data-mlb]').forEach(b => b.classList.toggle('on', b.dataset.mlb === miniTab));
   document.querySelectorAll('[data-ml-period]').forEach(b => b.classList.toggle('on', b.dataset.mlPeriod === miniPeriod));
-  document.querySelector('.miniPeriod')?.classList.toggle('hidden', miniTab === 'race');
-  const key = `${today()}:${miniTab}:${miniPeriod}`, token = ++miniRequest, c = miniCache[key];
+  const period = miniPeriod, key = `${today()}:${period}`, token = ++miniRequest, c = miniCache[key];
   if (c && !force && Date.now() - c.at < 60000) { el.innerHTML = c.html; return; }
   if (!c) el.innerHTML = '<div class="note">Loading…</div>';
-  const board = miniTab === 'race' ? 'racepts' : 'endless', period = board === 'racepts' ? 'all' : miniPeriod;
-  const data = await LB.get(board, board === 'racepts' ? today() : null, 5, period);
-  let html = lbRows(data, board, 5);
-  if (data && !data.me) html += `<div class="note">${board === 'racepts' ? "You haven't raced today." : 'Set a score to get on the board.'}</div>`;
-  miniCache[key] = { at: Date.now(), html };
-  if (token === miniRequest && miniTab === (board === 'racepts' ? 'race' : 'endless') && (board === 'racepts' || miniPeriod === period)) el.innerHTML = html;
+  const data = await LB.get('endless', null, 5, period);
+  let html = lbRows(data, 'endless', 5);
+  if (data && !data.me) html += `<div class="note">${period === 'all' ? 'Set a score to get on the board.' : period === 'weekly' ? 'No run from you this week yet.' : 'No run from you today yet.'}</div>`;
+  if (!data && c) html = c.html;   // a network blip keeps the last good board instead of an error
+  else miniCache[key] = { at: Date.now(), html };
+  if (token === miniRequest && miniPeriod === period) el.innerHTML = html;
 }
 
 async function refreshLeader(force = false) {
@@ -240,7 +251,8 @@ function renderSettings() {
 function renderHelp() {
   openPanel('How to play', `<div class="help">
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
-    <h4>Endless</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees and rocks ends the run.</div>
+    <h4>Endless (the main mode)</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees ends the run. Every kilometre is a new stage: a points bonus, a new time of day and a meaner mountain. From stage 4 rocks are solid too. There is always a way through, and every jump has room to land.</div>
+    <h4>Combos</h4><div class="item">Tricks done within 3 seconds of each other chain into a combo. The multiplier climbs x1.5, x2 … x5, then x6, x7, x8, x9 and the max, <b>x10</b>, at 14 tricks in a row. Rails, grabs and kicker lines keep a combo going.</div>
     <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
       </div>
     <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
@@ -504,9 +516,10 @@ async function renderLeaderboard() {
   $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
   const board = lbTab === 'race' ? 'racepts' : 'endless';
-  const data = await LB.get(board, board === 'racepts' ? today() : null, 20, board === 'racepts' ? 'all' : lbPeriod);
+  const data = await LB.get(board, board === 'racepts' ? today() : null, 50, board === 'racepts' ? 'all' : lbPeriod);
   if (token !== lbRequest || !$('lbList')) return;
-  $('lbList').innerHTML = lbRows(data, lbTab, 20);
+  $('lbList').innerHTML = (data?.total ? `<div class="lbCount">${data.total.toLocaleString()} ${data.total === 1 ? 'rider' : 'riders'}${data.me ? ` · you are #${data.me.rank}` : ''}</div>` : '') + lbRows(data, lbTab, 50);
+  $('lbList').querySelector('.item.me')?.scrollIntoView({ block: 'center' });
 }
 
 // Claim a leaderboard name, or (with a name already) change it whenever you like. Any name works (several
@@ -557,11 +570,11 @@ function lbRows(data, board, limit) {
   const race = board === 'race' || board === 'racepts';
   const fmt = v => Math.round(v).toLocaleString();
   const rows = data.top.slice(0, limit).map((r, i) => rowHtml(r.rank ?? i + 1, r.name, fmt(r.value), r.isMe, '', race ? fmtTime(r.time) : '')).join('');
-  const me = data.me && !data.top.slice(0, limit).some(r => r.isMe) ? rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true, '', race ? fmtTime(data.me.time) : '') : '';
+  const me = data.me && !data.top.slice(0, limit).some(r => r.isMe) ? '<div class="item gap">⋮</div>' + rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true, '', race ? fmtTime(data.me.time) : '') : '';
   return rows + me;
 }
 const rowHtml = (rank, name, val, me, extra = '', time = '') =>
-  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
+  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : rank <= 3 ? `r${rank}` : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
 
 // ---------- results ----------
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
@@ -648,11 +661,27 @@ async function rankRow(r, token) {
     return;
   }
   if (token !== resultToken) return;
+  if (board === 'endless') {
+    // where this leaves you on all three Endless boards; tap one to see it
+    const periods = [['all', 'All time'], ['weekly', 'This week'], ['daily', 'Today']];
+    const boards = await Promise.all(periods.map(([p]) => LB.get(board, null, 7, p)));
+    const lb = $('resLb');
+    if (token !== resultToken || !lb || !boards.some(b => b?.me)) return;
+    lb.innerHTML = `<div class="ranks">${periods.map(([p, label], i) => {
+      const me = boards[i]?.me;
+      return `<button data-rank="${i}"><small>${label}</small><b class="${me?.rank === 1 ? 'top' : ''}">${me ? `${me.rank === 1 ? icon('crown') : ''}#${me.rank}` : '—'}</b><small>${boards[i]?.total ? `of ${boards[i].total}` : ''}</small></button>`;
+    }).join('')}</div>`;
+    lb.querySelectorAll('[data-rank]').forEach(b => b.onclick = () => {
+      const i = +b.dataset.rank;
+      if (boards[i]?.me) { const o = overlay(); revealBoard(o, boards[i], board, () => o.remove()); }
+    });
+    return;
+  }
   const data = await LB.get(board, day, 10, 'all');
   if (token !== resultToken) return;
   const lb = $('resLb');
   if (!lb || !data?.me) return;
-  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>${board === 'racepts' ? "Today's race rank · points first" : 'World rank'}</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
+  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>Today's race rank · points first</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
   $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
 }
 const lbArgs = r => ({ board: r.mode === 'race' ? 'racepts' : 'endless', day: r.mode === 'race' ? r.day : null, value: r.score, time: r.mode === 'race' ? r.time : null, ghost: r.mode === 'race' && r.newBest && r.ghost ? { t: r.ghost.t, score: r.score, f: r.ghost.f } : undefined });
@@ -776,23 +805,19 @@ async function share(r) {
 export function initUI(c) {
   cfg = c;
   const put = (id, name) => { const e = $(id); if (e) e.innerHTML = icon(name); };
-  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icFlag', 'flag'); put('icLevels', 'target');
+  put('logoIc', 'mountain'); put('icPlay', 'play'); put('icOther', 'flag');
   put('icShop', 'shop'); put('icSkis', 'skis'); put('icTarget', 'target'); put('icTrophy', 'trophy'); put('icHelp', 'help'); put('icGear', 'gear');
   put('panelClose', 'close'); put('pauseBtn', 'pause');
-  $('icGo1').innerHTML = $('icGo2').innerHTML = '<svg class="ic go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>';
   $('playBtn').onclick = () => c.onPlay('endless');
-  $('raceBtn').onclick = () => c.onPlay('race');
-  $('levelsBtn').onclick = () => { c.sfx.init(); renderLevels(); };
-  $('freerideBtn').onclick = () => c.onFreeride();
+  $('otherBtn').onclick = () => { c.sfx.init(); renderOther(); };
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = 'all'; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
   $('settingsBtn').onclick = () => { c.sfx.init(); renderSettings(); };
-  $('miniMore').onclick = () => { c.sfx.init(); lbTab = miniTab; lbPeriod = miniPeriod; renderLeaderboard(); };
+  $('miniMore').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = miniPeriod; renderLeaderboard(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
-  document.querySelectorAll('[data-mlb]').forEach(b => b.onclick = () => { miniTab = b.dataset.mlb; miniBoard(); });
   document.querySelectorAll('[data-ml-period]').forEach(b => b.onclick = () => { miniPeriod = b.dataset.mlPeriod; miniBoard(true); });
   // Easter eggs: the Konami code, and tapping the title seven times in a row
   const KONAMI = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA'];
