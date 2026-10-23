@@ -3,8 +3,8 @@
 // sends a small position update a few times a second; riders nobody has heard from for a while disappear.
 const SB = window.PEAKFLIP_CONFIG || {};
 
-export function joinRoom(room, { onState, onLeave, onStatus }) {
-  if (!SB.supabaseUrl || !SB.supabaseKey) { onStatus?.('offline'); return { send() {}, close() {}, count: () => 0 }; }
+export function joinRoom(room, { onState, onLeave, onStatus, onChat }) {
+  if (!SB.supabaseUrl || !SB.supabaseKey) { onStatus?.('offline'); return { send() {}, say() { return false; }, close() {}, count: () => 0 }; }
   const url = `${SB.supabaseUrl.replace(/^http/, 'ws')}/realtime/v1/websocket?apikey=${SB.supabaseKey}&vsn=1.0.0`;
   const topic = `realtime:${room}`;
   let ws = null, ref = 0, joined = false, closed = false, beat = null, retry = 0;
@@ -28,6 +28,10 @@ export function joinRoom(room, { onState, onLeave, onStatus }) {
         if (!s || typeof s.id !== 'string') return;
         seen.set(s.id, performance.now()); onState(s);
       }
+      if (m.event === 'broadcast' && m.payload?.event === 'chat') {
+        const c = m.payload.payload;
+        if (c && typeof c.id === 'string' && typeof c.t === 'string') onChat?.({ id: c.id, n: String(c.n || 'Rider').slice(0, 18), t: c.t.slice(0, 140) });
+      }
       if (m.event === 'broadcast' && m.payload?.event === 'bye') { const id = m.payload.payload?.id; seen.delete(id); onLeave(id); }
     };
     ws.onclose = () => {
@@ -43,6 +47,8 @@ export function joinRoom(room, { onState, onLeave, onStatus }) {
 
   return {
     send(state) { if (joined) raw(topic, 'broadcast', { type: 'broadcast', event: 'pos', payload: state }); },
+    // a chat line for everyone in the room (nothing is stored: riders who join later don't see it)
+    say(msg) { if (!joined) return false; raw(topic, 'broadcast', { type: 'broadcast', event: 'chat', payload: msg }); return true; },
     count: () => seen.size,
     close(id) {
       if (joined && id) raw(topic, 'broadcast', { type: 'broadcast', event: 'bye', payload: { id } });

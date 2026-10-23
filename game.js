@@ -41,6 +41,7 @@ import { save, persist, equipped, item, CATALOG, FITS, track as trackRun, resetR
 import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
 import { icon } from './icons.js';
 import { joinRoom } from './mp.js';
+import { Live } from './live.js';
 import { Ads } from './ads.js';
 import { Cloud } from './cloud.js';
 
@@ -3093,6 +3094,12 @@ function frGround(x, z) {
   }
   return h;
 }
+// the snow's surface normal (kickers included), averaged over about a ski length so small bumps don't jitter
+const UP = new THREE.Vector3(0, 1, 0), frNrmV = new THREE.Vector3(), frAlignQ = new THREE.Quaternion();
+function frNormal(x, z, out) {
+  const hx = frGround(x + 0.7, z) - frGround(x - 0.7, z), hz = frGround(x, z + 0.7) - frGround(x, z - 0.7);
+  return out.set(-hx, 1.4, -hz).normalize();
+}
 const frSolids = new Map();   // chunk key → trees, rocks and buildings you can hit
 function frSolid(o) { const k = `${Math.floor(o.x / FR.CHUNK)},${Math.floor(o.z / FR.CHUNK)}`; if (!frSolids.has(k)) frSolids.set(k, []); frSolids.get(k).push(o); }
 function frHit(x, z, y) {
@@ -3152,22 +3159,30 @@ function chunkGeo(cx, cz, step) {
 // what lives in a chunk: always the same for the same square, so everyone rides the same mountain
 function chunkContents(cx, cz) {
   const rng = mulberry32(hashStr(`fr2:${cx},${cz}`)), R_ = (a, b) => a + rng() * (b - a), S = FR.CHUNK, x0 = cx * S, z0 = cz * S;
-  const trees = [], rocks = [], ramps = [];
+  const trees = [], rocks = [], ramps = [], boxes = [];
   const forest = (x, z) => Math.sin(x * 0.011 + 1.7) * Math.cos(z * 0.009) + 0.6 * Math.sin(x * 0.027 - z * 0.019 + 0.5) + 0.3 * Math.sin(z * 0.041 + x * 0.008);
   // a kicker in about every third open square, facing down the mountain
   if (rng() < 0.38 && z0 > FR.SUMMIT + 40) {
-    const big = rng(), L = big < 0.5 ? 6 : big < 0.85 ? 7.5 : 9.5, H = big < 0.5 ? 1.8 : big < 0.85 ? 2.5 : 3.4, W = big < 0.5 ? 6 : 8;
+    // mostly small and medium, now and then a big one, and once in a while a mega kicker that sends you to the moon
+    const big = rng(), size = big < 0.45 ? 0 : big < 0.8 ? 1 : big < 0.95 ? 2 : 3;
+    const L = [6, 7.5, 9.5, 13][size], H = [1.8, 2.5, 3.4, 5.4][size], W = [6, 6, 8, 11][size];
     const x = R_(x0 + 8, x0 + S - 8), z = R_(z0 + 4, z0 + S - 20);
     if (!onLiftLine(x, z) && !nearBase(x, z) && forest(x, z) < 0.35) ramps.push({ x, z0: z, L, H, W });
   }
   for (let z = z0 + 3; z < z0 + S; z += 6.5) for (let x = x0 + 3; x < x0 + S; x += 6.5) {
     const px = x + R_(-2.6, 2.6), pz = z + R_(-2.6, 2.6), f = forest(px, pz), roll = rng(), s = R_(0.85, 1.7), kind = rng();
     if (onLiftLine(px, pz) || nearBase(px, pz) || pz < FR.SUMMIT + 20) continue;
-    if (ramps.some(r => Math.abs(px - r.x) < r.W / 2 + 5 && pz > r.z0 - 30 && pz < r.z0 + r.L + 35)) continue;   // keep the run-in and landing clear
+    if (ramps.some(r => Math.abs(px - r.x) < r.W / 2 + 5 && pz > r.z0 - 30 && pz < r.z0 + r.L + 15 + r.H * 10)) continue;   // keep the run-in and landing clear
     if (f > 0.6 || roll < 0.01) trees.push([px, frTerrain(px, pz) - 0.25, pz, s, R_(0, 6), kind < 0.5 ? 0 : 1]);
     else if (roll > 0.997) rocks.push([px, frTerrain(px, pz) - 0.3, pz, R_(1, 2), R_(0, 6)]);
   }
-  return { trees, rocks, ramps };
+  // a mystery box in about every other square, out in the open (what's inside is rolled when you grab it)
+  if (rng() < 0.5 && z0 > FR.SUMMIT + 30) {
+    const x = R_(x0 + 6, x0 + S - 6), z = R_(z0 + 6, z0 + S - 6);
+    const clear = !onLiftLine(x, z) && forest(x, z) < 0.45 && !trees.some(t => Math.hypot(t[0] - x, t[2] - z) < 4) && !ramps.some(r => Math.abs(x - r.x) < r.W / 2 + 3 && z > r.z0 - 4 && z < r.z0 + r.L + 4);
+    if (clear) boxes.push({ id: `${cx},${cz}`, x, z, y: frTerrain(x, z) + 1.3 });
+  }
+  return { trees, rocks, ramps, boxes };
 }
 function kickerMesh(r) {
   // a smooth snow kicker sitting on the slope
@@ -3232,11 +3247,61 @@ function frRebuildTrees() {
   frRockMesh.count = nr.v; frRockMesh.instanceMatrix.needsUpdate = true;
 }
 
+// ---- luck: the weather is rolled each visit, and every mystery box holds a random prize ----
+const FR_WEATHER = [
+  { name: 'Bluebird', theme: 'day', fog: [220, 640] }, { name: 'Bluebird', theme: 'day', fog: [220, 640] },
+  { name: 'Golden hour', theme: 'golden', fog: [200, 600] }, { name: 'Snowstorm', theme: 'day', fall: 'heavy', fog: [45, 230] },
+];
+// [chance, title, what it does]; coins go straight into your wallet
+const FR_LOOT = [
+  [50, 'Coins', () => frCoins(5 + rand(0, 15) | 0)],
+  [18, 'Rare!', () => frCoins(30 + rand(0, 45) | 0)],
+  [8, 'Epic!', () => frCoins(100 + rand(0, 100) | 0)],
+  [3, 'LEGENDARY!', () => frCoins(400 + rand(0, 300) | 0)],
+  [1, 'JACKPOT!!!', () => frCoins(2500)],
+  [12, 'Rocket!', () => { fr.s = Math.min(95, fr.s + 18); fr.flow = (fr.flow || 0) + 20; return 'Speed boost'; }],
+  [8, 'Moon jump!', () => { if (fr.grounded && !fr.flying) frStartAir(24); return 'To the moon'; }],
+];
+const FR_LOOT_TOTAL = FR_LOOT.reduce((a, l) => a + l[0], 0);
+function frCoins(n) { save.coins += n; p.coins += n; persist(); return `+${n.toLocaleString()} coins`; }
+const frBoxesTaken = new Set();
+let frBoxMesh = null;
+function frOpenBox(b) {
+  frBoxesTaken.add(b.id);
+  let r = Math.random() * FR_LOOT_TOTAL, pick = FR_LOOT[0];
+  for (const l of FR_LOOT) { if ((r -= l[0]) < 0) { pick = l; break; } }
+  const what = pick[2](), big = pick[0] <= 8;
+  showTrick(pick[1], what, big);
+  Particles.emit(b.x, b.y, b.z, big ? 70 : 30, 4, 5, big ? 0xffd166 : 0xffffff, 0);
+  if (big) { Sfx.perfect(); if (pick[0] <= 3) frChat.system(`${pick[1]} ${what}`); } else Sfx.coin();
+}
+function frUpdateBoxes() {
+  if (!frBoxMesh) return;
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), sc = new THREE.Vector3(1, 1, 1);
+  let n = 0;
+  for (const ch of frChunks.values()) {
+    if (ch.lod >= 2) continue;
+    for (const b of ch.stuff.boxes) {
+      if (frBoxesTaken.has(b.id) || n >= frBoxMesh.instanceMatrix.count) continue;
+      if (fr.crashT < 0 && !fr.lift && Math.hypot(b.x - fr.x, b.z - fr.z) < 2.2 && Math.abs(b.y - 0.6 - fr.y) < 2.6) { frOpenBox(b); continue; }
+      frBoxMesh.setMatrixAt(n++, m4.compose(v.set(b.x, b.y + Math.sin(time * 2.5 + b.x) * 0.25, b.z), q.setFromEuler(e.set(0.3, time * 1.6 + b.z, 0.3)), sc));
+    }
+  }
+  frBoxMesh.count = n; frBoxMesh.instanceMatrix.needsUpdate = true;
+}
+
 function buildFreeride() {
   frGroup = new THREE.Group(); scene.add(frGroup);
   frPlateau = frRaw(FR.LIFT_X + 12, FR.SUMMIT + 30) + 1; frTerrace = 0;
   frTreeMesh = [false, true].map(tall => { const im = new THREE.InstancedMesh(spruceGeometry(tall), vcol, 9000); im.count = 0; im.frustumCulled = false; frGroup.add(im); return im; });
   frRockMesh = new THREE.InstancedMesh(rockGeo, vcol, 400); frRockMesh.count = 0; frRockMesh.frustumCulled = false; frGroup.add(frRockMesh);
+  // a golden present with a red ribbon
+  const boxGeo = merged([
+    { geo: new THREE.BoxGeometry(1.1, 1.1, 1.1), color: 0xffc233 },
+    { geo: new THREE.BoxGeometry(1.14, 1.14, 0.24), color: 0xe63946 }, { geo: new THREE.BoxGeometry(0.24, 1.14, 1.14), color: 0xe63946 },
+    { geo: new THREE.BoxGeometry(0.5, 0.3, 0.3), color: 0xe63946, m: T(0, 0.68, 0) },
+  ]);
+  frBoxMesh = new THREE.InstancedMesh(boxGeo, new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0x4a3000 }), 160); frBoxMesh.count = 0; frBoxMesh.frustumCulled = false; frGroup.add(frBoxMesh);
   // the chairlift: towers up the mountain, a cable both ways and chairs going round
   const grey = lam(0x5b6573), red = lam(0xe63946);
   for (let z = FR.BASE; z >= FR.SUMMIT - 0.1; z -= (FR.BASE - FR.SUMMIT) / 14) frLift.push({ z, y: frTerrain(FR.LIFT_X, z) + 12 });
@@ -3318,14 +3383,121 @@ function frOther(s) {
     const color = frColor(s.id), root = skier.root.clone(true);
     const m = frMats.get(color) || frMats.set(color, lam(new THREE.Color(color))).get(color);
     root.traverse(x => { if (x.isMesh) x.material = m; });
-    const tag = nameTag(String(s.n || 'Rider').slice(0, 18), color); root.add(tag);
+    const tag = nameTag(String(s.n || 'Rider').slice(0, 18), color); root.add(tag); root.quaternion.identity();
     frGroup.add(root);
     o = { root, body: root.children[0], x: s.x / 10, y: s.y / 10, z: s.z / 10 };
     fr.others.set(s.id, o);
   }
-  Object.assign(o, { tx: s.x / 10, ty: s.y / 10, tz: s.z / 10, h: s.h / 100, p: s.p / 100, yw: s.w / 100, r: s.r / 100 });
+  Object.assign(o, { tx: s.x / 10, ty: s.y / 10, tz: s.z / 10, h: s.h / 100, p: s.p / 100, yw: s.w / 100, r: s.r / 100, a: clamp((s.a || 0) / 100, -0.9, 0.9), b: clamp((s.b || 0) / 100, -0.9, 0.9) });
 }
 function frDropOther(id) { const o = fr.others.get(id); if (o) { frGroup.remove(o.root); fr.others.delete(id); } }
+
+// ---- Off-piste chat: talk to everyone on the mountain (Enter or T, or the chat button). Lines go straight to the
+// other riders and aren't stored anywhere. Admins can also type /say <message> (a pop-up for everyone in the
+// game), /send <name> or /send all (calls riders to Off-piste) and /fly ----
+const frChat = (() => {
+  const css = document.createElement('style');
+  css.textContent = `
+    #frChat { position:absolute; left:16px; bottom:16px; width:min(360px,calc(100vw - 32px)); display:none; flex-direction:column; gap:6px; pointer-events:none; z-index:5; }
+    body.touch #frChat { bottom:auto; top:66px; width:min(300px,calc(100vw - 32px)); }
+    #frChat.on { display:flex; }
+    #frChatLog { display:flex; flex-direction:column; gap:3px; }
+    .frLine { align-self:flex-start; max-width:100%; padding:4px 10px; border-radius:10px; background:rgba(13,25,42,.55); font:600 14px system-ui,sans-serif;
+      text-shadow:none; overflow-wrap:anywhere; transition:opacity 1.5s; }
+    .frLine b { font-weight:800; margin-right:6px; }
+    .frLine.sys { background:rgba(229,85,26,.8); }
+    .frLine.old { opacity:0; }
+    #frChat.typing .frLine.old { opacity:.85; }
+    #frChatForm { display:none; pointer-events:auto; }
+    #frChat.typing #frChatForm { display:block; }
+    #frChatIn { width:100%; box-sizing:border-box; font:600 15px system-ui,sans-serif; padding:9px 12px; border:0; outline:none; border-radius:10px;
+      background:rgba(13,25,42,.8); color:#fff; box-shadow:inset 0 0 0 2px rgba(76,195,255,.6); }
+    #frChatHint { font:600 11px system-ui,sans-serif; opacity:.7; text-shadow:none; }
+    #frChat.typing #frChatHint { display:none; }
+  `;
+  document.head.appendChild(css);
+  const el = document.createElement('div'); el.id = 'frChat';
+  el.innerHTML = '<div id="frChatLog" role="log" aria-label="Off-piste chat" aria-live="polite"></div><div id="frChatHint">Enter to chat</div><form id="frChatForm"><input id="frChatIn" maxlength="140" autocomplete="off" aria-label="Chat message" placeholder="Say something to the mountain…"></form>';
+  $('hud').appendChild(el);
+  const log = el.querySelector('#frChatLog'), input = el.querySelector('#frChatIn');
+  const btn = document.createElement('button'); btn.className = 'iconBtn'; btn.style.left = '214px'; btn.style.display = 'none'; btn.setAttribute('aria-label', 'Chat');
+  btn.innerHTML = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1.1-4.6A8 8 0 1 1 21 12z"/></svg>';
+  $('hud').appendChild(btn);
+  const flyBtn = document.createElement('button'); flyBtn.className = 'iconBtn'; flyBtn.style.left = '264px'; flyBtn.style.display = 'none'; flyBtn.setAttribute('aria-label', 'Fly');
+  flyBtn.innerHTML = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16l20-8-6 12-3-5-5 3z"/></svg>';
+  $('hud').appendChild(flyBtn);
+  for (const b of [btn, flyBtn]) for (const t of ['pointerdown', 'touchstart']) b.addEventListener(t, e => e.stopPropagation());
+  btn.onclick = e => { e.stopPropagation(); api.open(); };
+  flyBtn.onclick = e => { e.stopPropagation(); frToggleFly(); };
+  let lastSent = 0;
+  function line(name, text, color, sys) {
+    const d = document.createElement('div'); d.className = 'frLine' + (sys ? ' sys' : '');
+    if (name) { const b = document.createElement('b'); b.textContent = name; b.style.color = color; d.append(b); }
+    d.append(document.createTextNode(text)); log.append(d);
+    while (log.children.length > 8) log.firstChild.remove();
+    setTimeout(() => d.classList.add('old'), 14000);
+  }
+  function close() { el.classList.remove('typing'); input.value = ''; input.blur(); }
+  async function run(text) {
+    const [cmd, ...rest] = text.slice(1).split(' '), arg = rest.join(' ').trim(), c = cmd.toLowerCase();
+    if (c === 'fly') { if (Live.fly) frToggleFly(); else line('', 'Only admins can fly.', '#fff', true); return; }
+    if (!Live.admin) { line('', 'Commands are for admins.', '#fff', true); return; }
+    if ((c === 'say' || c === 'announce' || c === 'send') && !arg) { line('', c === 'send' ? 'Who? /send <name> or /send all' : 'What? /say <message>', '#fff', true); return; }
+    if (c !== 'say' && c !== 'announce' && c !== 'send') { line('', 'Commands: /say <message> · /send <name|all> · /fly', '#fff', true); return; }
+    const r = await Live.command(c === 'announce' ? 'say' : c, arg);
+    line('', r?.ok ? (c === 'send' ? `Sent ${arg === 'all' ? 'everyone' : arg} to Off-piste.` : 'Message sent to everyone.') : r?.error === 'unknown_player' ? `No player called ${arg}.` : 'That didn’t work. Try again.', '#fff', true);
+  }
+  input.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+  });
+  el.querySelector('#frChatForm').onsubmit = e => {
+    e.preventDefault();
+    const text = input.value.replace(/\s+/g, ' ').trim();
+    close();
+    if (!text) return;
+    if (text[0] === '/') { run(text); return; }
+    if (performance.now() - lastSent < 1200) { line('', 'Slow down a little.', '#fff', true); return; }
+    lastSent = performance.now();
+    if (!fr.net?.say({ id: fr.id, n: fr.name, t: text })) { line('', 'Offline: nobody heard that.', '#fff', true); return; }
+    line(fr.name, text, '#ffd166');
+  };
+  const api = {
+    show(on) { el.classList.toggle('on', on); btn.style.display = on ? '' : 'none'; api.admin(); if (!on) { close(); log.textContent = ''; } },
+    admin() { flyBtn.style.display = fr.on && Live.fly ? '' : 'none'; },
+    open() { if (!fr.on) return; el.classList.add('typing'); clearTouch(); setTimeout(() => input.focus(), 0); },
+    system(text) { if (fr.on) line('', text, '#fff', true); },
+    receive(m) {
+      line(m.n, m.t, frColor(m.id));
+      // a speech bubble over their head for a few seconds
+      const o = fr.others.get(m.id); if (!o) return;
+      if (o.bubble) o.root.remove(o.bubble);
+      o.bubble = nameTag(m.t.length > 26 ? m.t.slice(0, 25) + '…' : m.t, '#ffffff'); o.bubble.position.y = 3.4; o.root.add(o.bubble);
+      const b = o.bubble; setTimeout(() => { if (o.bubble === b) { o.root.remove(b); o.bubble = null; } }, 6000);
+      Sfx.tone(980, 0.06, 'sine', 0.05);
+    },
+  };
+  return api;
+})();
+Live.on('admin', () => { frChat.admin(); if (!Live.fly && fr.flying) { fr.flying = false; frStartAir(0); } });
+Live.on('notice', text => frChat.system(`📣 ${text}`));
+// called to Off-piste from Supabase (one rider or everybody): a heads-up, then off you go, unless you're in the
+// middle of a secret cabin or the island, in which case it waits until you're back on the mountain
+let frCalled = false;
+Live.on('offpiste', () => {
+  if (state === 'freeride' || frCalled) return;
+  frCalled = true;
+  Live.notify('Everyone’s meeting on the Off-piste mountain. Taking you there…', 'YOU’RE INVITED', '🏔️');
+  const go = () => {
+    if (state === 'freeride') { frCalled = false; return; }
+    if (state === 'cabin' || state === 'island' || overlayBusy) { setTimeout(go, 1000); return; }
+    frCalled = false;
+    if (chase.on) endChase();
+    if (state !== 'menu') toMenu();
+    startFreeride();
+  };
+  setTimeout(go, 3500);
+});
 
 // ---- in and out ----
 function startFreeride() {
@@ -3335,15 +3507,19 @@ function startFreeride() {
   if (!frGroup) buildFreeride();
   frGroup.visible = true; world.visible = false; mountains.visible = false;   // our own mountain replaces the backdrop
   frGroup.add(skier.root); frGroup.add(skier.shadow); frGroup.add(Particles.obj);
-  setTheme('day'); scene.fog.near = 220; scene.fog.far = 640; camera.far = 1600; camera.updateProjectionMatrix();
-  Object.assign(fr, { on: true, x: 6, z: 34, vy: 0, vyG: 0, heading: -0.64, s: 0, grounded: true, air: 0, crashT: -1, lift: null, safe: null, prevSafe: null });
+  // a different day every visit: sunny, golden evening or a snowstorm
+  const wx = FR_WEATHER[(Math.random() * FR_WEATHER.length) | 0];
+  setTheme(wx.theme); Snowfall.style(wx.fall); scene.fog.near = wx.fog[0]; scene.fog.far = wx.fog[1]; camera.far = 1600; camera.updateProjectionMatrix();
+  Object.assign(fr, { on: true, x: 6, z: 34, vy: 0, vyG: 0, heading: -0.64, s: 0, grounded: true, air: 0, crashT: -1, lift: null, safe: null, prevSafe: null, flow: 0, flying: false, weather: wx.name });
+  frBoxesTaken.clear();
   camera.position.set(fr.x, 8, fr.z + 9);
   frChunkUpdate(true);
   fr.y = frGround(fr.x, fr.z); if (fr.trail) fr.trail.pts = [];
   frTopBtn().style.display = '';
   fr.id = save.pid.slice(0, 12) + Math.random().toString(36).slice(2, 6);
   fr.name = save.name || `Guest ${1000 + (hashStr(save.pid) % 9000)}`;
-  fr.net = joinRoom('peakflip-freeride', { onState: frOther, onLeave: frDropOther, onStatus: st => { fr.status = st; } });
+  fr.net = joinRoom('peakflip-freeride', { onState: frOther, onLeave: frDropOther, onStatus: st => { fr.status = st; }, onChat: m => frChat.receive(m) });
+  frChat.show(true);
   state = 'freeride'; paused = false; snapCam = true;
   show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true); show('raceInfo', true);
   lastScore = lastCoins = -1; hintT = 0; hud.hint.style.opacity = 0;
@@ -3352,9 +3528,10 @@ function startFreeride() {
 }
 function leaveFreeride() {
   if (!fr.on) return;
-  fr.on = false; fr.net?.close(fr.id); fr.net = null; frClearBits();
+  fr.on = false; fr.net?.close(fr.id); fr.net = null; frClearBits(); frChat.show(false);
   for (const id of [...fr.others.keys()]) frDropOther(id);
   frGroup.visible = false; world.visible = true; mountains.visible = true; frTopBtn().style.display = 'none';
+  skier.root.quaternion.identity(); skier.upper.visible = true; fr.flying = false; fr.camOff = fr.camLook = null;
   world.add(skier.root); world.add(skier.shadow); world.add(Particles.obj);
   camera.far = 500; camera.updateProjectionMatrix();
   Platform.gameplayStop();
@@ -3367,7 +3544,7 @@ const frDir = () => [Math.sin(fr.heading), -Math.cos(fr.heading)];
 const frBits = [];
 function frCrash(reason, obj = null) {
   if (fr.crashT >= 0) return;
-  fr.crashT = 0; fr.hitObj = obj; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
+  fr.crashT = 0; fr.hitObj = obj; fr.flow = 0; p.combo = 0; p.comboTimer = 0; p.trick = null; p.grabbing = false;
   const sp = Math.abs(fr.s);
   fr.s = obj ? -Math.min(sp, 20) * 0.25 : fr.s * 0.85;   // a tree throws you back, a bad landing carries you on
   fr.cvy = (fr.grounded ? 0 : Math.min(fr.vy, 0)) + 3 + sp * 0.12;
@@ -3414,6 +3591,22 @@ function frStartAir(vy) {
   p.fromRamp = true; p.maxH = 0; p.airTime = 0;
   p.trick = { pitch: 0, yaw: 0, roll: 0, grab: 0, switch: Math.abs(wrap(p.yaw)) > Math.PI / 2, grabName: GRABS[(Math.random() * GRABS.length) | 0], grabs: [], grabTotal: 0, longest: 0, locked: false, pro: false };
 }
+// admins can fly over the mountain (F): steer left and right, climb and dive with up and down, hold jump to go fast
+function frFly(dt, inp) {
+  fr.heading = wrap(fr.heading + inp.h * 2.2 * dt);
+  fr.s = damp(fr.s, inp.grab ? 90 : 32, 2, dt);
+  const [dx, dz] = frDir();
+  fr.x += dx * fr.s * dt; fr.z += dz * fr.s * dt;
+  fr.y = Math.max(fr.y + inp.v * 24 * dt, frGround(fr.x, fr.z) + 1.5);
+  fr.z = Math.max(fr.z, FR.SUMMIT - 20);
+  p.lean = damp(p.lean, -inp.h * 0.6, 6, dt); p.pitch = damp(p.pitch, -inp.v * 0.35, 6, dt); p.roll = 0; p.yaw = 0; p.grabbing = false;
+}
+function frToggleFly() {
+  if (!fr.on || !Live.fly || fr.lift || fr.crashT >= 0) return;
+  fr.flying = !fr.flying;
+  if (fr.flying) { fr.grounded = false; p.trick = null; Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, yawVel: 0, rollVel: 0 }); showTrick('Flying', 'F to land · hold jump to go fast', true); Sfx.tone(520, 0.2, 'triangle', 0.12, 1040); }
+  else { p.pitch = 0; frStartAir(0); fr.s = Math.min(fr.s, 30); }
+}
 function updateFreeride(dt) {
   const inp = readInput();
   // the hold-to-grab and flip/spin input work just like on the main mountain
@@ -3459,22 +3652,29 @@ function updateFreeride(dt) {
       fadeScreen('#fff');
       fr.y = frGround(fr.x, fr.z); Object.assign(p, { pitch: 0, roll: 0, yaw: 0, pitchVel: 0, rollVel: 0, yawVel: 0 }); snapCam = true;
     }
-  } else if (fr.grounded) {
-    fr.heading = wrap(fr.heading + inp.h * (fr.s > 2 ? 1.9 : 2.6) * dt);
-    // gravity turns you down the fall line, unless you hold a turn against it (not on the flat by the lodge)
+  } else if (fr.flying) frFly(dt, inp);
+  else if (fr.grounded) {
+    // carving: the turn rate builds up the longer you hold it, and stays quick at speed
+    fr.turnHold = inp.h ? Math.min(1, (fr.turnHold || 0) + dt * 3) : 0;
+    fr.heading = wrap(fr.heading + inp.h * (fr.s > 2 ? 2.3 + fr.turnHold * 0.9 : 3) * dt);
+    // gravity turns you down the fall line when you let go; holding a turn wins against it (not on the flat by the lodge)
     {
       const gx = (frGround(fr.x + 1, fr.z) - frGround(fr.x - 1, fr.z)) / 2, gz = (frGround(fr.x, fr.z + 1) - frGround(fr.x, fr.z - 1)) / 2, steep = Math.hypot(gx, gz);
       if (steep > 0.03) {
-        const fall = Math.atan2(-gx, gz), k = (inp.h ? 0.35 : 1.5) * clamp(steep / 0.25, 0, 1);
+        const fall = Math.atan2(-gx, gz), k = (inp.h ? 0.05 : 1.6) * clamp(steep / 0.25, 0, 1);
         fr.heading = wrap(fr.heading + wrap(fall - fr.heading) * (1 - Math.exp(-k * dt)));
       }
     }
     const [dx, dz] = frDir();
     const sl = (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2;   // rise along your skis
-    let acc = -G * 0.9 * sl / Math.sqrt(1 + sl * sl) - 0.0042 * fr.s * fr.s - 0.4 - 2 * Math.abs(inp.h);   // lets you run past 150 km/h on the steep bits
-    if (inp.v > 0 && fr.s < 9) acc += 7;   // skate / push on the flat
-    if (inp.v < 0) acc -= 10;               // snowplough
-    fr.s = Math.max(0, fr.s + acc * dt);
+    // faster and faster: the longer you ride without falling, the less the air holds you back
+    if (sl < 0 && fr.s > 8) fr.flow = Math.min(120, (fr.flow || 0) + dt);
+    const drag = 0.0036 / (1 + (fr.flow || 0) * 0.05);
+    let acc = -G * 0.95 * sl / Math.sqrt(1 + sl * sl) - drag * fr.s * fr.s - 0.15 - 0.6 * Math.abs(inp.h);
+    if (inp.v > 0 && fr.s < 12) acc += 8;   // skate / push on the flat
+    if (inp.v < 0) acc -= 10;                // snowplough
+    fr.s = clamp(fr.s + acc * dt, 0, 95);
+    if (fr.s < 4) fr.flow = 0;
     const nx = fr.x + dx * fr.s * dt, nz = fr.z + dz * fr.s * dt, nh = frGround(nx, nz), nvy = (nh - fr.y) / Math.max(dt, 1e-3);
     // off a kicker's lip, or over a crest that drops away faster than gravity can pull you down
     // (right after a landing or a respawn there's no ground speed yet: vyG is null for that frame)
@@ -3523,7 +3723,7 @@ function updateFreeride(dt) {
       p.trick = null; p.pitch = 0; p.roll = 0; p.pitchVel = p.yawVel = p.rollVel = 0;
     }
   }
-  if (!fr.lift && fr.crashT < 0) {
+  if (!fr.lift && fr.crashT < 0 && !fr.flying) {
     const o = frHit(fr.x, fr.z, fr.y);
     if (o) frCrash(o.name, o);
     // the mountain goes on for ever down and to the sides; only the top is a wall
@@ -3531,6 +3731,7 @@ function updateFreeride(dt) {
   }
   if (p.comboTimer > 0 && fr.grounded) { p.comboTimer -= dt; if (p.comboTimer <= 0) p.combo = 0; }
   frChunkUpdate();
+  frUpdateBoxes();
   frUpdateBits(dt);
   if ((fr.trailT = (fr.trailT || 0) - dt) <= 0) { fr.trailT = 0.08; frTrail(); }
   // chairs going round
@@ -3546,17 +3747,18 @@ function updateFreeride(dt) {
   const crashing = fr.crashT >= 0;
   Object.assign(p, { x: fr.x, y: fr.y, z: fr.z, heading: 0, grounded: fr.grounded && !fr.lift, speed: Math.abs(fr.s), crashed: crashing });
   updateSkierVisual(dt);
-  const [dx, dz] = frDir(), gh = frGround(fr.x, fr.z), onSnow = fr.grounded && !fr.lift && !crashing;
-  // stand square on the slope: tip forward/back with it along your skis, and lean with it sideways
-  const sl = onSnow ? (frGround(fr.x + dx * 0.6, fr.z + dz * 0.6) - frGround(fr.x - dx * 0.6, fr.z - dz * 0.6)) / 1.2 : 0;
-  const side = onSnow ? (frGround(fr.x - dz * 0.6, fr.z + dx * 0.6) - frGround(fr.x + dz * 0.6, fr.z - dx * 0.6)) / 1.2 : 0;
-  fr.tiltX = damp(fr.tiltX || 0, Math.atan(sl), 12, dt); fr.tiltZ = damp(fr.tiltZ || 0, Math.atan(side), 12, dt);
+  const gh = frGround(fr.x, fr.z), onSnow = fr.grounded && !fr.lift && !fr.flying;
+  // stand square on the slope: the whole rider tips to match the snow under the skis, whichever way they
+  // point (riding switch too), and eases back upright in the air
+  const nrm = frNormal(fr.x, fr.z, frNrmV);
+  if (onSnow || (crashing && fr.y <= gh + 0.3)) frAlignQ.setFromUnitVectors(UP, nrm); else frAlignQ.identity();
+  skier.root.quaternion.slerp(frAlignQ, snapCam ? 1 : 1 - Math.exp(-(onSnow ? 16 : 3) * dt));
   // lying in the snow, the body sits lower so it doesn't float
   const flat = crashing ? Math.max(Math.abs(Math.sin(p.pitch)), Math.abs(Math.sin(p.roll))) : 0;
   skier.root.position.set(fr.x, fr.y - flat * 0.62, fr.z);
   skier.body.rotation.y = p.yaw - fr.heading;
-  skier.body.rotation.x = p.pitch + fr.tiltX + (crashing ? 0 : p.arch || 0);
-  skier.body.rotation.z = (crashing ? 0 : p.lean) + p.roll + fr.tiltZ;
+  skier.body.rotation.x = p.pitch + (crashing ? 0 : p.arch || 0) + (fr.flying ? -1.1 : 0);
+  skier.body.rotation.z = (crashing ? 0 : p.lean) + p.roll;
   skier.shadow.position.set(fr.x, gh + 0.05, fr.z); skier.shadow.visible = !fr.lift;
   // everyone else
   for (const o of fr.others.values()) {
@@ -3564,17 +3766,21 @@ function updateFreeride(dt) {
     o.x += (o.tx - o.x) * k; o.y += (o.ty - o.y) * k; o.z += (o.tz - o.z) * k;
     o.root.position.set(o.x, o.y, o.z);
     o.body.rotation.set(o.p || 0, (o.yw || 0) - (o.h || 0), o.r || 0);
+    frAlignQ.setFromUnitVectors(UP, frNrmV.set(o.a || 0, Math.sqrt(Math.max(0.2, 1 - (o.a || 0) ** 2 - (o.b || 0) ** 2)), o.b || 0));
+    o.root.quaternion.slerp(frAlignQ, k);
   }
   if ((fr.sendT -= dt) <= 0 && fr.net) {
     fr.sendT = 0.15;
-    fr.net.send({ id: fr.id, n: fr.name, x: Math.round(fr.x * 10), y: Math.round(fr.y * 10), z: Math.round(fr.z * 10), h: Math.round(fr.heading * 100), p: Math.round(p.pitch * 100), w: Math.round(p.yaw * 100), r: Math.round(p.roll * 100) });
+    const q = skier.root.quaternion, up = tmpV.set(0, 1, 0).applyQuaternion(q);   // how they're tipped to fit the snow
+    fr.net.send({ id: fr.id, n: fr.name, x: Math.round(fr.x * 10), y: Math.round(fr.y * 10), z: Math.round(fr.z * 10), h: Math.round(fr.heading * 100), p: Math.round(skier.body.rotation.x * 100), w: Math.round(p.yaw * 100), r: Math.round(skier.body.rotation.z * 100), a: Math.round(up.x * 100), b: Math.round(up.z * 100) });
   }
   // HUD
   const s = totalScore(); if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
-  hud.speed.textContent = `${Math.round(fr.s * 3.6)} km/h`;
+  hud.speed.textContent = `${Math.round(fr.s * 3.6)} km/h${fr.flow > 10 && !fr.flying ? `  ·  flow x${(1 + fr.flow * 0.05).toFixed(1)}` : ''}`;
   const n = fr.others.size, where = fr.lift ? 'on the chairlift' : Math.hypot(fr.x - 10, fr.z - 10) < 90 ? 'at the lodge' : `${Math.round(1400 + frTerrain(fr.x, fr.z))} m`;
-  hud.race.textContent = `FREERIDE  ·  ${fr.status === 'online' ? `${n + 1} rider${n ? 's' : ''} on the mountain` : fr.status === 'connecting' ? 'connecting…' : 'offline'}  ·  ${where}  ·  R: back to the top  ·  Esc to leave`;
+  const keysHint = isTouch ? '' : `  ·  ${fr.flying ? 'F: land' : Live.fly ? 'F: fly  ·  ' : ''}${fr.flying ? '' : 'R: top'}  ·  Esc to leave`;
+  hud.race.textContent = `OFF-PISTE  ·  ${fr.status === 'online' ? `${n + 1} rider${n ? 's' : ''}` : fr.status === 'connecting' ? 'connecting…' : 'offline'}  ·  ${fr.flying ? 'flying' : where}  ·  ${fr.weather}${keysHint}`;
   const showCombo = p.combo > 1 && p.comboTimer > 0;
   hud.combo.classList.toggle('hidden', !showCombo);
   if (showCombo) { hud.comboText.textContent = `COMBO x${comboMult(p.combo)}  ·  ${p.comboTotal.toLocaleString()}`; hud.comboFill.style.width = `${(p.comboTimer / COMBO_WINDOW) * 100}%`; }
@@ -3583,7 +3789,7 @@ function updateFreeride(dt) {
 function frToTop() {
   if (!fr.on) return;
   frClearBits(); fr.restAt = 0;
-  Object.assign(fr, { lift: null, x: FR.LIFT_X + 12, z: FR.SUMMIT + 22, heading: Math.PI, s: 10, vy: 0, vyG: null, grounded: true, crashT: -1, air: 0 });
+  Object.assign(fr, { lift: null, x: FR.LIFT_X + 12, z: FR.SUMMIT + 22, heading: Math.PI, s: 10, vy: 0, vyG: null, grounded: true, crashT: -1, air: 0, flow: 0, flying: false });
   fr.y = frGround(fr.x, fr.z); fr.safe = fr.prevSafe = { x: fr.x, z: fr.z, heading: fr.heading };
   if (fr.liftChair) fr.liftChair.visible = false;
   if (fr.trail) fr.trail.pts = [];
@@ -3623,18 +3829,35 @@ function updateFrLift(dt, inp) {
   }
 }
 function frCamera(dt) {
-  let cx, cy, cz, lx, ly, lz;
-  if (fr.lift) { cx = fr.x + 6; cy = fr.y + 3; cz = fr.z + 11; lx = fr.x - 2; ly = fr.y - 1; lz = fr.z - 22; }
-  else {
-    const [dx, dz] = frDir();
-    cx = fr.x - dx * 9; cz = fr.z - dz * 9; cy = Math.max(fr.y + 4, frTerrain(cx, cz) + 2.2);
-    lx = fr.x + dx * 7; ly = fr.y + 1.2; lz = fr.z + dz * 7;
+  // the same views as the main mountain (C or the camera button): chase, high, first person, side
+  let view = VIEWS[viewIdx].id;
+  if (fr.lift || (view === 'first' && fr.crashT >= 0)) view = fr.lift ? 'lift' : 'chase';
+  skier.upper.visible = view !== 'first';
+  camera.up.set(0, 1, 0);
+  if (view === 'first') {
+    skier.body.updateMatrixWorld(true);
+    camera.position.copy(eyeV.set(0, 0.62, -0.25).applyMatrix4(skier.body.matrixWorld));
+    camera.up.copy(upV.set(0, 1, 0).transformDirection(skier.body.matrixWorld));
+    camLook.copy(lookV.set(0, 0.25, -10).applyMatrix4(skier.body.matrixWorld));
+    camera.lookAt(camLook);
+  } else {
+    // the camera's offset from the rider is what's smoothed, so it never falls behind however fast you go
+    const [dx, dz] = frDir(), rx = -dz, rz = dx;
+    let o, l;
+    if (view === 'lift') { o = [6, 3, 11]; l = [-2, -1, -22]; }
+    else if (view === 'high') { o = [-dx * 16, 11, -dz * 16]; l = [dx * 12, 0, dz * 12]; }
+    else if (view === 'side') { o = [rx * 9 - dx, 2.4, rz * 9 - dz]; l = [dx * 3, 1, dz * 3]; }
+    else { o = [-dx * 9, 4, -dz * 9]; l = [dx * 7, 1.2, dz * 7]; }
+    const co = fr.camOff ||= new THREE.Vector3(...o), cl = fr.camLook ||= new THREE.Vector3(...l);
+    const k = snapCam ? 1 : 1 - Math.exp(-6 * dt), kl = snapCam ? 1 : 1 - Math.exp(-10 * dt);
+    co.x += (o[0] - co.x) * k; co.y += (o[1] - co.y) * k; co.z += (o[2] - co.z) * k;
+    cl.x += (l[0] - cl.x) * kl; cl.y += (l[1] - cl.y) * kl; cl.z += (l[2] - cl.z) * kl;
+    camera.position.set(fr.x + co.x, fr.y + co.y, fr.z + co.z);
+    if (!fr.lift) camera.position.y = Math.max(camera.position.y, frTerrain(camera.position.x, camera.position.z) + 2.2);
+    camLook.set(fr.x + cl.x, fr.y + cl.y, fr.z + cl.z);
+    camera.lookAt(camLook);
   }
-  const k = snapCam ? 1 : 1 - Math.exp(-6 * dt);
-  camera.position.x += (cx - camera.position.x) * k; camera.position.y += (cy - camera.position.y) * k; camera.position.z += (cz - camera.position.z) * k;
-  camLook.lerp(tmpV.set(lx, ly, lz), snapCam ? 1 : 1 - Math.exp(-10 * dt));
-  camera.up.set(0, 1, 0); camera.lookAt(camLook);
-  const fov = 64 + clamp((fr.s - 15) * 0.5, 0, 12);
+  const fov = (view === 'first' ? 78 : 64) + clamp((fr.s - 15) * 0.35, 0, 20);
   if (Math.abs(camera.fov - fov) > 0.05) { camera.fov = damp(camera.fov, fov, 3, dt); camera.updateProjectionMatrix(); }
   if (shake > 0) { camera.position.x += rand(-1, 1) * shake * 0.4; camera.position.y += rand(-1, 1) * shake * 0.4; shake = Math.max(0, shake - dt * 1.8); }
   sky.position.copy(camera.position);
@@ -3736,6 +3959,8 @@ addEventListener('keydown', e => {
   if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play' || state === 'freeride')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
   if (e.code === 'KeyR' && state === 'freeride' && !e.repeat) frToTop();
+  if (e.code === 'KeyF' && state === 'freeride') frToggleFly();
+  if ((e.code === 'Enter' || e.code === 'KeyT') && state === 'freeride') { e.preventDefault(); frChat.open(); }
   if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
   if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy && $('panel').classList.contains('hidden')) startRun();
 });
@@ -4350,7 +4575,7 @@ let viewIdx = Math.max(0, VIEWS.findIndex(v => v.id === save.view));
 function cycleView() {
   viewIdx = (viewIdx + 1) % VIEWS.length;
   save.view = VIEWS[viewIdx].id; persist();
-  if (state === 'play' || state === 'crash') showTrick(VIEWS[viewIdx].name, '', false);
+  if (state === 'play' || state === 'crash' || state === 'freeride') showTrick(VIEWS[viewIdx].name, '', false);
   snapCam = true;
 }
 let snapCam = false;
