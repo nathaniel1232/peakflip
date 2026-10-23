@@ -2,6 +2,8 @@
 //  Meta-game: save data, cosmetics, chests, missions
 // ============================================================
 
+import { CG } from './crazy.js';
+
 // ---------- save ----------
 const SAVE_KEY = 'peakflip_v1';
 export const save = Object.assign({
@@ -16,8 +18,15 @@ export const onPersist = { fn: null };
 export const persist = (changed = true) => {
   if (changed) save.savedAt = Date.now();
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch {}
+  // on CrazyGames, a copy in the player's account (without today's race ghost, which is big and stays on the device)
+  if (CG.store) try { const { ghost, ...rest } = save; CG.store.setItem(SAVE_KEY, JSON.stringify(rest)); } catch {}
   if (changed && onPersist.fn) onPersist.fn();
 };
+// the save in the player's CrazyGames account, when it's newer than this device's
+export function accountSave() {
+  try { const d = JSON.parse(CG.store?.getItem(SAVE_KEY) || 'null'); return d && (d.savedAt || 0) > (save.savedAt || 0) ? d : null; }
+  catch { return null; }
+}
 
 // migrate the old "owned skins by index" format
 if (Array.isArray(save.owned)) {
@@ -349,6 +358,15 @@ export const FITS = [
   { id: 'shul', name: 'Tallit & Kippah', set: 'tradition', pieces: { outfit: 'tallit', hat: 'kippah', face: 'none', back: 'none' } },
   { id: 'mensch', name: 'Fedora Classic', set: 'tradition', pieces: { outfit: 'shabbat', hat: 'fedora', face: 'none', back: 'none' } },
 ];
+
+// The CrazyGames version is simpler: none of the themed sets (Agartha, Christmas and the limited ones), so their
+// items aren't in the shop, chests, bundles, locker or fits. Anyone who had one equipped falls back to the first item.
+if (CG.build) {
+  const themed = Object.keys(SETS).filter(k => k !== 'looks');
+  for (const kind of Object.keys(CATALOG)) CATALOG[kind] = CATALOG[kind].filter(it => !themed.includes(it.set));
+  for (let i = FITS.length - 1; i >= 0; i--) if (themed.includes(FITS[i].set)) FITS.splice(i, 1);
+  for (const k of themed) delete SETS[k];
+}
 export const fitOwned = f => Object.entries(f.pieces).filter(([k, id]) => save.inv[k].includes(id)).length;
 // fills in anything a save from an older version (or another device) is missing
 export function normalizeSave() {
@@ -506,13 +524,23 @@ export function settleMissions() {
 ensureMissions();
 
 // ---------- rewarded-ad unlocks ----------
-export const AD_DAILY = { coins: 5, chest: 3 };   // per-day caps for the "watch an ad for…" rewards
+export const AD_DAILY = { coins: 5, chest: 3, double: 5 };   // per-day caps for the "watch an ad for…" rewards
 const todayStr = () => new Date().toISOString().slice(0, 10);
 export function adUsesLeft(kind) {
   if (save.adDay !== todayStr()) { save.adDay = todayStr(); save.adCount = {}; }
   return AD_DAILY[kind] - (save.adCount[kind] || 0);
 }
 export function useAd(kind) { adUsesLeft(kind); save.adCount[kind] = (save.adCount[kind] || 0) + 1; persist(); }
+// CrazyGames doesn't allow one reward to take several ads, and wants another way to get it too: there, every ad
+// item unlocks with a single ad, or can be bought for coins
+if (CG.build) for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind]) if (it.ad) it.ad = 1;
+export const adItemPrice = it => CG.build && it.ad ? PRICE[it.rarity] * 2 : 0;
+export function buyAdItem(kind, id) {
+  const it = item(kind, id), price = adItemPrice(it);
+  if (!price || save.inv[kind].includes(id) || save.coins < price) return false;
+  save.coins -= price; save.inv[kind].push(id); save.bought = (save.bought || 0) + 1; persist();
+  return true;
+}
 // returns true when the item becomes unlocked
 export function adProgress(kind, id) {
   const key = `${kind}:${id}`, it = CATALOG[kind].find(i => i.id === id);

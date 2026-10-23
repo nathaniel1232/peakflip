@@ -14,7 +14,7 @@ const devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
 // the race ghost is big and only matters for today, so it stays on this device
 const payload = () => { const { ghost, ...rest } = save; return rest; };
-function adopt(data, savedAt) {
+export function adopt(data, savedAt) {
   const ghost = save.ghost;
   for (const k of Object.keys(save)) delete save[k];
   Object.assign(save, data, { savedAt });

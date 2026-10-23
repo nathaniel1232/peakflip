@@ -1,5 +1,7 @@
 import { save, persist } from './meta.js';
 import { rpc } from './net.js';
+import { CG } from './crazy.js';
+import { clean, isClean } from './clean.js';
 
 const $ = id => document.getElementById(id);
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -74,10 +76,10 @@ export function initChat({ openPanel, nameForm }) {
     const html = visible.length ? visible.map((m, i) => {
       const date = new Date(m.created_at), time = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const prev = visible[i - 1], cont = prev && prev.author === m.author && date - new Date(prev.created_at) < 5 * 60000;
-      const hue = parseInt(String(m.author).slice(0, 6), 16) % 360 || 200, initial = escape([...String(m.name).trim()][0] || '?').toUpperCase();
+      const hue = parseInt(String(m.author).slice(0, 6), 16) % 360 || 200, initial = escape([...clean(m.name).trim()][0] || '?').toUpperCase();
       return `<article class="chatMessage ${m.isMe ? 'mine' : ''} ${cont ? 'cont' : ''}" style="--h:${hue}"><div class="chatAvatar">${initial}</div>
-        <div class="chatBubble"><div class="chatByline"><b>${escape(m.name)}</b><time datetime="${escape(m.created_at)}" title="${escape(date.toLocaleString())}">${escape(time)}</time></div>
-        <div class="chatBody">${escape(m.body)}</div>${!m.isMe ? `<div class="chatActions"><button type="button" data-block="${escape(m.author)}">Mute</button><button type="button" data-report="${m.id}">Report</button></div>` : ''}</div></article>`;
+        <div class="chatBubble"><div class="chatByline"><b>${escape(clean(m.name))}</b><time datetime="${escape(m.created_at)}" title="${escape(date.toLocaleString())}">${escape(time)}</time></div>
+        <div class="chatBody">${escape(clean(m.body))}</div>${!m.isMe ? `<div class="chatActions"><button type="button" data-block="${escape(m.author)}">Mute</button><button type="button" data-report="${m.id}">Report</button></div>` : ''}</div></article>`;
     }).join('') : '<div class="chatEmpty"><b>The mountain is quiet</b>Be the first to say hello!</div>';
     if (el.innerHTML === html) return;
     const firstRender = el.dataset.loaded !== 'true';
@@ -102,7 +104,7 @@ export function initChat({ openPanel, nameForm }) {
   }
 
   async function refresh() {
-    if (loading || !isOpen() || document.hidden) return;
+    if (loading || !isOpen() || document.hidden || CG.chatOff) return;
     const request = generation; loading = true;
     try {
       const data = await rpc('get_chat_messages', { p_pid: save.pid });
@@ -118,6 +120,7 @@ export function initChat({ openPanel, nameForm }) {
   }
 
   function openChat() {
+    if (CG.chatOff) return;
     generation++;
     openPanel('Global chat', `<div class="chatIntro">Chat with riders across Peak Flip. Keep it friendly and don’t share personal information.</div>
       <div id="chatName"></div><div id="chatMessages" role="log" aria-label="Global messages" aria-live="polite"><div class="chatEmpty">Connecting…</div></div>
@@ -133,6 +136,7 @@ export function initChat({ openPanel, nameForm }) {
     $('chatForm').onsubmit = async e => {
       e.preventDefault();
       const body = input.value.trim(); if (!body || sending) return;
+      if (!isClean(body)) { setStatus('Keep it friendly: that message has a word we don’t allow.'); return; }
       const button = $('chatSend'), request = generation;
       sending = true; button.disabled = true; setStatus('Sending…');
       try {

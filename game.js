@@ -37,31 +37,21 @@ let demo = false;
 const track = (...a) => demo ? [] : trackRun(...a);
 
 // ---------- save data / meta-game ----------
-import { save, persist, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
-import { initUI, missionToast, showMenuUI, showResults, fetchGhosts } from './ui.js';
+import { save, persist, accountSave, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
+import { initUI, missionToast, showMenuUI, showResults, fetchGhosts, claimName } from './ui.js';
 import { icon } from './icons.js';
 import { joinRoom } from './mp.js';
 import { Live } from './live.js';
 import { Ads } from './ads.js';
-import { Cloud } from './cloud.js';
+import { Cloud, adopt } from './cloud.js';
+import { CG } from './crazy.js';
+import { clean, isClean } from './clean.js';
 
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
 const ADS_ENABLED = true;   // an ad between runs (when you press Ride again); the ad network decides how often
 const Platform = {
   sdk: null,
-  async init() {
-    try {
-      await new Promise((res, rej) => {
-        const s = document.createElement('script');
-        s.src = 'https://sdk.crazygames.com/crazygames-sdk-v3.js';
-        s.onload = res; s.onerror = rej;
-        document.head.appendChild(s);
-        setTimeout(rej, 5000);
-      });
-      await window.CrazyGames.SDK.init();
-      this.sdk = window.CrazyGames.SDK;
-    } catch { this.sdk = null; }
-  },
+  async init() { await CG.init(); this.sdk = CG.sdk; },
   call(fn) { try { fn(this.sdk); } catch {} },
   loadingStop() { if (this.sdk) this.call(s => s.game.loadingStop()); },
   gameplayStart() { if (this.sdk) this.call(s => s.game.gameplayStart()); },
@@ -88,7 +78,8 @@ const Sfx = {
     this.apply();
     Music.start(ctx, this.master);
   },
-  apply() { if (this.master) this.master.gain.value = (this.muted || this.ad) ? 0 : 0.55; },
+  // CrazyGames' own mute setting wins over the game's sound button
+  apply() { if (this.master) this.master.gain.value = (this.muted || this.ad || CG.audioOff) ? 0 : 0.55; },
   adMute(v) { this.ad = v; this.apply(); },
   toggle() { this.muted = !this.muted; save.muted = this.muted; persist(); this.apply(); updateMuteBtn(); },
   // the same sound twice within 60 ms is one sound (coin bursts, rank ticks and grinds don't pile up)
@@ -2969,7 +2960,7 @@ function spawnDecor(z) {
   if (!forest && decorN % 12 === 0) addLiftTower(z);
   if (!forest && decorN > 20 && Math.random() < 0.004) addYeti((Math.random() < 0.5 ? -1 : 1) * rand(20, 25), z);
   if (!forest && mode === 'endless' && decorN % 160 === 57) {
-    addCabin(15.6, z, 0, !demo);
+    addCabin(15.6, z, 0, !demo && !CG.build);   // no secret cabin in the CrazyGames version
     if (theme.lamp) { addLantern(14.9, z + 5); addLantern(17.5, z + 5); }
   }
 
@@ -3458,16 +3449,19 @@ const frChat = (() => {
     if (!text) return;
     if (text[0] === '/') { run(text); return; }
     if (performance.now() - lastSent < 1200) { line('', 'Slow down a little.', '#fff', true); return; }
+    if (!isClean(text)) { line('', 'Keep it friendly: that has a word we don’t allow.', '#fff', true); return; }
     lastSent = performance.now();
     if (!fr.net?.say({ id: fr.id, n: fr.name, t: text })) { line('', 'Offline: nobody heard that.', '#fff', true); return; }
     line(fr.name, text, '#ffd166');
   };
   const api = {
-    show(on) { el.classList.toggle('on', on); btn.style.display = on ? '' : 'none'; api.admin(); if (!on) { close(); log.textContent = ''; } },
+    show(on) { el.classList.toggle('on', on); btn.style.display = on && !CG.chatOff ? '' : 'none'; el.querySelector('#frChatHint').style.display = CG.chatOff ? 'none' : ''; api.admin(); if (!on) { close(); log.textContent = ''; } },
     admin() { flyBtn.style.display = fr.on && Live.fly ? '' : 'none'; },
-    open() { if (!fr.on) return; el.classList.add('typing'); clearTouch(); setTimeout(() => input.focus(), 0); },
+    open() { if (!fr.on || CG.chatOff) return; el.classList.add('typing'); clearTouch(); setTimeout(() => input.focus(), 0); },
     system(text) { if (fr.on) line('', text, '#fff', true); },
     receive(m) {
+      if (CG.chatOff) return;   // the player switched chat off in their CrazyGames settings
+      m = { ...m, n: clean(m.n), t: clean(m.t) };
       line(m.n, m.t, frColor(m.id));
       // a speech bubble over their head for a few seconds
       const o = fr.others.get(m.id); if (!o) return;
@@ -3485,7 +3479,7 @@ Live.on('notice', text => frChat.system(`📣 ${text}`));
 // middle of a secret cabin or the island, in which case it waits until you're back on the mountain
 let frCalled = false;
 Live.on('offpiste', () => {
-  if (state === 'freeride' || frCalled) return;
+  if (state === 'freeride' || frCalled || CG.build) return;   // the CrazyGames version has no Off-piste
   frCalled = true;
   Live.notify('Everyone’s meeting on the Off-piste mountain. Taking you there…', 'YOU’RE INVITED', '🏔️');
   const go = () => {
@@ -3501,6 +3495,7 @@ Live.on('offpiste', () => {
 
 // ---- in and out ----
 function startFreeride() {
+  if (CG.build) return;
   mode = 'freeride'; demo = false; Sfx.quiet = false; clearTouch(); Sfx.init(); Music.play('mountain');
   if (closet.on) setCloset(false);
   clearWorld(); resetPlayer(); resetRun(); SkiTracks.clear(); Debris.clear(); fixRider();
@@ -4662,6 +4657,7 @@ function updateCoins() {
 const ghosts = [];
 const GHOST_COLORS = ['#9bf6ff', '#ffd166', '#c77dff', '#80ffdb'];
 function nameTag(text, color) {
+  text = clean(text);
   const c = document.createElement('canvas'); c.width = 256; c.height = 64; const g = c.getContext('2d');
   g.font = '800 30px system-ui, sans-serif'; const w = Math.min(240, g.measureText(text).width + 36);
   g.fillStyle = 'rgba(15,28,46,.75)'; g.beginPath(); g.roundRect((256 - w) / 2, 8, w, 48, 24); g.fill();
@@ -4767,7 +4763,7 @@ function startRun(m = mode) {
   Quality.cap = Infinity; Quality.apply();
   if (mode === 'level') level.def = LEVELS[level.n], level.idx = 0;
   const LV = mode === 'level' ? level.def : null;
-  zone = LV?.zone || 'normal'; portal = null; islandDone = false; nextCaveD = LV ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  zone = LV?.zone || 'normal'; portal = null; islandDone = false; nextCaveD = LV || CG.build ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
   setSlope(mode === 'race' ? SLOPES.race : LV?.zone ? WORLDS[LV.zone].slope : SLOPES.endless);
   if (LV?.zone) Music.play(LV.zone);
   SkiTracks.clear(); Debris.clear(); fixRider();
@@ -5104,9 +5100,24 @@ initUI({
 });
 toMenu();
 requestAnimationFrame(frame);
-Platform.init().then(() => { Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v)); showMenuUI(); });
 // cloud save: if newer progress comes back from the server (another device, a new domain), show it
-Cloud.init(() => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); });
+const progressReplaced = () => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); };
+// On CrazyGames the player's account holds the save too, and it wins when it's newer. Their CrazyGames username is
+// their leaderboard name unless they already picked one, and the account is checked again when they log in mid-game.
+function linkCrazyGames() {
+  const restore = () => { const d = accountSave(); if (d) { adopt(d, d.savedAt); progressReplaced(); } else persist(false); };
+  const named = async () => { const u = await CG.user(); if (u?.username && !save.name) await claimName(u.username); };
+  restore(); named();
+  CG.onLogin(() => { restore(); named(); });
+  CG.onSettings(() => Sfx.apply());
+}
+const platformReady = Platform.init().then(() => {
+  Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v));
+  if (CG.on) linkCrazyGames();
+  showMenuUI();
+});
+// the CrazyGames build waits for the account save first, so the two saves can't race each other
+(CG.build ? platformReady : Promise.resolve()).then(() => Cloud.init(progressReplaced));
 
 // debug handle for testing
 window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRampMap() { return frRampMap; }, get frChunks() { return frChunks; }, frToTop: () => frToTop(), frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

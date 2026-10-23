@@ -35,13 +35,17 @@ export const Ads = {
   },
 
   noFill: false,   // set when the last rewarded request had no ad to show
+  lastReward: 0,   // when the last rewarded ad was watched to the end
+  // a rewarded ad watched in the last 3 minutes counts as the player's ad: no midgame ad straight after it, and
+  // the results screen doesn't offer another one yet (CrazyGames: no chained ads, rewarded offers not too often)
+  get recentReward() { return Ads.lastReward > 0 && performance.now() - Ads.lastReward < 180000; },
 
   // resolves true only if the player watched the whole ad
   rewarded() {
     Ads.noFill = false;
     return new Promise(resolve => {
       let done = false, started = false;
-      const finish = ok => { if (done) return; done = true; onMute(false); resolve(ok); };
+      const finish = ok => { if (done) return; done = true; onMute(false); if (ok) Ads.lastReward = performance.now(); resolve(ok); };
       if (provider === 'crazygames') {
         try {
           sdk.ad.requestAd('rewarded', { adStarted: () => { started = true; onMute(true); }, adFinished: () => finish(true), adError: () => { Ads.noFill = true; finish(false); } });
@@ -59,14 +63,16 @@ export const Ads = {
       } else if (provider === 'dev') {
         devAd(3, () => finish(true), () => finish(false));
       } else finish(false);
-      // if no ad has even started after a few seconds (none available, or an ad blocker ate the request), give up
-      setTimeout(() => { if (!started && provider !== 'dev') { Ads.noFill = true; finish(false); } }, 4000);
+      // if no ad has even started after a few seconds (none available, or an ad blocker ate the request), give up.
+      // The CrazyGames SDK always answers with adFinished or adError, so there it gets longer to load the ad.
+      setTimeout(() => { if (!started && provider !== 'dev') { Ads.noFill = true; finish(false); } }, provider === 'crazygames' ? 12000 : 4000);
       setTimeout(() => finish(false), 60000);
     });
   },
 
   // between runs; never blocks for long
   interstitial() {
+    if (Ads.recentReward) return Promise.resolve();
     return new Promise(resolve => {
       let done = false, started = false;
       const finish = () => { if (done) return; done = true; onMute(false); resolve(); };
@@ -76,8 +82,10 @@ export const Ads = {
       } else if (provider === 'google') {
         try { window.adBreak({ type: 'next', name: 'between_runs', beforeAd: begin, afterAd: () => onMute(false), adBreakDone: finish }); } catch { finish(); }
       } else finish();
-      // never hold up the next run: if no ad has started within 1.5 s (none available, not approved yet, ad blocker), carry on
-      setTimeout(() => { if (!started) finish(); }, 1500);
+      // never hold up the next run: if no ad has started within 1.5 s (none available, not approved yet, ad blocker), carry on.
+      // CrazyGames answers every request (adError straight away when it's too soon for another ad), and an ad that starts
+      // after the run has begun would play over the game, so there it waits for the answer.
+      setTimeout(() => { if (!started) finish(); }, provider === 'crazygames' ? 8000 : 1500);
       setTimeout(finish, 40000);
     });
   },

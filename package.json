@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "python3 -m http.server 8123",
-    "zip:crazygames": "rm -rf .cg peak-flip-crazygames.zip && mkdir .cg && cp -r game.js landscape.js meta.js ui.js chat.js icons.js ads.js config.js net.js cloud.js mp.js live.js lib secret .cg/ && grep -v '<script async src=\"https://pagead2' index.html > .cg/index.html && (cd .cg && zip -qr ../peak-flip-crazygames.zip .) && rm -rf .cg",
+    "build:crazygames": "node tools/build-crazygames.mjs",
     "test": "node --test tests/*.test.mjs"
   }
 }

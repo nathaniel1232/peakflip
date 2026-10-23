@@ -23,6 +23,7 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
 ## Global leaderboards (Supabase)
 1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes.
    Then run `supabase/points-and-chat.sql` for the score-based races, period leaderboards, and global chat.
+   Then run `supabase/coins.sql` for the Coins leaderboard (most coins right now, read from the cloud saves; not in the CrazyGames version).
    Then run `supabase/names.sql`: any name allowed (shared names, accents, emoji), renames any time, and scores
    from players the database hasn't seen yet are accepted. All three files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
 2. The project URL and publishable key live in `config.js`. The browser can only call the
@@ -63,8 +64,8 @@ The game has three kinds of ad slots, all going through `ads.js`:
 On `localhost` rewarded ads are faked with a 3-second "test ad" so you can try the flow.
 
 ### On CrazyGames
-Nothing to configure: their SDK serves rewarded and midgame ads automatically. Set `ADS_ENABLED = true` in `game.js`,
-run `npm run zip:crazygames`, upload. (CrazyGames forbids other ad networks; the game already disables them there.)
+Run `npm run build:crazygames` and upload `peak-flip-crazygames.zip`. Their SDK serves the rewarded and midgame ads, and the
+build removes every other ad network. See [CRAZYGAMES.md](CRAZYGAMES.md) for what the build changes, how to submit, and the launch stages.
 
 ### On your own site (Vercel)
 AdSense is set up with publisher id `ca-pub-5606045487621821`:

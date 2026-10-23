@@ -654,7 +654,7 @@
   // Vercel Web Analytics (static-site version of @vercel/analytics). Only loads on the Vercel deployment,
   // so localhost and the CrazyGames build don't request a script that isn't there.
   (function () {
-    if (/^(localhost|127\.0\.0\.1|\[::1\])$|crazygames/.test(location.hostname) || location.protocol === 'file:') return;
+    if (/^(localhost|127\.0\.0\.1|\[::1\])$|crazygames/.test(location.hostname) || location.protocol === 'file:' || (window.PEAKFLIP_CONFIG || {}).platform === 'crazygames') return;
     window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
     var s = document.createElement('script');
     s.defer = true; s.src = '/_vercel/insights/script.js';

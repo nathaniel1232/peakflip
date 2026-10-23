@@ -5,12 +5,14 @@ import {
   save, persist, CATALOG, RARITY, KIND_NAME, SETS, FITS, fitOwned,
   collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
   isLimited, setDaysLeft, setAvailable, grantScoreRewards, grantSecret,
-  shopToday, msToNewShop, buyItem, buyBundle, giftReady, claimGift, GIFT, fitOffer, buyFit,
+  shopToday, msToNewShop, buyItem, buyBundle, giftReady, claimGift, GIFT, fitOffer, buyFit, adItemPrice, buyAdItem,
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
 import { Cloud } from './cloud.js';
 import { initChat } from './chat.js';
+import { CG } from './crazy.js';
+import { clean, isClean } from './clean.js';
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -25,6 +27,11 @@ if (!save.pid) { save.pid = (crypto.randomUUID ? crypto.randomUUID() : String(Ma
 const LB = {
   async get(board, day, limit = 20, period = 'all') {
     try { return await rpc('get_leaderboard_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_limit: limit, p_period: period }); }
+    catch { return null; }
+  },
+  // most coins right now (supabase/coins.sql); read from the cloud saves, so there's nothing to submit
+  async coins(limit = 50) {
+    try { return await rpc('get_coin_leaderboard', { p_pid: save.pid, p_limit: limit }); }
     catch { return null; }
   },
   // null = network trouble (try again later); { ok: false } = the server turned it down for good
@@ -349,7 +356,8 @@ function detailBar() {
   const shop = shopToday(), offer = [...shop.featured, ...shop.daily, ...shop.limited].find(x => x.kind === kind && x.it.id === id);
   let action;
   if (own) action = save.eq[kind] === id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="shopEquip">Wear</button>`;
-  else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`;
+  else if (it.ad) action = `<button class="btn go" id="shopAd" ${cfg.ads.available ? '' : 'disabled'}>${icon('play')} ${adWatched(kind, id)}/${it.ad}</button>`
+    + (adItemPrice(it) ? `<button class="btn" id="shopAdBuy" ${save.coins >= adItemPrice(it) ? '' : 'disabled'}>${coin} ${adItemPrice(it).toLocaleString()}</button>` : '');
   else if (offer) action = `<button class="btn go" id="shopBuy" ${save.coins >= offer.price ? '' : 'disabled'}>Buy ${coin} ${offer.price.toLocaleString()}</button>`;
   else action = `<button class="btn" disabled>${icon('lock')}</button>`;
   return `<div class="buyDock">${swatch(kind, it)}<span><b>${esc(it.name)}</b><small style="color:${RARITY[it.rarity].color}">${isLimited(it) ? 'Limited ' : ''}${RARITY[it.rarity].name} ${KIND_NAME[kind]}</small>
@@ -405,6 +413,11 @@ function renderShop(tab) {
     const { kind, id } = shopSel;
     if (await watchAd() && adProgress(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); }
     preview(tryOn); renderShop();
+  };
+  if ($('shopAdBuy')) $('shopAdBuy').onclick = () => {
+    const { kind, id } = shopSel;
+    if (buyAdItem(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); celebrate(`${CATALOG[kind].find(i => i.id === id).name} is yours!`); preview(tryOn); }
+    renderShop();
   };
   if ($('giftBtn')) $('giftBtn').onclick = () => {
     const g = claimGift(); if (!g) return;
@@ -509,14 +522,14 @@ function nextToast() {
 let lbTab = 'endless', lbPeriod = 'all', lbRequest = 0;
 async function renderLeaderboard() {
   const token = ++lbRequest;
-  const tabs = `<div class="tabs"><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button></div>`;
-  const periods = `<div class="tabs lbPeriods ${lbTab === 'race' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button><button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button><button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
-  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : 'Leaders earn a golden crown while they hold first place. Weekly resets Monday at 00:00 UTC; daily resets at 00:00 UTC.'}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
+  const tabs = `<div class="tabs"><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button>${CG.build ? '' : `<button class="tab ${lbTab === 'coins' ? 'on' : ''}" data-lb="coins">Coins</button>`}</div>`;
+  const periods = `<div class="tabs lbPeriods ${lbTab !== 'endless' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button><button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button><button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
+  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'coins' ? 'The riders with the most coins right now. Spending coins moves you down.' : lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : 'Leaders earn a golden crown while they hold first place. Weekly resets Monday at 00:00 UTC; daily resets at 00:00 UTC.'}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
   $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
   const board = lbTab === 'race' ? 'racepts' : 'endless';
-  const data = await LB.get(board, board === 'racepts' ? today() : null, 50, board === 'racepts' ? 'all' : lbPeriod);
+  const data = lbTab === 'coins' ? await LB.coins(50) : await LB.get(board, board === 'racepts' ? today() : null, 50, board === 'racepts' ? 'all' : lbPeriod);
   if (token !== lbRequest || !$('lbList')) return;
   $('lbList').innerHTML = (data?.total ? `<div class="lbCount">${data.total.toLocaleString()} ${data.total === 1 ? 'rider' : 'riders'}${data.me ? ` · you are #${data.me.rank}` : ''}</div>` : '') + lbRows(data, lbTab, 50);
   $('lbList').querySelector('.item.me')?.scrollIntoView({ block: 'center' });
@@ -546,6 +559,7 @@ function nameForm(slot, after, compact, editing = false) {
   btn.onclick = async () => {
     const v = input.value.replace(/[\u0000-\u001f\u007f]/g, '').trim().replace(/\s+/g, ' ').slice(0, 20);
     if (!v) { $('nameErr').textContent = 'Type a name first.'; return; }
+    if (!isClean(v)) { $('nameErr').textContent = 'That name has a word we don’t allow. Try another.'; return; }
     if (renaming && v === save.name) { nameForm(slot, after, compact); return; }
     btn.disabled = true; btn.textContent = '…';
     // change_name also claims when there's no name yet; fall back to register_name if the database hasn't been updated
@@ -561,20 +575,31 @@ function nameForm(slot, after, compact, editing = false) {
   };
 }
 
+// claim a name without the form (a player's CrazyGames username); false when it didn't work
+export async function claimName(name) {
+  let res = await LB.rename(name);
+  if (res === undefined) res = await LB.register(name);
+  if (!res?.ok) return false;
+  save.name = res.name; persist(); miniCache = {};
+  await flushScores(); refreshLeader(true); showMenuUI();
+  return true;
+}
+
 function lbRows(data, board, limit) {
   if (!data) {
     const raceScore = save.raceScores?.[today()]?.score;
+    if (board === 'coins') return `<div class="note">Couldn't reach the leaderboard.<br>Your coins: <b>${save.coins.toLocaleString()}</b></div>`;
     return `<div class="note">Couldn't reach the leaderboard.<br>Your best: <b>${board === 'race' || board === 'racepts' ? (Number.isFinite(raceScore) ? `${raceScore.toLocaleString()} points` : '—') : save.best.toLocaleString()}</b></div>`;
   }
   if (!data.top.length) return `<div class="note">No entries yet. Be the first.</div>`;
   const race = board === 'race' || board === 'racepts';
-  const fmt = v => Math.round(v).toLocaleString();
+  const fmt = v => (board === 'coins' ? coin + ' ' : '') + Math.round(v).toLocaleString();
   const rows = data.top.slice(0, limit).map((r, i) => rowHtml(r.rank ?? i + 1, r.name, fmt(r.value), r.isMe, '', race ? fmtTime(r.time) : '')).join('');
   const me = data.me && !data.top.slice(0, limit).some(r => r.isMe) ? '<div class="item gap">⋮</div>' + rowHtml(data.me.rank, save.name || 'You', fmt(data.me.value), true, '', race ? fmtTime(data.me.time) : '') : '';
   return rows + me;
 }
 const rowHtml = (rank, name, val, me, extra = '', time = '') =>
-  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : rank <= 3 ? `r${rank}` : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(name)}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
+  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : rank <= 3 ? `r${rank}` : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(clean(name))}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
 
 // ---------- results ----------
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
@@ -622,7 +647,8 @@ function resultsCard(r, token = resultToken) {
 
   el.innerHTML = `<div class="card">
     ${body}
-    <div class="earn"><span>Coins earned</span><b>${coin} +${earned}</b></div>
+    <div class="earn"><span>Coins earned</span><b id="earnedNum">${coin} +${earned}</b></div>
+    ${doubleOffer(r)}
     ${missions}
     <div id="resLb"></div>
     <button id="againBtn" class="btn primary big">${icon('retry')}${r.mode === 'race' ? 'Race again' : r.mode === 'level' ? 'Try again' : 'Ride again'}</button>
@@ -640,6 +666,7 @@ function resultsCard(r, token = resultToken) {
   if ($('toChests')) $('toChests').onclick = () => { cfg.onMenu(); renderShop(); };
   $('toLb').onclick = () => { lbTab = r.mode; cfg.onMenu(); renderLeaderboard(); };
   $('shareBtn').onclick = () => share(r);
+  if ($('doubleBtn')) $('doubleBtn').onclick = () => doubleCoins(r, earned);
   if (r.mode === 'level') {
     if ($('nextLevel')) $('nextLevel').onclick = () => cfg.onLevel(r.level + 1);
     $('toLb').innerHTML = `${icon('target')}Levels`; $('toLb').onclick = () => { cfg.onMenu(); renderLevels(); };
@@ -648,6 +675,28 @@ function resultsCard(r, token = resultToken) {
   rankRow(r, token);
   miniCache = {};
 }
+// Rewarded "double coins" on the results card: the run's coins once more (mission rewards aren't doubled).
+// Only offered when an ad network is there, the run earned something worth doubling, there are uses left today,
+// and no rewarded ad was watched in the last 3 minutes, so it isn't on every results screen.
+const doubleAmount = r => (r.coins || 0) + (r.bonus || 0);
+function doubleOffer(r) {
+  const n = doubleAmount(r);
+  if (!cfg.ads.available || n < 25 || adUsesLeft('double') <= 0 || cfg.ads.recentReward) return '';
+  return `<button class="btn" id="doubleBtn" style="width:100%;white-space:nowrap">${icon('play')} Watch an ad: 2× coins &nbsp;${coin} +${n.toLocaleString()}</button>`;
+}
+async function doubleCoins(r, earned) {
+  const btn = $('doubleBtn'), again = $('againBtn'), n = doubleAmount(r);
+  // nothing else on the card works while the ad is loading or playing
+  btn.disabled = again.disabled = true; btn.innerHTML = `${icon('play')} Loading ad…`;
+  const ok = await watchAd();
+  if (again.isConnected) again.disabled = false;
+  if (!ok) { if (btn.isConnected) btn.remove(); return; }   // no reward without a finished ad
+  useAd('double'); save.coins += n; persist();
+  cfg.sfx.coin(); celebrate(`Coins doubled! +${n.toLocaleString()}`);
+  if ($('earnedNum')) $('earnedNum').innerHTML = `${coin} +${(earned + n).toLocaleString()}`;
+  if (btn.isConnected) btn.outerHTML = `<div class="earn"><span>${icon('check')} Coins doubled</span><b>${coin} +${n.toLocaleString()}</b></div>`;
+}
+
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
 async function rankRow(r, token) {
   const { board, day } = lbArgs(r);
@@ -810,6 +859,13 @@ export function initUI(c) {
   put('panelClose', 'close'); put('pauseBtn', 'pause');
   $('playBtn').onclick = () => c.onPlay('endless');
   $('otherBtn').onclick = () => { c.sfx.init(); renderOther(); };
+  // the CrazyGames version keeps it simple: Endless and the daily race, so "other" is just the race
+  if (CG.build) {
+    const ob = $('otherBtn');
+    ob.querySelector('.snowy').textContent = ob.querySelector('.snowy').dataset.text = 'race';
+    ob.querySelector('small').textContent = 'Daily forest course · race the ghosts';
+    ob.onclick = () => { c.sfx.init(); c.onPlay('race'); };
+  }
   $('shopBtn').onclick = () => { c.sfx.init(); shopSel = null; renderShop(); };
   $('lockerBtn').onclick = () => { c.sfx.init(); renderLocker(); };
   $('missionsBtn').onclick = () => { c.sfx.init(); renderMissions(); };
@@ -837,9 +893,14 @@ export function initUI(c) {
   const chat = initChat({ openPanel, nameForm });
   setTimeout(resendBigBest, 3000);
   $('globalChatBtn').onclick = () => chat.openChat();
+  // players can switch chat off in their CrazyGames settings
+  CG.onSettings(() => {
+    $('globalChatBtn').classList.toggle('hidden', CG.chatOff);
+    if (CG.chatOff && $('chatMessages')) closePanel();
+  });
   // a one-time note to every player asking for ideas in the global chat
   setTimeout(() => {
-    if (save.feedbackAsked || !$('panel').classList.contains('hidden') || $('menu').classList.contains('hidden')) return;
+    if (CG.build || save.feedbackAsked || !$('panel').classList.contains('hidden') || $('menu').classList.contains('hidden')) return;
     save.feedbackAsked = true; persist();
     openPanel('Ideer?', `<div class="note" style="font-size:16px;line-height:1.5;color:#fff">Skriv hva dere vil jeg skal fikse/adde i global chat i main menu</div>
       <button class="btn primary big" id="feedbackChat" style="width:100%;margin-top:12px">Åpne global chat</button>
