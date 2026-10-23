@@ -3896,9 +3896,8 @@ function award(name, pts, perfect) {
   if (!p.happy && !demo && (p.combo >= 6 || total >= 6000)) { p.happy = true; Platform.happytime(); }
 }
 
-// the first time a combo hits x10: a banner, a fanfare and fireworks
+// the first time a combo hits x10: a fanfare and fireworks
 function maxCombo() {
-  banner('x10', 'MAX COMBO!', 'Every trick pays ten times', 'combo');
   [523, 659, 784, 1047].forEach((f, i) => Sfx.tone(f, 0.22, 'triangle', 0.15, null, i * 0.08));
   shake = Math.max(shake, 0.25);
   [0, 200, 400].forEach((d, i) => setTimeout(() => Particles.emit(p.x + rand(-3, 3), p.y + 5 + i, p.z - 10, 36, 6, 6, [0xff6b2c, 0xffd23f, 0xff4fa3][i], -3), d));
@@ -4520,11 +4519,6 @@ const HINT_TOUCH = 'Left thumb: steer · Right thumb: jump<br>In the air: stick 
 const STAGE_LEN = 1000, SOLID_ROCKS_STAGE = 4, STAGE_THEMES = ['day', 'golden', 'night'];
 let stageTheme0 = 0;
 const solidRocks = () => mode === 'endless' && !demo && p.stage >= SOLID_ROCKS_STAGE;
-function banner(big, title, sub, kind = '') {
-  const el = $('stageBanner');
-  el.innerHTML = `<b>${big}</b><span>${title}</span>${sub ? `<small>${sub}</small>` : ''}`;
-  el.className = ''; void el.offsetWidth; el.className = `show ${kind}`;
-}
 function stageUp(n) {
   p.stage = n;
   const bonus = 1000 * (n - 1);
@@ -4532,7 +4526,7 @@ function stageUp(n) {
   const th = STAGE_THEMES[(stageTheme0 + n - 1) % STAGE_THEMES.length];
   if (special()) prevTheme = th;
   else { setTheme(th); fadeScreen('rgba(255,255,255,.55)'); }
-  banner(`STAGE ${n}`, `${n - 1} km · +${bonus.toLocaleString()}`, n === SOLID_ROCKS_STAGE ? 'Rocks are solid now: hit one and you crash' : n === 2 ? 'Hazards pick up from here' : n === 3 ? 'Faster, tighter, more trees' : '');
+  showTrick(`Stage ${n}`, n === SOLID_ROCKS_STAGE ? `+${bonus.toLocaleString()} · rocks are solid now` : `+${bonus.toLocaleString()}`, true);
   Sfx.perfect(); [392, 523, 659].forEach((f, i) => Sfx.tone(f, 0.3, 'triangle', 0.13, null, 0.15 + i * 0.1));
 }
 
