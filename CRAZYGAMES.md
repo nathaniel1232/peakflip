@@ -20,6 +20,10 @@ This makes `peak-flip-crazygames.zip` (and the same files unzipped in `dist/craz
 - skips the Norwegian "Ideer?" popup (CrazyGames needs English), the move to www.peakflip.io, Vercel analytics, and the ".io"
   in the logo (pointing players at another place to play counts as cross-promotion)
 
+Both versions have a privacy policy (`privacy.html`, linked from Settings) and a small note for new players under the menu
+buttons that links to it, until they press OK. That covers the QA check "In-game mention of Terms & Conditions and/or Privacy
+Policy": answer **Yes**.
+
 The word filter (`clean.js`) is on everywhere. It masks bad words in chat, names and name tags, and refuses them when
 someone sends a message or claims a name.
 

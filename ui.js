@@ -247,7 +247,8 @@ function renderSettings() {
     <div class="setRow"><span>Graphics</span>${seg('q', [['auto', 'Auto'], ['high', 'High'], ['low', 'Low']], q)}</div>
     <div class="note">Low is much smoother: lower resolution, no anti-aliasing, fewer trees and particles, simpler mountains and less falling snow. Auto picks Low on slower devices. Changing this restarts the game.</div>
     <div class="setRow"><span>Music</span>${seg('music', [[1, 'On'], [0, 'Off']], cfg.music.on ? 1 : 0)}</div>
-    <div class="setRow"><span>All sound</span>${seg('sound', [[1, 'On'], [0, 'Off']], cfg.sfx.muted ? 0 : 1)}</div>`);
+    <div class="setRow"><span>All sound</span>${seg('sound', [[1, 'On'], [0, 'Off']], cfg.sfx.muted ? 0 : 1)}</div>
+    <div class="note setLink"><a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a></div>`);
   const B = $('panelBody');
   B.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { if (b.dataset.q === q) return; save.quality = b.dataset.q; persist(); location.reload(); });
   B.querySelectorAll('[data-music]').forEach(b => b.onclick = () => { if (+b.dataset.music !== (cfg.music.on ? 1 : 0)) { cfg.sfx.init(); cfg.music.toggle(); cfg.soundUI(); } renderSettings(); });
@@ -872,6 +873,11 @@ export function initUI(c) {
   $('lbBtn').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = 'all'; renderLeaderboard(); };
   $('helpBtn').onclick = () => { c.sfx.init(); renderHelp(); };
   $('settingsBtn').onclick = () => { c.sfx.init(); renderSettings(); };
+  // new players see a short note about what's saved online until they press OK
+  if (!save.privacyOk) {
+    $('privacyNote').classList.remove('hidden');
+    $('privacyOk').onclick = () => { save.privacyOk = true; persist(); $('privacyNote').classList.add('hidden'); };
+  }
   $('miniMore').onclick = () => { c.sfx.init(); lbTab = 'endless'; lbPeriod = miniPeriod; renderLeaderboard(); };
   $('profileBtn').onclick = () => { c.sfx.init(); renderProfile(); };
   document.querySelectorAll('[data-ml-period]').forEach(b => b.onclick = () => { miniPeriod = b.dataset.mlPeriod; miniBoard(true); });

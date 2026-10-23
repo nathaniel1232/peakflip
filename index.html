@@ -277,6 +277,11 @@
   .homeMinor button:hover { background: rgba(10,32,64,.7); }
   .homeMinor .ic { width: 16px; height: 16px; }
   .homeMinor small { color: var(--muted); font-weight: 600; }
+  /* a quiet note for new players about what's saved online; never blocks anything */
+  .privacyNote { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 10px; padding: 6px 12px; border-radius: 12px; background: rgba(10,32,64,.45); color: var(--muted); font-size: 12px; text-align: center; }
+  .privacyNote.hidden { display: none; }
+  .privacyNote a, .setLink a { color: #cfe8fa; font-weight: 700; }
+  .privacyNote button { padding: 3px 10px; border-radius: 99px; background: rgba(255,255,255,.14); color: #fff; font-size: 12px; font-weight: 700; }
   .lbHead { display: flex; align-items: center; gap: 10px; }
   .lbHead .snowy { font-size: clamp(36px, 4.6vw, 66px); }
   .lbHead .ic { width: clamp(26px, 3vw, 40px); height: clamp(26px, 3vw, 40px); color: var(--gold); filter: drop-shadow(0 3px 0 #a86a00); }
@@ -612,6 +617,7 @@
         <button id="helpBtn"><span id="icHelp"></span>How to play</button>
         <button id="settingsBtn"><span id="icGear"></span>Settings</button>
       </div>
+      <div class="privacyNote hidden" id="privacyNote" role="note">Peak Flip saves your progress, scores and name online. <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a><button id="privacyOk" type="button">OK</button></div>
     </section>
     <section class="homeRight">
       <button id="lbBtn" class="lbHead"><span id="icTrophy"></span><span class="snowy" data-text="leaderboard">leaderboard</span></button>
