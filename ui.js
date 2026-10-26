@@ -35,7 +35,7 @@ const LB = {
     try { return await rpc('get_coin_leaderboard', { p_pid: save.pid, p_limit: limit }); }
     catch { return null; }
   },
-  // null = network trouble (try again later); { ok: false } = the server turned it down for good
+  // null = network trouble; only { ok: true } confirms that the server accepted a score.
   async submit(board, value, day, time, ghost) {
     if (!save.name) return null;
     try { return await rpc('submit_score_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_time: time ?? null, p_ghost: ghost || null }); }
@@ -56,17 +56,21 @@ function queueScore(e) {
 }
 let flushing = null;
 function flushScores() {
-  if (flushing) return flushing.then(() => flushScores());
+  if (flushing) return flushing;
   flushing = (async () => {
     if (!save.name) return;
     // the server only takes Endless days from the last week and the race for today or yesterday
     save.lbQueue = (save.lbQueue || []).filter(e => daysAgo(e.day) <= (e.board === 'racepts' ? 1 : 6));
-    for (const e of save.lbQueue.slice()) {
+    const attempted = new Set();
+    for (let e; (e = save.lbQueue.find(x => !attempted.has(x)));) {
+      attempted.add(e);
       const ghost = e.board === 'racepts' && raceGhost?.day === e.day && raceGhost.score === e.value ? raceGhost.ghost : undefined;
       let res = await LB.submit(e.board, e.value, e.day, e.time, ghost);
       // an older database only knows players who registered there: register this name, then send again
-      if (res && !res.ok) { await LB.register(save.name); res = await LB.submit(e.board, e.value, e.day, e.time, ghost); }
-      if (!res) continue;   // offline: keep it for next time
+      if (res && res.ok !== true) { await LB.register(save.name); res = await LB.submit(e.board, e.value, e.day, e.time, ghost); }
+      if (res?.ok !== true) continue;   // keep this score; other queued runs can still sync
+      // Remove only the acknowledged object. A better score queued while this request
+      // was in flight is a different object and must survive for its own submission.
       save.lbQueue = save.lbQueue.filter(x => x !== e);
     }
     persist(false);
@@ -85,9 +89,14 @@ async function submitRun(r) {
 }
 // the server used to turn down scores over 3,000,000; a best like that is sent once more until it's taken
 async function resendBigBest() {
-  if (!save.name || save.best <= 3e6 || save.bigBestSent === save.best) return;
-  const res = await LB.submit('endless', save.best, today(), null);
-  if (res?.ok) { save.bigBestSent = save.best; persist(); miniCache = {}; }
+  if (!save.name || save.best < 3e6 || save.bigBestSent === save.best) return;
+  const value = save.best;
+  // A server-side recovery may already have restored this record. Do not resubmit
+  // it as a new run today just to acknowledge the recovered lifetime best.
+  const record = await LB.get('endless', null, 1, 'all');
+  if (record?.me?.value >= value) { save.bigBestSent = value; persist(); miniCache = {}; return; }
+  const res = await LB.submit('endless', value, today(), null);
+  if (res?.ok === true) { save.bigBestSent = value; persist(); miniCache = {}; }
 }
 LB.register = async name => {
   try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
@@ -730,9 +739,13 @@ async function rankRow(r, token) {
   const { board, day } = lbArgs(r);
   if (!r.submitted) r.submitted = await submitRun(r);
   if (!r.submitted) {
-    // no name yet: the score waits in the queue, and claiming a name right here sends it
     const lb = $('resLb');
-    if (token !== resultToken || !lb || save.name) return;
+    if (token !== resultToken || !lb) return;
+    if (save.name) {
+      lb.innerHTML = '<div class="saveBox"><div class="note">Leaderboard sync failed. This score is saved on this device and will be retried.</div></div>';
+      return;
+    }
+    // The score waits in the queue, and claiming a name here sends it.
     lb.innerHTML = `<div class="saveBox"><div class="note">Pick a name to put this run on the leaderboard</div><div id="resName"></div></div>`;
     nameForm($('resName'), () => { lb.innerHTML = ''; rankRow(r, token); }, true);
     return;

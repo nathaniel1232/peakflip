@@ -10,6 +10,9 @@ create table if not exists public.score_days (
   ghost jsonb,
   primary key (board, day, pid)
 );
+-- CREATE TABLE IF NOT EXISTS leaves old constraints unchanged. Upgrade existing installations too.
+alter table public.score_days drop constraint if exists score_days_value_check;
+alter table public.score_days add constraint score_days_value_check check (value >= 0 and value <= 100000000);
 create index if not exists score_days_rank on public.score_days(board, day, value desc, elapsed);
 alter table public.score_days enable row level security;
 revoke all on public.score_days from public, anon, authenticated;
