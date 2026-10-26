@@ -29,8 +29,8 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
 2. The project URL and publishable key live in `config.js`. The browser can only call the
    validated score and chat functions — it has no direct table access.
 
-Endless opens first and has All time, Weekly, and Daily rankings. Weekly resets Monday at 00:00 UTC;
-Daily resets at 00:00 UTC. Each period uses the best run earned during that period, even when it is below
+Endless opens first and has All time and Daily rankings on the main site. CrazyGames also retains Weekly,
+which resets Monday at 00:00 UTC. Daily resets at 00:00 UTC. Each period uses the best run earned during that period, even when it is below
 a player's lifetime best. Period tracking starts with this update; old lifetime scores stay on All time.
 Daily Race awards riding/trick points plus 500 per checkpoint. Highest points wins; faster elapsed time
 breaks equal scores. Scored race records are stored separately from the old timed records.

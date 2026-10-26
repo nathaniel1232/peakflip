@@ -14,6 +14,12 @@ export const Ads = {
 
   init(crazySdk, muteFn) {
     onMute = muteFn || onMute;
+    // The upload build must never fall through to another ad provider, even if SDK loading fails.
+    if (cfg.platform === 'crazygames') {
+      if (crazySdk && crazySdk.environment === 'crazygames') { sdk = crazySdk; provider = 'crazygames'; }
+      else if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) provider = 'dev';
+      return;
+    }
     // the CrazyGames SDK also loads elsewhere but only serves ads on crazygames.com
     if (crazySdk && crazySdk.environment === 'crazygames') { sdk = crazySdk; provider = 'crazygames'; return; }
     // localhost always gets the fake test ad, so the reward flow can be tried while developing
@@ -44,29 +50,29 @@ export const Ads = {
   rewarded() {
     Ads.noFill = false;
     return new Promise(resolve => {
-      let done = false, started = false;
+      let done = false;
       const finish = ok => { if (done) return; done = true; onMute(false); if (ok) Ads.lastReward = performance.now(); resolve(ok); };
       if (provider === 'crazygames') {
         try {
-          sdk.ad.requestAd('rewarded', { adStarted: () => { started = true; onMute(true); }, adFinished: () => finish(true), adError: () => { Ads.noFill = true; finish(false); } });
+          sdk.ad.requestAd('rewarded', { adStarted: () => { if (!done) onMute(true); }, adFinished: () => finish(true), adError: () => { Ads.noFill = true; finish(false); } });
         } catch { Ads.noFill = true; finish(false); }
       } else if (provider === 'google') {
         let viewed = false, offered = false;
-        window.adBreak({
-          type: 'reward', name: 'reward_unlock',
-          beforeAd: () => onMute(true), afterAd: () => onMute(false),
-          beforeReward: showAdFn => { offered = started = true; showAdFn(); },
-          adViewed: () => { viewed = true; },
-          adDismissed: () => { viewed = false; },
-          adBreakDone: () => { if (!offered) Ads.noFill = true; finish(viewed); },   // no ad was available
-        });
+        try {
+          window.adBreak({
+            type: 'reward', name: 'reward_unlock',
+            beforeAd: () => onMute(true), afterAd: () => onMute(false),
+            beforeReward: showAdFn => { offered = true; showAdFn(); },
+            adViewed: () => { viewed = true; },
+            adDismissed: () => { viewed = false; },
+            adBreakDone: () => { if (!offered) Ads.noFill = true; finish(viewed); },   // no ad was available
+          });
+        } catch { Ads.noFill = true; finish(false); }
       } else if (provider === 'dev') {
         devAd(3, () => finish(true), () => finish(false));
       } else finish(false);
-      // if no ad has even started after a few seconds (none available, or an ad blocker ate the request), give up.
-      // The CrazyGames SDK always answers with adFinished or adError, so there it gets longer to load the ad.
-      setTimeout(() => { if (!started && provider !== 'dev') { Ads.noFill = true; finish(false); } }, provider === 'crazygames' ? 12000 : 4000);
-      setTimeout(() => finish(false), 60000);
+      // SDK ad calls settle through adFinished/adError (or adBreakDone for Google). Releasing the UI on a
+      // timer is unsafe: an ad can start after the timer and play over the next run.
     });
   },
 
@@ -74,19 +80,16 @@ export const Ads = {
   interstitial() {
     if (Ads.recentReward) return Promise.resolve();
     return new Promise(resolve => {
-      let done = false, started = false;
+      let done = false;
       const finish = () => { if (done) return; done = true; onMute(false); resolve(); };
-      const begin = () => { started = true; onMute(true); };
+      const begin = () => { if (!done) onMute(true); };
       if (provider === 'crazygames') {
         try { sdk.ad.requestAd('midgame', { adStarted: begin, adFinished: finish, adError: finish }); } catch { finish(); }
       } else if (provider === 'google') {
         try { window.adBreak({ type: 'next', name: 'between_runs', beforeAd: begin, afterAd: () => onMute(false), adBreakDone: finish }); } catch { finish(); }
       } else finish();
-      // never hold up the next run: if no ad has started within 1.5 s (none available, not approved yet, ad blocker), carry on.
-      // CrazyGames answers every request (adError straight away when it's too soon for another ad), and an ad that starts
-      // after the run has begun would play over the game, so there it waits for the answer.
-      setTimeout(() => { if (!started) finish(); }, provider === 'crazygames' ? 8000 : 1500);
-      setTimeout(finish, 40000);
+      // Keep the results screen blocked until the provider reports adFinished/adError. A timeout could
+      // let the next run begin before a delayed ad starts.
     });
   },
 };

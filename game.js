@@ -1,5 +1,6 @@
 import * as THREE from './lib/three.module.min.js';
-import { terrainHeight, landscapeTrees } from './landscape.js';
+import { FixedClock } from './game-clock.js';
+import { terrainHeight, landscapeTrees, maxHeading, steerRate, laneHalfWidth, treeLine, ensurePassable } from './landscape.js';
 
 // ============================================================
 //  PEAK FLIP — low-poly ski trick runner
@@ -50,12 +51,12 @@ import { clean, isClean } from './clean.js';
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
 const ADS_ENABLED = true;   // an ad between runs (when you press Ride again); the ad network decides how often
 const Platform = {
-  sdk: null,
-  async init() { await CG.init(); this.sdk = CG.sdk; },
+  sdk: null, playing: false,
+  async init() { await CG.init(); this.sdk = CG.sdk; this.loadingStop(); if (this.playing) this.gameplayStart(); },
   call(fn) { try { fn(this.sdk); } catch {} },
   loadingStop() { if (this.sdk) this.call(s => s.game.loadingStop()); },
-  gameplayStart() { if (this.sdk) this.call(s => s.game.gameplayStart()); },
-  gameplayStop() { if (this.sdk) this.call(s => s.game.gameplayStop()); },
+  gameplayStart() { this.playing = true; if (this.sdk) this.call(s => s.game.gameplayStart()); },
+  gameplayStop() { this.playing = false; if (this.sdk) this.call(s => s.game.gameplayStop()); },
   happytime() { if (this.sdk) this.call(s => s.game.happytime()); },
   midgameAd() { return ADS_ENABLED ? Ads.interstitial() : Promise.resolve(); },
 };
@@ -64,7 +65,7 @@ const Platform = {
 const Sfx = {
   ctx: null, master: null, fx: null, noiseBuf: null, muted: save.muted, ad: false, quiet: false, last: {},
   init() {
-    if (this.ctx) { if (this.ctx.state === 'suspended') this.ctx.resume(); return; }
+    if (this.ctx) { if (this.ctx.state === 'suspended' || this.ctx.state === 'interrupted') this.ctx.resume().catch(() => {}); return; }
     try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch { return; }
     const ctx = this.ctx;
     this.master = ctx.createGain(); this.master.connect(ctx.destination);
@@ -182,9 +183,9 @@ const Music = (() => {
   };
 })();
 // no sound (and no music) while the tab is in the background
-document.addEventListener('visibilitychange', () => { if (Sfx.ctx) document.hidden ? Sfx.ctx.suspend() : Sfx.ctx.resume(); });
+document.addEventListener('visibilitychange', () => { if (Sfx.ctx) (document.hidden ? Sfx.ctx.suspend() : Sfx.ctx.resume()).catch(() => {}); });
 // music starts with the first tap or key press anywhere (browsers only allow audio after one)
-for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => Sfx.init(), { once: true, capture: true });
+for (const ev of ['pointerdown', 'keydown', 'touchend']) addEventListener(ev, () => Sfx.init(), { capture: true });
 
 // ---------- renderer / scene ----------
 // weaker phones/laptops (few cores or little memory) start in a lighter mode
@@ -194,8 +195,8 @@ const LOW = save.quality === 'low';                                         // t
 const renderer = new THREE.WebGLRenderer({ antialias: !LITE && window.devicePixelRatio < 2, powerPreference: 'high-performance' });
 // Adaptive resolution: if frames get slow, render fewer pixels (the biggest cost on phones); raise it again when there's headroom
 const Quality = {
-  max: LOW ? 0.85 : Math.min(window.devicePixelRatio, isTouch ? 1.5 : 1.75), min: LOW ? 0.5 : 0.6,
-  ratio: LOW ? 0.75 : Math.min(window.devicePixelRatio, LITE ? 1 : 1.5),
+  max: LOW ? 0.85 : Math.min(window.devicePixelRatio, save.quality === 'high' ? (isTouch ? 1.5 : 1.75) : WEAK ? 1 : isTouch ? 1.25 : 1.5), min: LOW ? 0.5 : 0.6,
+  ratio: LOW ? 0.75 : Math.min(window.devicePixelRatio, LITE ? 1 : isTouch && save.quality !== 'high' ? 1.25 : 1.5),
   t: 0, frames: 0, good: 0,
   cap: Infinity,
   apply() { renderer.setPixelRatio(Math.min(this.ratio, this.cap)); renderer.setSize(innerWidth, innerHeight); },
@@ -204,8 +205,9 @@ const Quality = {
     this.t += ms; this.frames++;
     if (this.t < 1500) return;
     const fps = this.frames * 1000 / this.t; this.t = this.frames = 0;
-    if (fps < 48 && this.ratio > this.min) { this.ratio = Math.max(this.min, +(this.ratio - 0.15).toFixed(2)); this.good = 0; this.apply(); }
-    else if (fps > 57 && this.ratio < this.max && ++this.good >= 3) { this.ratio = Math.min(this.max, +(this.ratio + 0.1).toFixed(2)); this.good = 0; this.apply(); }
+    if (fps < 55 && this.ratio > this.min) { this.ratio = Math.max(this.min, +(this.ratio - 0.15).toFixed(2)); this.good = 0; this.apply(); }
+    else if (fps > 58.5 && this.ratio < this.max && ++this.good >= 3) { this.ratio = Math.min(this.max, +(this.ratio + 0.1).toFixed(2)); this.good = 0; this.apply(); }
+    else if (fps <= 58.5) this.good = 0;
   },
 };
 Quality.apply();
@@ -877,6 +879,16 @@ function outfitTexture(kind, o) {
     case 'grid': both(k => { k.strokeStyle = o.glow; k.lineWidth = 2; for (let i = 0; i <= S; i += 16) { k.beginPath(); k.moveTo(i, 0); k.lineTo(i, S); k.moveTo(0, i); k.lineTo(S, i); k.stroke(); } }); break;
     case 'flames': both(k => { const grd = k.createLinearGradient(0, S, 0, 20); grd.addColorStop(0, '#ff4800'); grd.addColorStop(1, '#ffba08'); k.fillStyle = k === g ? grd : o.glow;
       k.beginPath(); k.moveTo(0, S); for (let x = 0; x <= S; x += 8) k.lineTo(x, x % 16 ? 34 : 20 + (x % 24)); k.lineTo(S, S); k.fill(); }); break;
+    case 'leader': both(k => {   // World #1: a gold sash, a laurel and a big glowing 1
+      const gold = k === g ? '#ffd23f' : o.glow;
+      k.fillStyle = gold; k.beginPath(); k.moveTo(0, 6); k.lineTo(10, 0); k.lineTo(S, 54); k.lineTo(54, S); k.closePath(); k.fill();
+      k.strokeStyle = gold; k.lineWidth = 2.5;
+      for (const sx of [-1, 1]) { k.beginPath(); k.arc(32, 34, 17, sx < 0 ? Math.PI * 0.55 : Math.PI * 0.05, sx < 0 ? Math.PI * 0.95 : Math.PI * 0.45); k.stroke();
+        for (let i = 0; i < 4; i++) { const a = Math.PI / 2 + sx * (0.5 + i * 0.28); k.beginPath(); k.ellipse(32 + Math.cos(a) * 17, 34 + Math.sin(a) * 17 - 8, 2, 4, a, 0, TAU); k.fill(); } }
+      k.font = '900 26px system-ui, sans-serif'; k.textAlign = 'center'; k.textBaseline = 'middle';
+      if (k === g) { k.fillStyle = '#15100a'; k.fillText('1', 33, 31); }
+      k.fillStyle = k === g ? '#fff3b0' : o.glow; k.fillText('1', 32, 30);
+    }); break;
     case 'astro': g.strokeStyle = '#b8c2cc'; g.lineWidth = 2; g.strokeRect(6, 6, 52, 52); g.fillStyle = '#1d70d6'; g.fillRect(40, 10, 14, 9);
       g.fillStyle = '#e63946'; g.fillRect(10, 12, 12, 4); g.fillStyle = '#ffd23f'; g.fillRect(22, 34, 20, 8); break;
   }
@@ -902,7 +914,7 @@ function applyCosmetics(tryOn) {
   setPattern(skinMats.jacket, o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
   setPattern(skinMats.pants, o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
   skinMats.helmet.color.set(o.helmet);
-  skinMats.helmet.emissive.set(o.rarity === 'legendary' ? o.helmet : '#000000').multiplyScalar(0.35);
+  skinMats.helmet.emissive.set(o.rarity === 'legendary' || o.leader ? o.helmet : '#000000').multiplyScalar(o.leader ? 0.7 : 0.35);
   if (k.color !== 'rainbow') skinMats.ski.color.set(k.color);
   skinMats.tip.color.set(k.tip);
   skinMats.ski.emissive.set(k.glow && k.color !== 'rainbow' ? k.color : '#000000').multiplyScalar(0.4);
@@ -910,6 +922,12 @@ function applyCosmetics(tryOn) {
 const hsl = new THREE.Color();
 function updateCosmetics() {
   if (worn('ski').color === 'rainbow') { skinMats.ski.color.setHSL((time * 0.25) % 1, 0.9, 0.55); skinMats.ski.emissive.copy(skinMats.ski.color).multiplyScalar(0.3); }
+  // World #1: gold sparkles all the way down, and a slow shimmer on the sash
+  const o = worn('outfit');
+  if (o.leader) {
+    skinMats.jacket.emissive.set(o.glow).multiplyScalar(0.9 + Math.sin(time * 3) * 0.4);
+    if (state === 'play' && Math.random() < 0.35) Particles.emit(p.x + rand(-0.3, 0.3), p.y + rand(0.6, 1.5), p.z + rand(-0.2, 0.4), 1, 0.3, 0.8, Math.random() < 0.5 ? 0xffd23f : 0xfff3b0, -1);
+  }
   // air trail
   const tr = worn('trail');
   if (tr.colors && !p.grounded && !p.grinding && !p.crashed && (state === 'play')) {
@@ -920,7 +938,7 @@ function updateCosmetics() {
 
 // ---------- item pictures: small 3D renders of every item (and whole looks) for the shop and locker ----------
 // A copy of the rider with its own materials is dressed and photographed on a separate little renderer, so the
-// main scene is never touched. Pictures are cached and made a few per frame, so opening the shop never stalls.
+// The main scene is never touched. Pictures are cached and made one per frame to spread the work.
 const Thumbs = (() => {
   const SIZE = 192, cache = new Map(), queue = [], waiting = new Set();
   let r = null, scene, cam, rig, mats, part, extra, failed = false;
@@ -993,7 +1011,9 @@ const Thumbs = (() => {
     return r.domElement.toDataURL('image/png');
   }
   function pump() {
-    for (let n = 0; n < 4 && queue.length; n++) {
+    // Each thumbnail render includes a synchronous WebGL render and PNG encode;
+    // limit that burst to one item per frame so opening the shop stays smooth.
+    for (let n = 0; n < 1 && queue.length; n++) {
       const key = queue.shift(); waiting.delete(key);
       let url = null; try { url = shoot(key); } catch {}
       if (!url) continue;
@@ -1078,8 +1098,9 @@ const Particles = (() => {
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: 0.28, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false }));
   pts.frustumCulled = false;
+  pts.visible = false;
   world.add(pts);
-  let head = 0;
+  let head = 0, active = 0;
   const c = new THREE.Color();
   return {
     obj: pts,
@@ -1088,21 +1109,26 @@ const Particles = (() => {
       c.set(color);
       for (let k = 0; k < n; k++) {
         const i = head; head = (head + 1) % N;
+        if (life[i] <= 0) active++;
         pos[i * 3] = x + rand(-0.3, 0.3); pos[i * 3 + 1] = y; pos[i * 3 + 2] = z + rand(-0.3, 0.3);
         vel[i * 3] = rand(-spread, spread); vel[i * 3 + 1] = rand(up * 0.4, up); vel[i * 3 + 2] = vz + rand(-spread, spread);
         col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
         life[i] = rand(0.35, 0.8);
       }
+      pts.visible = active > 0;
+      geo.attributes.color.needsUpdate = true;
     },
     update(dt) {
+      if (!active) return;
       for (let i = 0; i < N; i++) {
         if (life[i] <= 0) continue;
         life[i] -= dt;
-        if (life[i] <= 0) { pos[i * 3 + 1] = -9999; continue; }
+        if (life[i] <= 0) { pos[i * 3 + 1] = -9999; active--; continue; }
         vel[i * 3 + 1] -= 14 * dt;
         pos[i * 3] += vel[i * 3] * dt; pos[i * 3 + 1] += vel[i * 3 + 1] * dt; pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
       }
-      geo.attributes.position.needsUpdate = true; geo.attributes.color.needsUpdate = true;
+      pts.visible = active > 0;
+      geo.attributes.position.needsUpdate = true;
     },
   };
 })();
@@ -1205,14 +1231,14 @@ const Debris = (() => {
     },
     mark(x, z, r) {   // a single drop of the blood trail
       const [gh] = groundAt(x, z), m = new THREE.Mesh(new THREE.CircleGeometry(r, 7).rotateX(-Math.PI / 2), splatMat);
-      m.position.set(x, gh + 0.03, z); m.scale.z = rand(0.7, 1.6); world.add(m); items.push({ g: m, settled: true });
+      m.position.set(x, gh + 0.03, z); m.scale.z = rand(0.7, 1.6); world.add(m); items.push({ g: m, settled: true, ownsGeometry: true });
     },
     splat(x, z) {
       const [gh] = groundAt(x, z);
       for (let i = 0; i < 12; i++) {
         const r = i ? rand(0.12, 0.38) : rand(1.1, 1.5), m = new THREE.Mesh(new THREE.CircleGeometry(r, 9).rotateX(-Math.PI / 2), splatMat);
         m.position.set(x + (i ? rand(-2.4, 2.4) : 0), gh + 0.03, z + (i ? rand(-3.2, 1.2) : 0)); m.scale.z = rand(0.6, 1.3);
-        world.add(m); items.push({ g: m, settled: true });
+        world.add(m); items.push({ g: m, settled: true, ownsGeometry: true });
       }
     },
     update(dt) {
@@ -1231,7 +1257,7 @@ const Debris = (() => {
         }
       }
     },
-    clear() { for (const d of items) world.remove(d.g); items.length = 0; },
+    clear() { for (const d of items) { world.remove(d.g); if (d.ownsGeometry) d.g.geometry.dispose(); } items.length = 0; },
   };
 })();
 
@@ -1316,7 +1342,9 @@ const blocked = (x, z, pad = 1.5) => checkpoints.some(c => Math.abs(z - c.z) < 5
 // A smooth, always-steerable lane that hazards can't fill, so every section has a way through.
 let laneSeed = [0, 0];
 const laneX = z => clamp(Math.sin(z * 0.02 + laneSeed[0]) * 7 + Math.sin(z * 0.05 + laneSeed[1]) * 2.5, -X_LIMIT + 2.5, X_LIMIT - 2.5);
-const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < (mode === 'endless' ? 2.8 : 2.2) + r;
+// Endless gets faster and faster, so its lane widens with the speed you'll be going there
+const fairSpeed = z => baseSpeed(-z) * 1.2;   // a tucked rider runs ~1.1x base speed; a little extra for boosts
+const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < (mode === 'endless' ? laneHalfWidth(fairSpeed(z)) : 2.2) + r;
 // The run-up to rails, kickers, cave mouths and the exit portal stays free of rocks, crystals, presents and trees:
 // whatever is already there is removed, and nothing new is placed there afterwards.
 const CLEARABLE = new Set(['rock', 'crystal', 'gift', 'tree']);
@@ -1629,7 +1657,17 @@ function featureRocks(z, d) {
   for (let i = 0; i < n; i++) addRock(wr(-12, 12), z - wr(0, 32), wr(0.7, 1.2));
   return [45, wr(-6, 6)];
 }
+// Endless tree lines come from landscape.js, which keeps them out of the speed-scaled lane and leaves room to react
+function featureTreeLine(kind, z, d) {
+  const t = treeLine(kind, { rand: crng, z, d, speed: fairSpeed(z), laneX, xLimit: X_LIMIT });
+  for (const tr of t.trees) addTree(tr.x, tr.z, tr.s, true);
+  for (const r of t.rocks || []) addRock(r.x, r.z, r.s);
+  for (const c of t.coins) addCoin(c.x, c.y, c.z);
+  if (t.chute) chutes.push({ ...t.chute, passed: false });
+  return [t.len, t.gx];
+}
 function featureSlalom(z, d) {
+  if (mode === 'endless') return featureTreeLine('slalom', z, d);
   const n = 4 + Math.floor(d * 7);
   for (let i = 0; i < n; i++) addTree((i % 2 ? 1 : -1) * wr(1.5, 9), z - i * 9, wr(0.8, 1.1), true);
   for (let i = 0; i < n; i++) addCoin(Math.sin(i * 1.2) * 3, 1.2, z - i * 9 - 4.5);
@@ -1661,6 +1699,7 @@ function featureBalls(z, d) {
   return [n * 16 + 24, 0];
 }
 function featureField(z, d) {
+  if (mode === 'endless') return featureTreeLine('field', z, d);
   const n = 10 + Math.floor(d * 16);
   for (let i = 0; i < n; i++) { const zz = z - wr(0, 60); if (crng() < 0.5) addRock(wr(-12, 12), zz, wr(0.7, 1.2)); else addTree(wr(-12, 12), zz, wr(0.8, 1.1), true); }
   return [70, 0];
@@ -1668,6 +1707,7 @@ function featureField(z, d) {
 // Endless: a narrow corridor of trees that follows the safe lane. Thread it for a bonus
 let chutes = [];
 function featureChute(z, d) {
+  if (mode === 'endless') return featureTreeLine('chute', z, d);
   const L = Math.round(70 + Math.min(d, 1.3) * 40), gap = 4.3 - Math.min(0.5, d * 0.35);
   for (let zz = z - 6; zz > z - L; zz -= 4.5) {
     const c = laneX(zz);
@@ -2319,6 +2359,19 @@ let forcedFeature = null;   // for testing: window.__game.forceFeature('garden')
 function spawnFeature() {
   const z = spawnZ, D = -z, sp = baseSpeed(D);
   let d = mode === 'endless' ? clamp(D / 1200, 0, 1.4) : clamp(D / 1600, 0, 1), k;
+  if (mode === 'endless' && !demo && D < 300) {
+    // A clear, repeatable opening gives every rider time to find the controls.
+    const x = D < 100 ? 0 : -4;
+    addRamp(x, z, 10, 3, 8);
+    for (let n = 1; n <= 5; n++) addCoin(x, 1.1, z + n * 7);
+    const at = airTime(sp, 3, 10), ls = lipSpeed(sp, 3);
+    for (let n = 1; n <= 6; n++) {
+      const t = at * n / 7;
+      addCoin(x, arcY(sp, 3, 10, t) + 1.2, z - 10 - ls * t);
+    }
+    spawnZ -= Math.max(135, 10 + ls * at + sp * 1.5);
+    return;
+  }
   if (mode === 'level') {
     // the level's own sequence, then the finish line
     if (D > level.def.len - 40) { if (!finish) addFinish(-level.def.len); spawnZ -= 400; return; }
@@ -2349,6 +2402,14 @@ function spawnFeature() {
   // (hard levels scatter them around the jumps and rails too; their run-ups stay clear)
   if (!demo && (hardLevel() || !['ramp', 'big', 'railKick', 'crevasse', 'mega', 'line', 'table', 'stepdown', 'rollers', 'gapRail', 'garden', 'proLine', 'jibLine', 'chute'].includes(k)) && crng() < (mode === 'level' ? levelDiff().extra + d * 0.3 : 0.12 + d * 0.4)) {
     for (let i = 0, n = 1 + Math.floor(d * 2.5) + (mode === 'level' ? levelDiff().more : 0); i < n; i++) addRock(wr(-12, 12), z - wr(5, len - 5), wr(0.6, 1));
+  }
+  // Endless: from anywhere across the slope there has to be a line through at the speed you'll be going,
+  // checked with the real carving; anything that would make it impossible comes out
+  if (mode === 'endless' && !demo) {
+    const solid = obstacles.filter(o => o.pool && CLEARABLE.has(o.kind) && o.z < z + 3 && o.z > z - len - 3);
+    ensurePassable(solid, { zTop: z, zBot: z - len, speed: fairSpeed(z - len / 2), xLimit: X_LIMIT, laneX, board: false }, o => {
+      o.pool.remove(o.idx); obstacles.splice(obstacles.indexOf(o), 1);
+    });
   }
   spawnZ -= len;
 }
@@ -3942,7 +4003,8 @@ const popFromCharge = t => 7.5 + 6 * clamp(t / MAX_CHARGE, 0, 1);
 const JUMP_POP = 11;
 const typing = e => e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
 addEventListener('keydown', e => {
-  if (typing(e)) return;
+  if (typing(e) || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (state === 'menu' && ['Space', 'Enter'].includes(e.code) && e.target.closest?.('button, a')) return;
   if (GAME_KEYS.includes(e.code)) e.preventDefault();
   if (e.repeat) return;
   keys[e.code] = true; keyTime[e.code] = performance.now();
@@ -4303,10 +4365,10 @@ function updatePlayer(dt) {
   } else if (p.grounded) {
     p.groundTime += dt;
     // --- carving: steer sets a heading; velocity follows the skis ---
-    const maxHead = isBoard() ? 0.72 * clamp(26 / p.speed, 0.6, 1) : 0.62 * clamp(24 / p.speed, 0.55, 1);
+    const maxHead = maxHeading(p.speed, isBoard());
     let targetHead = inp.h * maxHead;
     if (Math.abs(p.x) > X_LIMIT - 1.5 && Math.sign(p.x) === Math.sign(targetHead || p.heading) && !nearSecretDoor()) targetHead = -Math.sign(p.x) * 0.25;
-    p.heading = damp(p.heading, targetHead, isBoard() ? (inp.h ? 10 : 9) : (inp.h ? 7 : 8), dt);
+    p.heading = damp(p.heading, targetHead, steerRate(isBoard(), !!inp.h), dt);
     p.vx = Math.sin(p.heading) * p.speed;
     const prevX = p.x;
     p.x += p.vx * dt;
@@ -4720,6 +4782,7 @@ function updateHUD(dt) {
     if (s !== lastScore) { hud.score.textContent = s.toLocaleString(); lastScore = s; }
     hud.race.classList.remove('hidden');
     if (special()) hud.race.textContent = `${WORLDS[zone].name}  ·  x2 points  ·  ${Math.max(0, Math.ceil(p.z - zoneEndZ))} m to the exit`;
+    else if (CG.build) hud.race.textContent = `ENDLESS  ·  ${Math.floor(-p.z).toLocaleString()} m`;
     else hud.race.textContent = `STAGE ${p.stage}  ·  ${Math.max(0, Math.ceil(p.stage * STAGE_LEN + p.z))} m to stage ${p.stage + 1}`;
   }
   if (p.coins !== lastCoins) { hud.coins.textContent = p.coins; lastCoins = p.coins; }
@@ -4731,16 +4794,55 @@ function updateHUD(dt) {
     hud.comboText.textContent = `${p.combo >= 14 ? 'MAX ' : ''}COMBO x${comboMult(p.combo)}  ·  ${p.comboTotal.toLocaleString()}`;
     hud.comboFill.style.width = `${(p.comboTimer / COMBO_WINDOW) * 100}%`;
   }
+  updateLesson(dt);
   if (hintT > 0) { hintT -= dt; if (hintT <= 0) hud.hint.style.opacity = 0; }
 }
 const HINT_DESKTOP = '<kbd>A</kbd> <kbd>D</kbd> steer &nbsp; <kbd>Space</kbd> jump<br>In the air: <kbd>W</kbd> <kbd>S</kbd> flip &nbsp; <kbd>A</kbd> <kbd>D</kbd> spin &nbsp; both = sideflip &nbsp; hold <kbd>G</kbd> grab, tap <kbd>G</kbd> again to switch grab<br><kbd>C</kbd> camera &nbsp; <kbd>P</kbd> pause &nbsp; <kbd>M</kbd> mute';
 const HINT_TOUCH = 'Left thumb: steer · Right thumb: jump<br>In the air: stick up/down flips, sideways spins, diagonal sideflips · hold jump to grab';
 
+// ---------- a short, skippable lesson played on the actual mountain ----------
+let replayLesson = false;
+const lesson = { active: false, air: false, grab: false, done: 0, card: '' };
+function finishLesson() {
+  lesson.active = false; show('lesson', false);
+  save.lessonSeen = true; persist();
+}
+$('skipLesson').onclick = finishLesson;
+function updateLesson(dt) {
+  if (!lesson.active) return;
+  if (state !== 'play') { show('lesson', false); return; }
+  let title, detail, step;
+  if (!p.grounded && !p.grinding) lesson.air = true;
+  if (p.trick?.grabTotal > 0.25) lesson.grab = true;
+  if (lesson.grab && p.grounded) lesson.done += dt;
+  if (lesson.done > 2.5 || -p.z > 450) return finishLesson();
+  if (lesson.done) {
+    step = 'NICE LANDING'; title = 'Your first trick is banked'; detail = CG.build ? 'Keep riding. Link tricks and beat your best score.' : 'Keep riding. Reach 1,000 m to clear stage 1.';
+  } else if (lesson.grab) {
+    step = '3 / 3 · LAND'; title = 'Let go. Skis down.'; detail = 'Land your trick to earn points. Chain tricks for a bigger combo.';
+  } else if (lesson.air && !p.grounded) {
+    step = '2 / 3 · FIRST TRICK'; title = isTouch ? 'Hold the jump button to grab' : 'Hold G to grab';
+    detail = 'Keep the rider upright for an easy first landing.';
+  } else if (lesson.air) {
+    step = '2 / 3 · NEXT JUMP'; title = isTouch ? 'Next jump: hold the jump button' : 'Next jump: hold G in the air';
+    detail = 'A short grab is enough. Release before touching down.';
+  } else {
+    step = '1 / 3 · FIND YOUR LINE'; title = -p.z < 32 ? (isTouch ? 'Left thumb to steer' : '← → or A D to steer') : 'Follow the coins up the ramp';
+    detail = isTouch ? 'Tap the right side to jump. Ramps launch you, too.' : 'Tap Space to jump. Ramps launch you, too.';
+  }
+  const card = step + title;
+  if (card !== lesson.card) {
+    lesson.card = card; $('lessonStep').textContent = step; $('lessonTitle').textContent = title; $('lessonDetail').textContent = detail;
+  }
+}
+
 // ---------- Endless stages: every kilometre the light moves on, a bonus is paid and the mountain gets meaner ----------
 const STAGE_LEN = 1000, SOLID_ROCKS_STAGE = 4, STAGE_THEMES = ['day', 'golden', 'night'];
 let stageTheme0 = 0;
-const solidRocks = () => mode === 'endless' && !demo && p.stage >= SOLID_ROCKS_STAGE;
+const stagesEnabled = () => !CG.build && mode === 'endless' && !demo;
+const solidRocks = () => stagesEnabled() && p.stage >= SOLID_ROCKS_STAGE;
 function stageUp(n) {
+  if (!stagesEnabled()) return;
   p.stage = n;
   const bonus = 1000 * (n - 1);
   p.trickScore += bonus;
@@ -4772,6 +4874,8 @@ function startRun(m = mode) {
   jumpQueued = false; latched.clear();
   clearWorld();
   resetPlayer(); resetRun();
+  hud.trick.classList.remove('show'); hud.trickName.textContent = ''; hud.trickPts.textContent = '';
+  $('toast').classList.remove('show'); $('toast').textContent = '';
   Object.assign(race, { t: 0, gates: 0, penalty: 0, day: today(), splits: [], rec: [], recT: 0 });
   X_LIMIT = mode === 'race' ? 11 : LV ? Math.max(8.5, (LV.width ?? 13) - levelDiff().narrow) : 13;
   scene.fog.near = mode === 'race' ? 45 : 70; scene.fog.far = mode === 'race' ? 170 : 230;
@@ -4784,7 +4888,7 @@ function startRun(m = mode) {
     const day = race.day;
     fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) addGhost(g.name, g.ghost); });
   }
-  setTheme(mode === 'race' ? 'day' : LV ? LV.theme : pickTheme());   // the Daily Race keeps its original daytime look
+  setTheme(mode === 'race' || (mode === 'endless' && save.runs < 3) ? 'day' : LV ? LV.theme : pickTheme());   // the Daily Race keeps its original daytime look
   if (LV?.zone) { scene.fog.near = WORLDS[LV.zone].fog[0]; scene.fog.far = WORLDS[LV.zone].fog[1]; }
   crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : LV ? mulberry32(hashStr('peakflip-level-' + level.n)) : Math.random;
   laneSeed = [crng() * 6.28, crng() * 6.28];
@@ -4800,8 +4904,13 @@ function startRun(m = mode) {
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
-  if (save.runs < 3) { hintT = 9; hud.hint.style.opacity = 1; } else { hintT = 0; hud.hint.style.opacity = 0; }
-  hud.hint.innerHTML = isTouch ? HINT_TOUCH : HINT_DESKTOP;
+  lesson.active = mode === 'endless' && (!save.lessonSeen && save.runs < 3 || replayLesson);
+  replayLesson = false; lesson.air = false; lesson.grab = false; lesson.done = 0; lesson.card = '';
+  show('lesson', lesson.active);
+  hintT = lesson.active ? 0 : 5;
+  hud.hint.style.opacity = lesson.active ? 0 : 1;
+  hud.hint.innerHTML = isTouch ? 'Left thumb: steer · Right thumb: jump' : '<kbd>←</kbd> <kbd>→</kbd> steer · <kbd>Space</kbd> jump · <kbd>P</kbd> pause';
+  updateLesson(0);
   Platform.gameplayStart();
 }
 
@@ -4812,6 +4921,7 @@ function endCommon() {
   const missions = settleMissions();
   persist();
   show('hud', false);
+  lesson.active = false;
   return missions;
 }
 
@@ -4864,6 +4974,7 @@ function toMenu() {
   leaveFreeride();
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
+  lesson.active = false;
   state = 'menu'; paused = false; mode = 'endless'; X_LIMIT = 13; checkpoints = []; clearGhosts();
   scene.fog.near = 70; scene.fog.far = 230;
   if (closet.on) menuStill(); else startDemo();
@@ -4981,7 +5092,7 @@ function togglePause(force) {
   if (state !== 'play') return;
   paused = force === true ? true : !paused;
   show('pause', paused);
-  if (paused) { Platform.gameplayStop(); clearTouch(); }
+  if (paused) { Platform.gameplayStop(); clearTouch(); jumpQueued = false; p.charging = false; ptr.down = false; latched.clear(); for (const k in keys) keys[k] = false; }
   else { Platform.gameplayStart(); last = performance.now(); }
 }
 function updateMuteBtn() {
@@ -4998,18 +5109,33 @@ $('muteBtn').onclick = () => { Sfx.init(); Sfx.toggle(); };
 $('musicBtn').onclick = () => { Sfx.init(); Music.toggle(); updateMuteBtn(); };
 addEventListener('keydown', e => {
   // Enter restarts only from the results card itself (not during the record screen, and not in its first moment)
-  if (e.code === 'Enter' && state === 'over' && !e.repeat && !typing(e) && !$('lbReveal') && !$('over').classList.contains('hidden') && !$('over').classList.contains('arming')) restartWithAd();
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Enter' && state === 'over' && !e.repeat && !typing(e) && !$('lbReveal') && !$('over').classList.contains('hidden') && !$('over').classList.contains('arming')) restartWithAd();
 });
 
 // ---------- main loop ----------
 let last = performance.now();
+let lastRendered = last;
+const simulationClock = new FixedClock();
 function frame(now) {
   requestAnimationFrame(frame);
-  const rawMs = now - last;
-  let dt = Math.min(0.033, rawMs / 1000); last = now;
-  if (!paused && (state === 'play' || state === 'crash' || (state === 'menu' && demo))) Quality.sample(rawMs);
-  if (state === 'crash' && mode !== 'race' && p.crashT < 0.45) dt *= 0.3;   // brief slow-mo on impact (not in the race: it would slow the clock)
-  if (paused) return;
+  const rawMs = now - last; last = now;
+  if (paused || document.hidden) { simulationClock.reset(); lastRendered = now; return; }
+  let advanced = false;
+  simulationClock.advance(rawMs / 1000, fixedDt => {
+    advanced = true;
+    const dt = state === 'crash' && mode !== 'race' && p.crashT < 0.45 ? fixedDt * 0.3 : fixedDt;
+    simulate(dt);
+  });
+  // Physics runs at 60 Hz. Extra display callbacks have no new scene to draw.
+  if (!advanced) return;
+  const renderMs = now - lastRendered; lastRendered = now;
+  if (state === 'play' || state === 'crash' || (state === 'menu' && demo)) Quality.sample(renderMs);
+  if (state === 'cabin' || state === 'island') return;
+  for (const pl of allPools) pl.flush();
+  renderer.render(scene, camera);
+  renderRearView();
+}
+function simulate(dt) {
   time += dt;
   if (state === 'freeride') updateFreeride(dt);
   if (state === 'cabin') { for (const pl of allPools) pl.flush(); updateCabin(dt); return; }
@@ -5039,7 +5165,7 @@ function frame(now) {
       if (o.kind === 'ball') o.mesh.rotation.z -= o.vx * dt / 1.15;
     }
     if (state === 'play') {
-      if (mode === 'endless' && -p.z > p.stage * STAGE_LEN) stageUp(p.stage + 1);
+      if (stagesEnabled() && -p.z > p.stage * STAGE_LEN) stageUp(p.stage + 1);
       missionToast(track('score', totalScore(), 'max'));
       // passing your record mid-run: a banner, fireworks overhead, and a gold score for the rest of the run
       if (mode === 'endless' && !p.bestShown && save.best > 1000 && totalScore() > save.best) {
@@ -5080,9 +5206,6 @@ function frame(now) {
   if (state !== 'freeride') updateSkierVisual(dt);
   updateCamera(dt);
   if (state === 'play' || state === 'crash') updateHUD(dt);
-  for (const pl of allPools) pl.flush();
-  renderer.render(scene, camera);
-  renderRearView();
 }
 
 // ---------- boot ----------
@@ -5092,6 +5215,7 @@ applyCosmetics();
 updateMuteBtn();
 initUI({
   sfx: Sfx, isTouch, hints: isTouch ? HINT_TOUCH : HINT_DESKTOP,
+  onLesson: () => { replayLesson = true; startRun('endless'); },
   onPlay: m => startRun(m), onAgain: () => restartWithAd(), onMenu: () => toMenu(),
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
   closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
@@ -5112,7 +5236,7 @@ function linkCrazyGames() {
   CG.onSettings(() => Sfx.apply());
 }
 const platformReady = Platform.init().then(() => {
-  Platform.loadingStop(); Ads.init(Platform.sdk, v => Sfx.adMute(v));
+  Ads.init(Platform.sdk, v => Sfx.adMute(v));
   if (CG.on) linkCrazyGames();
   showMenuUI();
 });

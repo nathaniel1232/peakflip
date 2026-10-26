@@ -158,3 +158,133 @@ test('full-cell scatter has no 11m residual bands and keeps spacing across adjac
     }
   }
 });
+
+// ---------- fair tree lines ----------
+import { treeLine, ensurePassable, findLine, laneHalfWidth, maxHeading, runway, entryPoints } from '../landscape.js';
+
+const mulberry = a => () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+// the same lane as game.js
+const makeLane = rand => { const a = rand() * 6.28, b = rand() * 6.28; return z => Math.max(-10.5, Math.min(10.5, Math.sin(z * 0.02 + a) * 7 + Math.sin(z * 0.05 + b) * 2.5)); };
+const toObstacles = t => [...t.trees.map(o => ({ kind: 'tree', x: o.x, z: o.z, r: 0.55 * o.s })), ...(t.rocks || []).map(o => ({ kind: 'rock', x: o.x, z: o.z, r: 1.0 * o.s }))];
+function section(kind, seed, speed, d) {
+  const rand = mulberry(seed * 7919 + Math.round(speed) * 31 + Math.round(d * 10)), laneX = makeLane(rand), z = -2000;
+  const t = treeLine(kind, { rand, z, d, speed, laneX });
+  const obstacles = toObstacles(t);
+  const opts = { zTop: z, zBot: z - t.len, speed, laneX };
+  const removed = ensurePassable(obstacles, opts);
+  return { t, laneX, opts, before: obstacles.length, obstacles: obstacles.filter(o => !removed.includes(o)), removed };
+}
+
+// An independent rider written straight from updatePlayer in game.js (skis turn slower than a board, so they're
+// the worst case): exact hitbox, 60 fps, and a search over left/straight/right taps every 0.1 s.
+function riderGetsThrough(obstacles, { zTop, zBot, speed, laneX }, x0, xLimit = 13) {
+  const H = 0.62 * Math.min(1, Math.max(0.55, 24 / speed)), dt = 1 / 60;
+  const last = Math.min(zTop, ...obstacles.map(o => o.z - o.r - 0.5)), end = Math.max(zBot, last);
+  const hit = (x, z) => obstacles.some(o => Math.abs(o.z - z) < o.r + 0.5 && Math.abs(o.x - x) < o.r + 0.32);
+  const step = (s, pick) => {
+    let { x, z, h } = s;
+    for (let f = 0; f < 6; f += 1) {
+      const inp = typeof pick === 'function' ? pick(x, z) : pick;
+      let target = inp * H;
+      if (Math.abs(x) > xLimit - 1.5 && Math.sign(x) === Math.sign(target || h)) target = -Math.sign(x) * 0.25;
+      h += (target - h) * (1 - Math.exp(-(inp ? 7 : 8) * dt));
+      x += Math.sin(h) * speed * dt; z -= Math.cos(h) * speed * dt;
+      if (Math.abs(x) > xLimit) { x = Math.sign(x) * xLimit; h *= 0.5; }
+      if (hit(x, z)) return null;
+      if (z <= end) return { x, z, h, done: true };
+    }
+    return { x, z, h };
+  };
+  // ride along the lane (or parallel to it), else search
+  for (const offset of [0, x0 - laneX(zTop)]) {
+    let s = { x: x0, z: zTop, h: 0 };
+    const chase = (x, z) => { const e = laneX(z - speed * 0.25) + offset - x; return Math.abs(e) < 0.4 ? 0 : Math.sign(e); };
+    while (s && !s.done) s = step(s, chase);
+    if (s?.done) return true;
+  }
+  let states = [{ x: x0, z: zTop, h: 0 }];
+  while (states.length) {
+    const next = new Map();
+    for (const s of states) for (const inp of [-1, 0, 1]) {
+      const n = step(s, inp);
+      if (!n) continue;
+      if (n.done) return true;
+      const key = `${Math.round(n.x / 0.15)},${Math.round(n.h / 0.02)}`;
+      if (!next.has(key)) next.set(key, n);
+    }
+    states = [...next.values()];
+    if (states.length > 600) states = states.filter((_, i) => i % Math.ceil(states.length / 600) === 0);
+  }
+  return false;
+}
+
+const SPEEDS = [22, 35, 50, 66, 80, 95];   // Endless starts ~24 m/s and caps ~66 tucked; boosts go higher
+
+test('every Endless tree line has a way through from anywhere on the slope, at every speed', () => {
+  for (const kind of ['slalom', 'field', 'chute']) {
+    for (const speed of SPEEDS) {
+      for (const d of [0.3, 1.4]) {
+        for (let seed = 1; seed <= 8; seed += 1) {
+          const { obstacles, opts } = section(kind, seed, speed, d);
+          for (const x0 of entryPoints()) {
+            assert.ok(riderGetsThrough(obstacles, opts, x0), `${kind} seed ${seed} at ${speed} m/s, d=${d}: stuck entering at x=${x0}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('tree lines stay hard: the fairness pass only takes out a few trees', () => {
+  for (const kind of ['field', 'chute', 'slalom']) {
+    let before = 0, removed = 0;
+    for (const speed of SPEEDS) for (let seed = 1; seed <= 6; seed += 1) {
+      const s = section(kind, seed, speed, 1.4);
+      before += s.before; removed += s.removed.length;
+    }
+    assert.ok(removed / before < 0.1, `${kind}: removed ${removed} of ${before}`);
+  }
+  const { t } = section('chute', 3, 66, 1.4);
+  assert.ok(t.trees.length >= 30, `the chute still has walls (${t.trees.length} trees)`);
+});
+
+test('the safe gap widens with speed and nothing in a tree line sits inside it', () => {
+  for (let v = 20; v < 100; v += 5) assert.ok(laneHalfWidth(v + 5) >= laneHalfWidth(v));
+  assert.ok(laneHalfWidth(66) > laneHalfWidth(24) + 0.8);
+  for (const kind of ['slalom', 'field', 'chute']) for (const speed of SPEEDS) for (let seed = 1; seed <= 6; seed += 1) {
+    const rand = mulberry(seed * 131 + speed), laneX = makeLane(rand), t = treeLine(kind, { rand, z: -500, d: 1.4, speed, laneX });
+    for (const o of toObstacles(t)) {
+      // the gap is wide enough for the rider (hitbox ±0.32) with metres to spare
+      assert.ok(Math.abs(o.x - laneX(o.z)) - o.r >= laneHalfWidth(speed) - 1e-9, `${kind} at ${speed}: obstacle inside the lane`);
+      assert.ok(laneHalfWidth(speed) * 2 - 0.64 > 4.5);
+    }
+  }
+});
+
+test('nothing in a tree line appears too late to react to', () => {
+  for (const kind of ['slalom', 'field', 'chute']) for (const speed of SPEEDS) for (let seed = 1; seed <= 6; seed += 1) {
+    const rand = mulberry(seed * 977 + speed), t = treeLine(kind, { rand, z: -800, d: 1.4, speed, laneX: makeLane(rand) });
+    for (const o of toObstacles(t)) assert.ok(o.z <= -800 - runway(speed) + 1e-9, `${kind} at ${speed}: something ${(-800 - o.z).toFixed(1)} m in`);
+    assert.ok(runway(speed) >= speed * 0.35, 'at least a third of a second to react');
+  }
+});
+
+test('the fairness check finds impossible sections and opens them up', () => {
+  const opts = { zTop: 0, zBot: -60, speed: 60 };
+  // a solid wall of trees right across the slope
+  const wall = [];
+  for (let x = -12; x <= 12; x += 2) wall.push({ kind: 'tree', x, z: -30, r: 0.55 });
+  assert.equal(findLine(wall, opts, 0).ok, false);
+  const removed = ensurePassable(wall, opts);
+  const left = wall.filter(o => !removed.includes(o));
+  assert.ok(removed.length > 0 && removed.length < wall.length * 0.6, `opened gaps with ${removed.length} of ${wall.length} trees`);
+  for (const x0 of entryPoints()) assert.ok(riderGetsThrough(left, { ...opts, laneX: () => 0 }, x0));
+  // a tree straight ahead too close to dodge at this speed gets taken out
+  const late = [{ kind: 'tree', x: 0, z: -3, r: 0.55 }];
+  assert.equal(findLine(late, opts, 0).ok, false);
+  assert.equal(ensurePassable(late, opts).length, 1);
+  // an open slope needs nothing removed
+  assert.deepEqual(ensurePassable([], opts), []);
+  // faster means less steering per metre, until the board/skis bottom out
+  assert.ok(maxHeading(60) < maxHeading(25) && maxHeading(60, true) > maxHeading(60));
+});

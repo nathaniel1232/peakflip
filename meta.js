@@ -45,6 +45,7 @@ export const RARITY = {
   rare:      { name: 'Rare',      color: '#4dabf7', dupe: 60 },
   epic:      { name: 'Epic',      color: '#c264ff', dupe: 150 },
   legendary: { name: 'Legendary', color: '#ffb627', dupe: 400 },
+  mythic:    { name: 'Mythic',    color: '#ffe066', dupe: 0 },
 };
 // outfits may carry `tex` (a pattern painted on the jacket, see outfitTexture in game.js), `glow` and a CSS `sw` for the swatch
 const O = (id, name, rarity, jacket, pants, helmet, ad, extra) => ({ id, name, rarity, jacket, pants, helmet, ad, ...extra });
@@ -137,6 +138,8 @@ export const CATALOG = {
     O('legend', 'Peak Legend', 'legendary', '#ffd23f', '#111111', '#ffffff', 0, { score: 500000 }),
     // secret: found, not bought
     O('arcade', 'Arcade', 'legendary', '#ff00e6', '#00f0ff', '#39ff14', 0, { secret: true }),
+    // never owned: only whoever is #1 on the all-time Endless board can wear it, and only while they stay there
+    O('numberone', 'World #1', 'mythic', '#15100a', '#0c0905', '#ffd23f', 0, { leader: true, tex: 'leader', glow: '#ffd23f', sw: 'radial-gradient(circle at 50% 38%,#fff3b0 0 12%,#ffd23f 13% 22%,transparent 23%),linear-gradient(135deg,#15100a 40%,#ffd23f 40% 52%,#15100a 52%)' }),
     ...inSet('tradition', [
       O('shabbat', 'Shabbat Best', 'rare', '#111111', '#111111', '#ffffff', 0, { tex: 'suit', sw: 'linear-gradient(90deg,#111 38%,#fff 38% 62%,#111 62%)' }),
       O('tallit', 'Tallit', 'epic', '#f6f3ea', '#1d2b4a', '#ffffff', 0, { tex: 'tallit', sw: 'linear-gradient(#f6f3ea 20%,#1d4ed8 20% 28%,#f6f3ea 28% 34%,#1d4ed8 34% 42%,#f6f3ea 42%)' }),
@@ -381,7 +384,36 @@ export function normalizeSave() {
 }
 export const KIND_NAME = { outfit: 'Outfit', hat: 'Hat', face: 'Face', back: 'Back', ski: 'Skis/Board', trail: 'Trail' };
 export const item = (kind, id) => CATALOG[kind].find(i => i.id === id) || CATALOG[kind][0];
-export const equipped = kind => item(kind, save.eq[kind]);
+// ---------- the World #1 outfit ----------
+// Nobody owns it: it's wearable while the leaderboard (the server's own ranking) says you're #1 all-time in
+// Endless. Lose first place and you're back in whatever you wore before. Outfits never leave this device, so
+// a faked one fools nobody but yourself; that's why this is checked here and not in the database.
+export const leader = { on: false };
+export const canWear = (kind, id) => item(kind, id).leader ? leader.on : save.inv[kind].includes(id);
+const fallback = kind => {
+  const prev = save.beforeLeader?.[kind];
+  return prev && save.inv[kind].includes(prev) ? prev : save.inv[kind][0] || CATALOG[kind][0].id;
+};
+export const equipped = kind => {
+  const it = item(kind, save.eq[kind]);
+  return it.leader && !leader.on ? item(kind, fallback(kind)) : it;
+};
+export function wear(kind, id) {
+  if (!canWear(kind, id)) return false;
+  if (item(kind, id).leader && !item(kind, save.eq[kind]).leader) save.beforeLeader = { ...save.beforeLeader, [kind]: save.eq[kind] };
+  save.eq[kind] = id; persist();
+  return true;
+}
+// `known` is false when the leaderboard couldn't be reached: then nothing is taken off, it just isn't shown
+// until first place is confirmed again. Returns true when what you're wearing changed.
+export function setLeader(on, known) {
+  const was = leader.on; leader.on = !!on;
+  let changed = was !== leader.on;
+  if (!leader.on && known) for (const kind of Object.keys(CATALOG)) {
+    if (item(kind, save.eq[kind]).leader) { save.eq[kind] = fallback(kind); changed = true; persist(); }
+  }
+  return changed;
+}
 
 // ---------- item shop: a new rotation every day at 00:00 UTC, the same for everyone ----------
 // Featured (big, epic/legendary, the first one is the Item of the Day at a discount), Daily, Limited (only while
@@ -395,7 +427,7 @@ export function shopToday(day = utcToday()) {
   const rng = mulberry(hash('peakflip-shop-' + day));
   const all = [];
   for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind])
-    if (it.id !== 'none' && !it.ad && !it.score && !it.secret && (!isLimited(it) || setAvailable(it.set))) all.push({ kind, it, price: PRICE[it.rarity] });
+    if (it.id !== 'none' && !it.ad && !it.score && !it.secret && !it.leader && (!isLimited(it) || setAvailable(it.set))) all.push({ kind, it, price: PRICE[it.rarity] });
   const take = (list, n) => { const out = [], pool = list.slice(); while (out.length < n && pool.length) out.push(pool.splice((rng() * pool.length) | 0, 1)[0]); return out; };
   const normal = all.filter(x => !isLimited(x.it));
   const featured = take(normal.filter(x => x.it.rarity === 'legendary' || x.it.rarity === 'epic'), 2);
@@ -432,7 +464,7 @@ export function buyBundle() {
 export const FIT_DISCOUNT = 0.8;
 export function fitOffer(f) {
   const missing = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && !save.inv[k].includes(id))
-    .map(([kind, id]) => ({ kind, it: item(kind, id) })).filter(x => !x.it.ad && !x.it.score && !x.it.secret);
+    .map(([kind, id]) => ({ kind, it: item(kind, id) })).filter(x => !x.it.ad && !x.it.score && !x.it.secret && !x.it.leader);
   const full = missing.reduce((n, x) => n + PRICE[x.it.rarity], 0);
   return { missing, was: full, price: missing.length ? round50(full * FIT_DISCOUNT) : 0, available: setAvailable(f.set) };
 }
@@ -456,7 +488,7 @@ export function claimGift() {
 }
 export const collectionCount = () => {
   let have = 0, total = 0;
-  for (const k of Object.keys(CATALOG)) { total += CATALOG[k].length; have += save.inv[k].length; }
+  for (const k of Object.keys(CATALOG)) { total += CATALOG[k].filter(i => !i.leader).length; have += save.inv[k].length; }
   return { have, total };
 };
 

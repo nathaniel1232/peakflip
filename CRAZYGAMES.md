@@ -1,5 +1,20 @@
 # Peak Flip on CrazyGames
 
+## Quality update — 25 October 2026
+
+- A skippable lesson teaches steering, taking a ramp, grabbing, and banking a landing during actual Endless play. Replay it from **How to play**.
+- Endless starts with wide kickers, visible coin trails, and clear landings before introducing the procedural course. The first three runs use daylight.
+- A clear primary button, quieter secondary buttons, readable leaderboard rows, and compact layouts improve the embedded experience. The display font and its OFL license ship in `lib/`.
+- Simulation runs at a fixed 60 Hz, independent of display refresh. Pause clears held input and background stalls do not fast-forward the rider.
+- Gameplay events survive a slow SDK initialization. Audio can resume from an interrupted state on the next gesture.
+- Ad completion/error callbacks control when the next run may begin. The CrazyGames build cannot select Google ads, and its HTML contains no AdSense loader.
+
+This addresses observed onboarding, readability, timing, and integration issues. It does not guarantee editorial acceptance. Validate real ads, account save behavior, site mute/chat settings, and physical touch devices in the Developer Portal before resubmitting.
+
+## Endless without stages (CrazyGames only)
+
+The CrazyGames build has no kilometre stages, stage bonuses, stage-driven lighting changes, or stage-4 solid-rock switch. Its HUD shows distance, and menu/help/lesson copy refers to scores and combos. Speed and procedural difficulty still rise gradually with distance. The self-hosted version retains its stages.
+
 ## Build the upload
 ```
 npm run build:crazygames
@@ -76,7 +91,8 @@ CrazyGames earns money from ads and pays you a share. More playtime and more ret
 engagement matters more than the number of ad slots. Already in place:
 
 - **Midgame ad** on Ride again / Race again / Try again (after a run, never during one). The SDK limits it to one every
-  3 minutes, so asking every time is fine.
+  3 minutes, so asking every time is fine. The results screen stays blocked until the SDK reports that the ad finished or
+  could not be shown; a delayed ad must never start over a new run.
 - **Rewarded ads:** "watch to unlock" items and +75 coins (5 a day). Always optional, with a "try again later" note when
   there's no ad.
 - **Double coins** on the results card (rewarded): pays the run's coins again (mission rewards aren't doubled). To stay within

@@ -6,6 +6,7 @@ import {
   collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
   isLimited, setDaysLeft, setAvailable, grantScoreRewards, grantSecret,
   shopToday, msToNewShop, buyItem, buyBundle, giftReady, claimGift, GIFT, fitOffer, buyFit, adItemPrice, buyAdItem,
+  leader, wear, equipped, setLeader,
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
@@ -92,10 +93,11 @@ LB.register = async name => {
   try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
   catch { return null; }
 };
-// undefined = the database doesn't have change_name yet (404); null = network trouble
+// undefined = the database's change_name is missing (404) or broken (any other error from the server);
+// null = network trouble
 LB.rename = async name => {
   try { return await rpc('change_name', { p_pid: save.pid, p_name: name }); }
-  catch (e) { return /\b404\b/.test(e.message) ? undefined : null; }
+  catch (e) { return /\b\d{3}\b/.test(e.message) ? undefined : null; }
 };
 export async function fetchGhosts(day) {
   try { return (await rpc('get_ghosts_v2', { p_day: day, p_pid: save.pid })) || []; }
@@ -192,6 +194,8 @@ let miniPeriod = 'all', miniCache = {}, miniRequest = 0, leaderRequest = 0;
 let leaderPromise = null, leaderFetchedAt = 0;
 async function miniBoard(force) {
   const el = $('miniLb'); if (!el) return;
+  if (!CG.build && miniPeriod === 'weekly') miniPeriod = 'all';
+  if (!CG.build) document.querySelectorAll('[data-ml-period="weekly"]').forEach(b => b.classList.add('hidden'));
   document.querySelectorAll('[data-ml-period]').forEach(b => b.classList.toggle('on', b.dataset.mlPeriod === miniPeriod));
   const period = miniPeriod, key = `${today()}:${period}`, token = ++miniRequest, c = miniCache[key];
   if (c && !force && Date.now() - c.at < 60000) { el.innerHTML = c.html; return; }
@@ -206,7 +210,7 @@ async function miniBoard(force) {
 
 async function refreshLeader(force = false) {
   if (!save.name) {
-    window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: false } }));
+    window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: false, champion: false, known: true } }));
     return;
   }
   if (leaderPromise) {
@@ -216,15 +220,28 @@ async function refreshLeader(force = false) {
   }
   if (!force && Date.now() - leaderFetchedAt < 25000) return;
   const token = ++leaderRequest;
-  leaderPromise = Promise.all([
-    LB.get('endless', null, 1, 'all'), LB.get('endless', null, 1, 'weekly'),
-    LB.get('endless', null, 1, 'daily'), LB.get('racepts', today(), 1, 'all'),
-  ]).then(results => {
+  const leaderBoards = [LB.get('endless', null, 1, 'all')];
+  if (CG.build) leaderBoards.push(LB.get('endless', null, 1, 'weekly'));
+  leaderBoards.push(LB.get('endless', null, 1, 'daily'), LB.get('racepts', today(), 1, 'all'));
+  leaderPromise = Promise.all(leaderBoards).then(results => {
     leaderFetchedAt = Date.now();
-    if (token === leaderRequest) window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: results.some(data => data?.me?.rank === 1) } }));
+    // active: #1 on any board (the crown); champion: #1 all-time in Endless (the World #1 outfit)
+    if (token === leaderRequest) window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: {
+      active: results.some(data => data?.me?.rank === 1), champion: results[0]?.me?.rank === 1, known: !!results[0],
+    } }));
   }).finally(() => { leaderPromise = null; });
   return leaderPromise;
 }
+
+// the World #1 outfit comes and goes with first place
+addEventListener('peakflip-leader', e => {
+  const { champion, known } = e.detail || {}, was = leader.on, wasWearing = CATALOG.outfit.find(i => i.id === save.eq.outfit)?.leader;
+  if (!setLeader(champion, known)) return;
+  cfg.onCosmetics();
+  if (leader.on && !was) note(`You're World #1! The World #1 outfit is in your Locker while you hold first place.`);
+  else if (!leader.on && wasWearing && known) note(`Someone took first place. You're back in your ${equipped('outfit').name} outfit.`);
+  if ($('panelTitle').textContent === 'Locker' && !$('panel').classList.contains('hidden')) renderLocker();
+});
 
 // ---------- profile ----------
 const statusText = () => ({
@@ -258,13 +275,15 @@ function renderSettings() {
 // ---------- how to play ----------
 function renderHelp() {
   openPanel('How to play', `<div class="help">
+    <button class="btn primary" id="replayLesson">Play the quick lesson</button>
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
-    <h4>Endless (the main mode)</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees ends the run. Every kilometre is a new stage: a points bonus, a new time of day and a meaner mountain. From stage 4 rocks are solid too. There is always a way through, and every jump has room to land.</div>
+    <h4>Endless (the main mode)</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees ends the run. ${CG.build ? "The mountain gets faster as you ride. Land tricks and link combos to beat your best score." : "Every kilometre is a new stage: a points bonus, a new time of day and a meaner mountain. From stage 4 rocks are solid too."} There is always a way through, and every jump has room to land.</div>
     <h4>Combos</h4><div class="item">Tricks done within 3 seconds of each other chain into a combo. The multiplier climbs x1.5, x2 … x5, then x6, x7, x8, x9 and the max, <b>x10</b>, at 14 tricks in a row. Rails, grabs and kicker lines keep a combo going.</div>
     <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
       </div>
-    <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time, weekly, and daily boards. A golden crown marks the current leader.</div>
+    <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time${CG.build ? ', weekly' : ''}, and daily boards. A golden crown marks the current leader.</div>
   </div>`);
+  $('replayLesson').onclick = () => { closePanel(); cfg.onLesson(); };
 }
 
 // rewarded ad with a friendly message when there's no ad to show right now
@@ -460,10 +479,12 @@ function renderLocker() {
   let body;
   if (lockerTab === 'fits') body = lockerFitsHtml();
   else {
-    const mine = CATALOG[lockerTab].filter(it => save.inv[lockerTab].includes(it.id));
+    // the World #1 outfit is always shown (it's the one to chase), but only wearable by the current #1
+    const mine = CATALOG[lockerTab].filter(it => save.inv[lockerTab].includes(it.id) || it.leader);
+    const on = equipped(lockerTab).id;
     body = mine.length > 1 || lockerTab === 'outfit' || lockerTab === 'ski'
-      ? `<div class="grid">${mine.map(it => `<button class="skin ${save.eq[lockerTab] === it.id ? 'sel' : ''}" data-id="${it.id}">
-          ${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${RARITY[it.rarity].name}</div></button>`).join('')}</div>`
+      ? `<div class="grid">${mine.map(it => `<button class="skin ${on === it.id ? 'sel' : ''} ${it.leader ? `leaderSkin ${leader.on ? '' : 'locked'}` : ''}" data-id="${it.id}" ${it.leader && !leader.on ? 'title="Only the #1 on the all-time Endless leaderboard can wear this"' : ''}>
+          ${swatch(lockerTab, it)}<div class="nm">${it.leader ? icon('crown') : ''}${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${it.leader && !leader.on ? '#1 only' : RARITY[it.rarity].name}</div></button>`).join('')}</div>`
       : emptyLocker(`You don't have any ${KIND_NAME[lockerTab].toLowerCase()} items yet.`);
   }
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
@@ -471,7 +492,10 @@ function renderLocker() {
   const B = $('panelBody');
   B.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { lockerTab = b.dataset.tab; renderLocker(); });
   B.querySelectorAll('[data-gear]').forEach(b => b.onclick = () => { save.gear = b.dataset.gear; persist(); cfg.onCosmetics(); renderLocker(); });
-  B.querySelectorAll('[data-id]').forEach(b => b.onclick = () => { save.eq[lockerTab] = b.dataset.id; persist(); cfg.onCosmetics(); renderLocker(); });
+  B.querySelectorAll('[data-id]').forEach(b => b.onclick = () => {
+    if (!wear(lockerTab, b.dataset.id)) return note('Only the #1 on the all-time Endless leaderboard can wear this. Take first place and it\'s yours for as long as you hold it.');
+    cfg.onCosmetics(); renderLocker();
+  });
   B.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => {
     const f = FITS.find(x => x.id === b.dataset.fit);
     for (const [k, id] of Object.entries(f.pieces)) if (save.inv[k].includes(id)) save.eq[k] = id;
@@ -522,10 +546,11 @@ function nextToast() {
 // ---------- leaderboards ----------
 let lbTab = 'endless', lbPeriod = 'all', lbRequest = 0;
 async function renderLeaderboard() {
+  if (!CG.build && lbPeriod === 'weekly') lbPeriod = 'all';
   const token = ++lbRequest;
   const tabs = `<div class="tabs"><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button>${CG.build ? '' : `<button class="tab ${lbTab === 'coins' ? 'on' : ''}" data-lb="coins">Coins</button>`}</div>`;
-  const periods = `<div class="tabs lbPeriods ${lbTab !== 'endless' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button><button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button><button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
-  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'coins' ? 'The riders with the most coins right now. Spending coins moves you down.' : lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : 'Leaders earn a golden crown while they hold first place. Weekly resets Monday at 00:00 UTC; daily resets at 00:00 UTC.'}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
+  const periods = `<div class="tabs lbPeriods ${lbTab !== 'endless' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button>${CG.build ? `<button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button>` : ''}<button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
+  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'coins' ? 'The riders with the most coins right now. Spending coins moves you down.' : lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : `Leaders earn a golden crown while they hold first place. ${CG.build ? 'Weekly resets Monday at 00:00 UTC; daily' : 'Daily'} resets at 00:00 UTC.`}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
   $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
@@ -563,11 +588,13 @@ function nameForm(slot, after, compact, editing = false) {
     if (!isClean(v)) { $('nameErr').textContent = 'That name has a word we don’t allow. Try another.'; return; }
     if (renaming && v === save.name) { nameForm(slot, after, compact); return; }
     btn.disabled = true; btn.textContent = '…';
-    // change_name also claims when there's no name yet; fall back to register_name if the database hasn't been updated
+    // change_name also claims when there's no name yet; fall back to register_name if the database's change_name
+    // is missing or failing, and give the network one more try before giving up
     let res = await LB.rename(v);
-    if (res === undefined && !renaming) res = await LB.register(v);
+    if (res === null) res = await LB.rename(v);
+    if (res === undefined && !renaming) res = await LB.register(v) ?? await LB.register(v);
     btn.disabled = false; btn.textContent = renaming ? 'Save' : 'Claim';
-    if (!res) { $('nameErr').textContent = res === undefined && renaming ? "Name changes aren't switched on yet." : "Couldn't reach the leaderboard. Try again in a moment."; return; }
+    if (!res) { $('nameErr').textContent = res === undefined && renaming ? "Name changes aren't working right now. Try again later." : "Couldn't reach the leaderboard. Try again in a moment."; return; }
     if (!res.ok) { $('nameErr').textContent = NAME_ERR[res.error] || 'Something went wrong. Try another name.'; return; }
     save.name = res.name; persist(); miniCache = {};
     await flushScores(); refreshLeader(true); showMenuUI();
@@ -712,8 +739,8 @@ async function rankRow(r, token) {
   }
   if (token !== resultToken) return;
   if (board === 'endless') {
-    // where this leaves you on all three Endless boards; tap one to see it
-    const periods = [['all', 'All time'], ['weekly', 'This week'], ['daily', 'Today']];
+    // Show the player's standing on the available Endless boards.
+    const periods = [['all', 'All time'], ...(CG.build ? [['weekly', 'This week']] : []), ['daily', 'Today']];
     const boards = await Promise.all(periods.map(([p]) => LB.get(board, null, 7, p)));
     const lb = $('resLb');
     if (token !== resultToken || !lb || !boards.some(b => b?.me)) return;
@@ -783,7 +810,7 @@ function recordMoment(r, done, token) {
     const { board, day, value, time, ghost } = lbArgs(r);
     if (ghost) raceGhost = { day, score: value, ghost };
     queueScore({ board, day: day || today(), value, time: time ?? null });
-    step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Pick any name to put this on the ${r.mode === 'race' ? "today's race" : 'world'} leaderboard. You can change it later.</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
+    step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Pick any name to put this on ${r.mode === 'race' ? "today's race" : 'the world'} leaderboard. You can change it later.</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
     nameForm($('rvName'), go, true);
     $('rvSkip').onclick = () => { skippedName = true; finish(); };
   }
@@ -862,6 +889,7 @@ export function initUI(c) {
   $('otherBtn').onclick = () => { c.sfx.init(); renderOther(); };
   // the CrazyGames version keeps it simple: Endless and the daily race, so "other" is just the race
   if (CG.build) {
+    $('playSub').textContent = 'Endless · land tricks, collect coins, beat your best';
     const ob = $('otherBtn');
     ob.querySelector('.snowy').textContent = ob.querySelector('.snowy').dataset.text = 'race';
     ob.querySelector('small').textContent = 'Daily forest course · race the ghosts';
@@ -904,16 +932,6 @@ export function initUI(c) {
     $('globalChatBtn').classList.toggle('hidden', CG.chatOff);
     if (CG.chatOff && $('chatMessages')) closePanel();
   });
-  // a one-time note to every player asking for ideas in the global chat
-  setTimeout(() => {
-    if (CG.build || save.feedbackAsked || !$('panel').classList.contains('hidden') || $('menu').classList.contains('hidden')) return;
-    save.feedbackAsked = true; persist();
-    openPanel('Ideer?', `<div class="note" style="font-size:16px;line-height:1.5;color:#fff">Skriv hva dere vil jeg skal fikse/adde i global chat i main menu</div>
-      <button class="btn primary big" id="feedbackChat" style="width:100%;margin-top:12px">Åpne global chat</button>
-      <button class="btn" id="feedbackOk" style="width:100%;margin-top:8px">OK</button>`);
-    $('feedbackChat').onclick = () => chat.openChat();
-    $('feedbackOk').onclick = closePanel;
-  }, 1200);
   $('panelClose').onclick = closePanel;
   $('panel').onclick = e => { if (e.target === $('panel')) closePanel(); };
   addEventListener('keydown', e => {
