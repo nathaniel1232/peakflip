@@ -579,69 +579,7 @@
   .adrail { position: fixed; top: 50%; transform: translateY(-50%); width: 160px; min-height: 600px; z-index: 2; display: none; }
   .adrail.left { left: 8px; } .adrail.right { right: 8px; }
   @media (min-width: 1280px) { body.ads-on .adrail { display: block; } }
-
-  /* Legible at the embedded desktop sizes, with the mountain still in view. */
   @font-face { font-family: 'Lilita One'; font-style: normal; font-weight: 400; font-display: swap; src: url('lib/lilita-one-latin.woff2') format('woff2'); }
-  .home { grid-template-columns: minmax(0, 1fr) minmax(250px, 330px); gap: clamp(16px, 4vw, 64px); align-items: center; max-width: 1420px; margin: auto; padding-bottom: 65px; }
-  .homeLeft { grid-column: 1; min-width: 0; gap: 12px; }
-  .homeRight { grid-column: 2; width: 100%; padding: 20px; border: 1px solid #ffffff28; border-radius: 22px; background: linear-gradient(155deg, #173454ed, #0d213be8); box-shadow: 0 14px 40px #071c3833; gap: 14px; }
-  .homeRight .lbHead { align-self: flex-start; }
-  .homeRight .lbHead .snowy { font-size: clamp(25px, 2.8vw, 38px); }
-  .homeRight .lbHead .ic { width: 26px; height: 26px; }
-  #menu #miniLb .item, #menu #miniLb .item.first { font-family: system-ui, sans-serif; font-size: 15px; font-weight: 700; padding: 10px 4px; text-shadow: none; border-bottom: 1px solid #ffffff12; gap: 8px; }
-  #menu #miniLb .item.first { color: #ffe297; }
-  #menu #miniLb .item .val { font-size: 13px; font-weight: 750; opacity: 1; }
-  #menu #miniLb .item .rank { min-width: 20px; font-weight: 700; }
-  #menu #miniLb .note { text-shadow: none; text-align: left; line-height: 1.5; }
-  .homeNav { width: min(100%, 420px); gap: 12px; margin-top: 14px; }
-  .homeNav .hl.main { background: linear-gradient(#ff9558, #ed642b); width: 100%; padding: 14px 20px; border-radius: 18px; box-shadow: inset 0 2px 0 #ffffff44, 0 5px 0 #aa431b, 0 14px 30px #112b4233; }
-  .hl.main .snowy { font-size: clamp(36px, 4.5vw, 62px); color: white; text-shadow: 0 2px 0 #ad4a25; }
-  .hl.main .snowy::after { display: none; }
-  .hl.main small { font-family: system-ui, sans-serif; font-size: 13px; color: #fff; font-weight: 650; text-shadow: 0 1px 2px #713019; }
-  .homeMinor { flex-wrap: wrap; justify-content: center; }
-  .homeStats .profile.claim { animation: none; background: #163857d9; }
-  .homeTagline { font-size: 14px; color: #fff; line-height: 1.5; margin: 0; text-shadow: 0 2px 5px #102b46; font-weight: 650; }
-  .homeRow { gap: 12px; width: 100%; }
-  .homeNav .hl:not(.main) { background: #112e4ed9; border: 1px solid #ffffff26; padding: 8px 14px; }
-  .homeRow .hl { flex: 1; min-width: 0; }
-  .homeNav .hl.other { width: 100%; }
-  .privacyNote { background: #102b47dd; }
-  .homeNav .homeRow .hl .snowy, .hl.other .snowy { font-size: clamp(28px, 3vw, 42px); }
-  .privacyNote { font-size: 11px; line-height: 1.5; }
-  #lesson { position: absolute; bottom: max(42px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(430px, calc(100% - 36px)); padding: 14px 18px; border: 1px solid #ffffff55; border-radius: 18px; background: #102b47ed; box-shadow: 0 8px 25px #10233b30; text-shadow: none; }
-  #lessonStep { color: #8edcff; font-size: 10px; letter-spacing: .12em; padding-right: 60px; }
-  #lessonTitle { margin: 6px 0; font-size: 19px; line-height: 1.2; }
-  #lessonDetail { color: #d2e4f3; font-size: 12px; line-height: 1.5; font-weight: 500; }
-  #skipLesson { position: absolute; right: 12px; top: 9px; pointer-events: auto; padding: 7px; color: #c9deed; font-size: 12px; text-decoration: underline; }
-  body.touch #lesson { bottom: 24%; width: min(360px, calc(100% - 36px)); }
-  @media (max-width: 760px) and (min-height: 601px) {
-    .home { display: flex; flex-direction: column; gap: 28px; padding: 24px 18px 80px; }
-    .homeLeft { width: 100%; }
-    .homeRight { width: min(420px, 100%); align-self: center; }
-    .spaceHint { display: none; }
-  }
-  @media (max-height: 600px) and (min-width: 620px) {
-    .home { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 31%); padding: 12px 24px 32px; gap: 26px; }
-    .homeLeft { gap: 7px; }
-    .brand > .snowy { font-size: 44px; }
-    .brand small.snowy { font-size: 24px; }
-    .brand #logoIc .ic { width: 28px; height: 28px; }
-    .homeNav { gap: 7px; margin-top: 0; }
-    .homeNav .hl.main { padding: 9px 16px; }
-    .hl.main .snowy { font-size: 38px; }
-    .homeNav .homeRow .hl .snowy, .hl.other .snowy { font-size: 27px; }
-    .homeNav .hl small { margin-top: 3px; font-size: 11px; }
-    .homeMinor { gap: 6px; }
-    .homeMinor button { font-size: 11px; padding: 6px 8px; }
-    .homeRight { padding: 14px; gap: 8px; }
-    #menu #miniLb .item { padding: 7px 2px; font-size: 13px; }
-    .homeTagline { font-size: 12px; }
-    .homeRight .lbHead .snowy { font-size: 27px; }
-    #lesson { bottom: 16px; padding: 10px 16px; }
-    #lessonTitle { font-size: 17px; }
-  }
-  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
-
 </style>
 </head>
 <body>
@@ -669,14 +607,13 @@
   <div class="home">
     <section class="homeLeft">
       <h1 class="brand"><span id="logoIc"></span><span class="snowy" data-text="PEAKFLIP">PEAKFLIP</span><small class="snowy" data-text=".io">.io</small></h1>
-      <p class="homeTagline">Find your line. Land your trick. Chase the next peak.</p>
       <div class="homeStats">
         <button id="profileBtn" class="profile"></button>
         <div class="chip">Best <b id="menuBest">0</b></div>
         <div class="chip"><span class="coin"></span><b id="menuCoins">0</b></div>
       </div>
       <nav class="homeNav">
-        <button id="playBtn" class="hl play main"><span id="icPlay"></span><span class="snowy" data-text="ride mountain">ride mountain</span><small id="playSub">Endless · reach 1,000 m, land tricks, beat your best</small></button>
+        <button id="playBtn" class="hl play main"><span id="icPlay"></span><span class="snowy" data-text="play">play</span><small id="playSub">The main mode · stages every km, combos up to x10</small></button>
         <div class="homeRow">
           <button id="lockerBtn" class="hl"><span id="icSkis"></span><span class="snowy" data-text="locker">locker</span><small id="lockerSub"></small></button>
           <button id="shopBtn" class="hl"><span id="icShop"></span><span class="snowy" data-text="shop">shop</span><small id="shopSub">&nbsp;</small><span id="chestBadge" class="dot hidden"></span></button>

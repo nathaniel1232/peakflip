@@ -275,7 +275,7 @@ function renderSettings() {
 // ---------- how to play ----------
 function renderHelp() {
   openPanel('How to play', `<div class="help">
-    <button class="btn primary" id="replayLesson">Play the quick lesson</button>
+    ${CG.build ? '<button class="btn primary" id="replayLesson">Play the quick lesson</button>' : ''}
     <h4>Controls</h4><div class="item">${cfg.hints}</div>
     <h4>Endless (the main mode)</h4><div class="item">Ride as far as you can. Speed and tricks score points, and coins buy items in the daily Item Shop. Landing upside down or hitting trees ends the run. ${CG.build ? "The mountain gets faster as you ride. Land tricks and link combos to beat your best score." : "Every kilometre is a new stage: a points bonus, a new time of day and a meaner mountain. From stage 4 rocks are solid too."} There is always a way through, and every jump has room to land.</div>
     <h4>Combos</h4><div class="item">Tricks done within 3 seconds of each other chain into a combo. The multiplier climbs x1.5, x2 … x5, then x6, x7, x8, x9 and the max, <b>x10</b>, at 14 tricks in a row. Rails, grabs and kicker lines keep a combo going.</div>
@@ -283,7 +283,7 @@ function renderHelp() {
       </div>
     <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time${CG.build ? ', weekly' : ''}, and daily boards. A golden crown marks the current leader.</div>
   </div>`);
-  $('replayLesson').onclick = () => { closePanel(); cfg.onLesson(); };
+  if (CG.build) $('replayLesson').onclick = () => { closePanel(); cfg.onLesson(); };
 }
 
 // rewarded ad with a friendly message when there's no ad to show right now

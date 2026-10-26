@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url)), out = join(root, 'dist/crazygames'), zip = join(root, 'peak-flip-crazygames.zip');
-const FILES = ['game.js', 'game-clock.js', 'landscape.js', 'meta.js', 'ui.js', 'chat.js', 'icons.js', 'ads.js', 'config.js', 'net.js', 'cloud.js',
+const FILES = ['game.js', 'crazygames.css', 'game-clock.js', 'landscape.js', 'meta.js', 'ui.js', 'chat.js', 'icons.js', 'ads.js', 'config.js', 'net.js', 'cloud.js',
   'mp.js', 'live.js', 'crazy.js', 'clean.js', 'privacy.html', 'lib', 'secret'];
 
 rmSync(out, { recursive: true, force: true }); rmSync(zip, { force: true });
@@ -40,7 +40,13 @@ if (/adsbygoogle|pagead2\.googlesyndication\.com/.test(cleanHtml)) throw new Err
 // and without ".io" in the logo: pointing players at another place to play is cross-promotion, which CrazyGames forbids
 const noDomain = cleanHtml.replace('<small class="snowy" data-text=".io">.io</small>', '');
 if (noDomain === cleanHtml) throw new Error('index.html: the ".io" in the logo moved; update build-crazygames.mjs');
-writeFileSync(join(out, 'index.html'), noDomain);
+// Keep the portal presentation out of the main site's HTML and CSS.
+const portalHtml = noDomain
+  .replace('</head>', '<link rel="stylesheet" href="crazygames.css">\n</head>')
+  .replace('      <div class="homeStats">', '      <p class="homeTagline">Find your line. Land your trick. Chase the next peak.</p>\n      <div class="homeStats">')
+  .replace('data-text="play">play</span><small id="playSub">The main mode · stages every km, combos up to x10',
+    'data-text="ride mountain">ride mountain</span><small id="playSub">Endless · land tricks, collect coins, beat your best');
+writeFileSync(join(out, 'index.html'), portalHtml);
 
 // config.js for CrazyGames
 let cfg = readFileSync(join(root, 'config.js'), 'utf8');

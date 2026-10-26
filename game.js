@@ -2359,7 +2359,7 @@ let forcedFeature = null;   // for testing: window.__game.forceFeature('garden')
 function spawnFeature() {
   const z = spawnZ, D = -z, sp = baseSpeed(D);
   let d = mode === 'endless' ? clamp(D / 1200, 0, 1.4) : clamp(D / 1600, 0, 1), k;
-  if (mode === 'endless' && !demo && D < 300) {
+  if (CG.build && mode === 'endless' && !demo && D < 300) {
     // A clear, repeatable opening gives every rider time to find the controls.
     const x = D < 100 ? 0 : -4;
     addRamp(x, z, 10, 3, 8);
@@ -4888,7 +4888,7 @@ function startRun(m = mode) {
     const day = race.day;
     fetchGhosts(day).then(list => { if (mode === 'race' && race.day === day && state === 'play') for (const g of list) addGhost(g.name, g.ghost); });
   }
-  setTheme(mode === 'race' || (mode === 'endless' && save.runs < 3) ? 'day' : LV ? LV.theme : pickTheme());   // the Daily Race keeps its original daytime look
+  setTheme(mode === 'race' || (CG.build && mode === 'endless' && save.runs < 3) ? 'day' : LV ? LV.theme : pickTheme());   // the Daily Race keeps its original daytime look
   if (LV?.zone) { scene.fog.near = WORLDS[LV.zone].fog[0]; scene.fog.far = WORLDS[LV.zone].fog[1]; }
   crng = mode === 'race' ? mulberry32(hashStr('peakflip-' + race.day)) : LV ? mulberry32(hashStr('peakflip-level-' + level.n)) : Math.random;
   laneSeed = [crng() * 6.28, crng() * 6.28];
@@ -4904,12 +4904,14 @@ function startRun(m = mode) {
   camera.position.set(0, 6, 12);
   camLook.set(0, 0, -10);
   lastScore = lastCoins = -1;
-  lesson.active = mode === 'endless' && (!save.lessonSeen && save.runs < 3 || replayLesson);
+  lesson.active = CG.build && mode === 'endless' && (!save.lessonSeen && save.runs < 3 || replayLesson);
   replayLesson = false; lesson.air = false; lesson.grab = false; lesson.done = 0; lesson.card = '';
   show('lesson', lesson.active);
-  hintT = lesson.active ? 0 : 5;
-  hud.hint.style.opacity = lesson.active ? 0 : 1;
-  hud.hint.innerHTML = isTouch ? 'Left thumb: steer · Right thumb: jump' : '<kbd>←</kbd> <kbd>→</kbd> steer · <kbd>Space</kbd> jump · <kbd>P</kbd> pause';
+  hintT = CG.build ? (lesson.active ? 0 : 5) : (save.runs < 3 ? 9 : 0);
+  hud.hint.style.opacity = hintT > 0 ? 1 : 0;
+  hud.hint.innerHTML = CG.build
+    ? (isTouch ? 'Left thumb: steer · Right thumb: jump' : '<kbd>←</kbd> <kbd>→</kbd> steer · <kbd>Space</kbd> jump · <kbd>P</kbd> pause')
+    : (isTouch ? HINT_TOUCH : HINT_DESKTOP);
   updateLesson(0);
   Platform.gameplayStart();
 }

@@ -58,21 +58,41 @@ export const Ads = {
         } catch { Ads.noFill = true; finish(false); }
       } else if (provider === 'google') {
         let viewed = false, offered = false;
+        let offerTimeout, maxTimeout;
+        const settle = ok => {
+          if (done) return;
+          done = true;
+          clearTimeout(offerTimeout);
+          clearTimeout(maxTimeout);
+          onMute(false);
+          if (ok) Ads.lastReward = performance.now();
+          resolve(ok);
+        };
         try {
           window.adBreak({
             type: 'reward', name: 'reward_unlock',
-            beforeAd: () => onMute(true), afterAd: () => onMute(false),
-            beforeReward: showAdFn => { offered = true; showAdFn(); },
-            adViewed: () => { viewed = true; },
-            adDismissed: () => { viewed = false; },
-            adBreakDone: () => { if (!offered) Ads.noFill = true; finish(viewed); },   // no ad was available
+            beforeAd: () => { if (!done) onMute(true); },
+            afterAd: () => { if (!done) onMute(false); },
+            beforeReward: showAdFn => {
+              if (done) return;
+              offered = true;
+              showAdFn();
+            },
+            adViewed: () => { if (!done) viewed = true; },
+            adDismissed: () => { if (!done) viewed = false; },
+            adBreakDone: () => { if (done) return; if (!offered) Ads.noFill = true; settle(viewed); },   // no ad was available
           });
-        } catch { Ads.noFill = true; finish(false); }
+          // Google can fail to call adBreakDone when the request is blocked or the loader stalls.
+          // Once settled, callback guards above also prevent a delayed reward offer from opening.
+          if (!done) {
+            offerTimeout = setTimeout(() => { if (!done && !offered) { Ads.noFill = true; settle(false); } }, 8000);
+            maxTimeout = setTimeout(() => { if (!done) { if (!offered) Ads.noFill = true; settle(false); } }, 60000);
+          }
+        } catch { Ads.noFill = true; settle(false); }
       } else if (provider === 'dev') {
         devAd(3, () => finish(true), () => finish(false));
       } else finish(false);
-      // SDK ad calls settle through adFinished/adError (or adBreakDone for Google). Releasing the UI on a
-      // timer is unsafe: an ad can start after the timer and play over the next run.
+      // CrazyGames waits for SDK completion. Google offers expire when its loader does not answer.
     });
   },
 
@@ -86,10 +106,37 @@ export const Ads = {
       if (provider === 'crazygames') {
         try { sdk.ad.requestAd('midgame', { adStarted: begin, adFinished: finish, adError: finish }); } catch { finish(); }
       } else if (provider === 'google') {
-        try { window.adBreak({ type: 'next', name: 'between_runs', beforeAd: begin, afterAd: () => onMute(false), adBreakDone: finish }); } catch { finish(); }
+        let noStartTimeout, maxTimeout, started = false;
+        const settle = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(noStartTimeout);
+          clearTimeout(maxTimeout);
+          onMute(false);
+          resolve();
+        };
+        const start = () => {
+          if (done) return;
+          started = true;
+          begin();
+        };
+        try {
+          window.adBreak({
+            type: 'next', name: 'between_runs',
+            beforeAd: start,
+            afterAd: settle,
+            adBreakDone: settle,
+          });
+          // If the Google placement never starts or completes, let the player continue.
+          // Callback guards prevent a late placement callback from muting a later run.
+          if (!done) {
+            noStartTimeout = setTimeout(() => { if (!started) settle(); }, 1500);
+            maxTimeout = setTimeout(settle, 60000);
+          }
+        } catch { settle(); }
       } else finish();
-      // Keep the results screen blocked until the provider reports adFinished/adError. A timeout could
-      // let the next run begin before a delayed ad starts.
+      // CrazyGames still settles only from its documented SDK callbacks. Google gets a bounded wait
+      // because its placement callback can be lost when the loader is blocked or stalls.
     });
   },
 };
