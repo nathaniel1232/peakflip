@@ -99,61 +99,64 @@ local function tabs(parent: Instance, list, onPick: (string) -> ())
 end
 
 -- ---------- lobby HUD ----------
+-- Flat and quiet: progress and coins in one pill at the top, a tidy grid of menu tiles on the left,
+-- and one big PLAY at the bottom with the skis / snowboard switch right above it.
 local function buildLobby(gui: ScreenGui)
 	local root = make("Frame", { Name = "Lobby", BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Parent = gui })
 	lobby.root = root
 
 	-- level + XP and coins, centred along the top (Roblox's chat sits top left, the player list top right)
-	local topRow = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 10), Size = UDim2.fromOffset(520, 64), Parent = root }, {
-		Kit.list(Enum.FillDirection.Horizontal, 20, Enum.HorizontalAlignment.Center, Enum.VerticalAlignment.Center),
+	local top = make("Frame", { BackgroundColor3 = C.panel, BackgroundTransparency = 0.1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 12), Size = UDim2.fromOffset(470, 52), Parent = root }, {
+		Kit.round(),
 	})
-	local lvl = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(270, 64), LayoutOrder = 1, Parent = topRow })
-	lobby.xp = Kit.bar({ Parent = lvl, Position = UDim2.fromOffset(50, 18), Size = UDim2.fromOffset(216, 28), Color = C.blue, TextSize = 15 })
-	local star = Kit.icon("star", function()
-		return make("Frame", { BackgroundColor3 = C.blue }, { Kit.round(), Kit.stroke(3, C.ink) })
-	end, { Parent = lvl, Size = UDim2.fromOffset(64, 64), ZIndex = 3 })
-	lobby.level = text({ Parent = star, Text = "1", TextSize = 26, Size = UDim2.fromScale(1, 1), Position = UDim2.fromOffset(0, 3), ZIndex = 5, Outline = 3 })
-
-	local coins = make("Frame", { BackgroundColor3 = C.ink, BackgroundTransparency = 0.15, Size = UDim2.fromOffset(220, 56), LayoutOrder = 2, Parent = topRow }, { Kit.round(), Kit.stroke(3, C.ink) })
-	Kit.coin(54, coins, UDim2.fromOffset(-4, 1))
-	lobby.coins = text({ Parent = coins, Text = "0", TextSize = 30, Position = UDim2.fromOffset(56, 0), Size = UDim2.new(1, -110, 1, 0), TextXAlignment = Enum.TextXAlignment.Left })
+	local badge = make("Frame", { BackgroundColor3 = C.blue, Position = UDim2.fromOffset(6, 6), Size = UDim2.fromOffset(40, 40), Parent = top }, { Kit.round() })
+	lobby.level = text({ Parent = badge, Text = "1", TextSize = 22, Size = UDim2.fromScale(1, 1) })
+	lobby.xp = Kit.bar({ Parent = top, Position = UDim2.fromOffset(54, 16), Size = UDim2.fromOffset(190, 20), Color = C.blue, TextSize = 13 })
+	lobby.xp.label.Font = Kit.BODY
+	make("Frame", { BackgroundColor3 = C.white, BackgroundTransparency = 0.88, BorderSizePixel = 0, Position = UDim2.fromOffset(258, 12), Size = UDim2.fromOffset(2, 28), Parent = top })
+	local coins = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(270, 0), Size = UDim2.new(1, -270, 1, 0), Parent = top })
+	Kit.coin(30, coins, UDim2.fromOffset(0, 11))
+	lobby.coins = text({ Parent = coins, Text = "0", TextSize = 24, Position = UDim2.fromOffset(38, 0), Size = UDim2.new(1, -90, 1, 0), TextXAlignment = Enum.TextXAlignment.Left })
 	lobby.coinScale = make("UIScale", { Parent = coins })
-	Kit.button({ Parent = coins, Text = "", Icon = "plus", IconFallback = "+", IconSize = 0.9, Color = C.green, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, -2), Size = UDim2.fromOffset(42, 42), Radius = 21 }, function()
+	Kit.button({ Parent = coins, Text = "+", Font = Kit.TITLE, Color = C.green, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -6, 0.5, 0), Size = UDim2.fromOffset(40, 40), TextSize = 28, Radius = 20 }, function()
 		Menus.openShop("robux")
 	end)
 
-	-- side buttons, each with a big icon from the pack
-	local side = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.53, 0), Size = UDim2.fromOffset(196, 460), Parent = root }, {
-		make("UIGridLayout", { CellSize = UDim2.fromOffset(88, 88), CellPadding = UDim2.fromOffset(14, 18), SortOrder = Enum.SortOrder.LayoutOrder }),
+	-- menu tiles: icon on top, a small label under it
+	local side = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 16, 0.5, 0), Size = UDim2.fromOffset(160, 330), Parent = root }, {
+		make("UIGridLayout", { CellSize = UDim2.fromOffset(74, 74), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 	lobby.dots = {}
 	local entries = {
-		{ "shop", "shop", "🛒", "SHOP", C.blue, function() Menus.openShop("outfit") end },
-		{ "daily", "gift", "🎁", "DAILY", C.blue, function() Kit.open("daily") end },
-		{ "quests", "scroll", "📜", "QUESTS", C.blue, function() Kit.open("quests") end },
-		{ "codes", "codes", "🎫", "CODES", C.blue, function() Kit.open("codes") end },
-		{ "stats", "stats", "📊", "STATS", C.blue, function() Kit.open("stats") end },
-		{ "top", "trophy", "🏆", "TOP", C.blue, function() Kit.open("leaderboard") end },
-		{ "settings", "settings", "⚙️", "SETTINGS", C.grey, function() Kit.open("settings") end },
-		{ "vip", "vip", "👑", "VIP", C.blue, function() Menus.openShop("robux") end },
+		{ "shop", "shop", "🛒", "Shop", function() Menus.openShop("outfit") end },
+		{ "daily", "gift", "🎁", "Daily", function() Kit.open("daily") end },
+		{ "quests", "scroll", "📜", "Quests", function() Kit.open("quests") end },
+		{ "top", "trophy", "🏆", "Top", function() Kit.open("leaderboard") end },
+		{ "codes", "codes", "🎫", "Codes", function() Kit.open("codes") end },
+		{ "stats", "stats", "📊", "Stats", function() Kit.open("stats") end },
+		{ "vip", "vip", "👑", "VIP", function() Menus.openShop("robux") end },
+		{ "settings", "settings", "⚙️", "Settings", function() Kit.open("settings") end },
 	}
 	for i, e in entries do
-		local holder, face = Kit.button({ Parent = side, Color = e[5], LayoutOrder = i, Radius = 18 }, e[6])
-		Kit.icon(e[2], e[3], { Parent = face, Size = UDim2.fromScale(0.82, 0.82), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, -10), ZIndex = 3, Rotation = -6 })
-		text({ Parent = face, Text = e[4], TextSize = 15, Position = UDim2.fromScale(0, 0.68), Size = UDim2.new(1, 0, 0.3, 0), ZIndex = 4 })
-		lobby.dots[e[1]] = Kit.dot(holder)
+		local holder, face = Kit.button({ Parent = side, Color = C.panel, LayoutOrder = i, Radius = 16 }, e[5])
+		face.BackgroundTransparency = 0.1
+		Kit.icon(e[2], e[3], { Parent = face, Size = UDim2.fromOffset(36, 36), AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 9), ZIndex = 3 })
+		text({ Parent = face, Text = e[4], Font = Kit.BODY, TextSize = 14, Position = UDim2.new(0, 0, 1, -24), Size = UDim2.new(1, 0, 0, 18), ZIndex = 4 })
+		local dot = Kit.dot(holder)
+		dot.Size = UDim2.fromOffset(16, 16)
+		dot.Position = UDim2.new(1, -12, 0, -4)
+		lobby.dots[e[1]] = dot
 	end
 
-	-- skis or snowboard
-	local gear = make("Frame", { BackgroundColor3 = C.ink, BackgroundTransparency = 0.2, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -146), Size = UDim2.fromOffset(300, 54), Parent = root }, {
+	-- skis or snowboard: a segmented switch right above PLAY
+	local gear = make("Frame", { BackgroundColor3 = C.panel, BackgroundTransparency = 0.1, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -122), Size = UDim2.fromOffset(280, 46), Parent = root }, {
 		Kit.round(),
-		Kit.stroke(3, C.ink),
-		Kit.padding(5),
-		Kit.list(Enum.FillDirection.Horizontal, 6, Enum.HorizontalAlignment.Center),
+		Kit.padding(4),
+		Kit.list(Enum.FillDirection.Horizontal, 4, Enum.HorizontalAlignment.Center),
 	})
 	lobby.gear = {}
-	for i, g in { { "skis", "SKIS", "rocket", "🎿" }, { "board", "SNOWBOARD", "board", "🏂" } } do
-		lobby.gear[g[1]] = Kit.button({ Parent = gear, Text = g[2], Icon = g[3], IconFallback = g[4], Color = C.panel2, Size = UDim2.new(0.5, -3, 1, -4), TextSize = 18, LayoutOrder = i, Radius = 20 }, function()
+	for i, g in { { "skis", "Skis", "rocket", "🎿" }, { "board", "Snowboard", "board", "🏂" } } do
+		lobby.gear[g[1]] = Kit.button({ Parent = gear, Text = g[2], Font = Kit.BODY, Icon = g[3], IconFallback = g[4], IconSize = 0.7, Color = C.panel2, Size = UDim2.new(0.5, -2, 1, 0), TextSize = 17, LayoutOrder = i, Radius = 19 }, function()
 			if profile and profile.equipped.gear ~= g[1] then
 				action("gear", g[1])
 			end
@@ -161,22 +164,22 @@ local function buildLobby(gui: ScreenGui)
 	end
 
 	-- PLAY
-	local play, playFace = Kit.button({ Parent = root, Text = "PLAY", Icon = "lightning", IconFallback = "▶", Color = C.green, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -40), Size = UDim2.fromOffset(300, 90), TextSize = 48, Radius = 24 }, function()
+	local play, playFace = Kit.button({ Parent = root, Text = "PLAY", Color = C.green, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -40), Size = UDim2.fromOffset(280, 72), TextSize = 40, Radius = 36 }, function()
 		cb.onPlay()
 	end)
 	lobby.play = play
-	text({ Parent = root, Text = "or step on the glowing mat by the doors", TextSize = 16, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.fromOffset(360, 22), TextColor3 = Kit.lighten(C.sky, 0.6) })
+	text({ Parent = root, Text = "or walk through the start gate", Font = Kit.BODY, TextSize = 14, AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -14), Size = UDim2.fromOffset(360, 20), TextColor3 = C.white, TextTransparency = 0.25, Outline = 1 })
 	-- a gentle pulse so it's obvious what to press
 	local pulse = make("UIScale", { Parent = playFace })
 	task.spawn(function()
 		while true do
-			tween(pulse, 0.7, { Scale = 1.05 }, Enum.EasingStyle.Sine).Completed:Wait()
-			tween(pulse, 0.7, { Scale = 1 }, Enum.EasingStyle.Sine).Completed:Wait()
+			tween(pulse, 0.9, { Scale = 1.04 }, Enum.EasingStyle.Sine).Completed:Wait()
+			tween(pulse, 0.9, { Scale = 1 }, Enum.EasingStyle.Sine).Completed:Wait()
 		end
 	end)
 
 	-- best score + equipped gear, bottom left
-	lobby.best = text({ Parent = root, Text = "", TextSize = 20, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 18, 1, -18), Size = UDim2.fromOffset(340, 26), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.gold })
+	lobby.best = text({ Parent = root, Text = "", Font = Kit.BODY, TextSize = 16, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 18, 1, -16), Size = UDim2.fromOffset(340, 22), TextXAlignment = Enum.TextXAlignment.Left, TextColor3 = C.white, Outline = 1 })
 end
 
 -- ---------- shop ----------

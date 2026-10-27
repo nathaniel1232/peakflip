@@ -1,5 +1,6 @@
 -- The skier. Normally a local copy of the player's own avatar wearing skis and holding poles,
--- posed every frame from the simulation state; if the avatar can't be copied, the blocky skier
+-- posed every frame from the simulation state: tucking at speed, angulating and bending the inside
+-- knee in turns, planting poles, balancing in the air; if the avatar can't be copied, the blocky skier
 -- from the web game stands in. A crash turns a copy of the rider into a ragdoll.
 local Debris = game:GetService("Debris")
 
@@ -185,12 +186,16 @@ type Avatar = {
 	poles: { BasePart },
 	board: { [string]: BasePart },
 	trails: { Trail },
+	wind: { Trail }, -- streaks of wind off the hands at high speed
 	body: { BasePart }, -- everything but the skis (hidden in first person)
 }
 local avatar: Avatar? = nil
+-- riding state the poses carry from frame to frame
+local ride = { plant = 0, plantSide = 1, lastTurn = 0, tuck = 0, wind = -1 }
 
 local JOINT_NAMES = {
 	waist = { "Waist" },
+	neck = { "Neck" },
 	lShoulder = { "LeftShoulder", "Left Shoulder" },
 	rShoulder = { "RightShoulder", "Right Shoulder" },
 	lElbow = { "LeftElbow" },
@@ -307,6 +312,27 @@ local function buildAvatar(char: Model): Avatar?
 			table.insert(poles, basket)
 		end
 	end
+	local wind = {}
+	for _, side in { "Left", "Right" } do
+		local hand = model:FindFirstChild(side .. "Hand") :: BasePart?
+		if hand then
+			local a0, a1 = Instance.new("Attachment"), Instance.new("Attachment")
+			a0.Position, a1.Position = Vector3.new(0, 0.25, 0), Vector3.new(0, -0.25, 0)
+			a0.Parent, a1.Parent = hand, hand
+			local t = Instance.new("Trail")
+			t.Attachment0, t.Attachment1 = a0, a1
+			t.Lifetime = 0.22
+			t.MinLength = 0.05
+			t.FaceCamera = true
+			t.LightEmission = 0.4
+			t.LightInfluence = 0
+			t.Color = ColorSequence.new(Color3.new(1, 1, 1))
+			t.WidthScale = NumberSequence.new(1, 0)
+			t.Enabled = false
+			t.Parent = hand
+			table.insert(wind, t)
+		end
+	end
 	local board = {}
 	local lFoot = (model:FindFirstChild("LeftFoot") or model:FindFirstChild("Left Leg")) :: BasePart?
 	local hips = (model:FindFirstChild("LowerTorso") or model:FindFirstChild("Torso")) :: BasePart?
@@ -344,6 +370,7 @@ local function buildAvatar(char: Model): Avatar?
 		poles = poles,
 		board = board,
 		trails = myTrails,
+		wind = wind,
 		body = body,
 	}
 end
@@ -487,12 +514,55 @@ local function setJoint(a: Avatar, key: string, rot: CFrame)
 	end
 end
 
+-- Ribbons of wind off the hands when you're really flying. k: 0 (off) .. 1
+local function setWind(a: Avatar, k: number)
+	if math.abs(k - ride.wind) < 0.04 then
+		return
+	end
+	ride.wind = k
+	for _, t in a.wind do
+		t.Enabled = k > 0.02
+		t.Transparency = NumberSequence.new(1 - 0.55 * k, 1)
+	end
+end
+
 local function poseAvatar(a: Avatar, st)
-	local c = st.crouch
+	local dt = st.dt or 0
+	local speed = st.speed or 0
+	local steer = st.steer or 0 -- heading: which way the skis point across the slope
+	local carve = st.carve or 0 -- how far the rider leans into the turn
+	local onSnow = st.grounded == true
+	local free = onSnow and not st.grabbing and not celebrating
+	local board = gearType == "board"
+
+	-- tuck when it gets fast and you're running straight: low, arms in, eyes up
+	local wantTuck = if free and not board then math.clamp((speed - 30) / 22, 0, 1) * (1 - math.clamp(math.abs(carve) / 0.45, 0, 1)) else 0
+	ride.tuck += (wantTuck - ride.tuck) * (1 - math.exp(-5 * dt))
+	local tuck = ride.tuck
+	local c = math.min(1, st.crouch + 0.35 * tuck)
+
+	-- a pole plant on the inside of each new turn
+	local turn = if math.abs(steer) > 0.1 then (if steer < 0 then 1 else -1) else 0
+	if free and not board and turn ~= 0 and turn ~= ride.lastTurn and tuck < 0.5 then
+		ride.plant, ride.plantSide = 0.001, turn
+	end
+	if turn ~= 0 then
+		ride.lastTurn = turn
+	end
+	local plant = 0
+	if ride.plant > 0 then
+		ride.plant += dt
+		plant = math.sin(math.pi * math.clamp(ride.plant / 0.42, 0, 1))
+		if ride.plant > 0.42 then
+			ride.plant = 0
+		end
+	end
 	-- bending the knees lowers the hips; keep the skis on the snow
 	local half = a.legLength / 2
 	local drop = if a.r15 then half * (1 - math.cos(0.9 * c)) + half * (1 - math.cos(0.7 * c)) else 0
-	local rootLocal = CFrame.new(0, (a.rootOffset - drop) / S - 0.9, 0)
+	-- the snow chatters under you at speed
+	local chatter = if onSnow then math.sin((st.time or 0) * 37) * 0.012 * math.clamp(speed / 60, 0, 1) else 0
+	local rootLocal = CFrame.new(0, (a.rootOffset - drop) / S - 0.9 + chatter, 0)
 	if gearType == "board" then
 		rootLocal *= BOARD_YAW
 	end
@@ -518,17 +588,56 @@ local function poseAvatar(a: Avatar, st)
 			lean = w * k
 		end
 	end
-	setJoint(a, "waist", CFrame.Angles(-0.45 * c + lean, 0, 0))
-	setJoint(a, "lHip", CFrame.Angles(0.9 * c, 0, 0))
-	setJoint(a, "rHip", CFrame.Angles(0.9 * c, 0, 0))
-	setJoint(a, "lKnee", CFrame.Angles(-1.6 * c, 0, 0))
-	setJoint(a, "rKnee", CFrame.Angles(-1.6 * c, 0, 0))
-	setJoint(a, "lAnkle", CFrame.Angles(0.7 * c, 0, 0))
-	setJoint(a, "rAnkle", CFrame.Angles(0.7 * c, 0, 0))
-	setJoint(a, "lShoulder", CFrame.Angles(arms[1], 0, arms[2]))
-	setJoint(a, "rShoulder", CFrame.Angles(arms[3], 0, arms[4]))
-	setJoint(a, "lElbow", CFrame.Angles(elbow, 0, 0))
-	setJoint(a, "rElbow", CFrame.Angles(elbow, 0, 0))
+	-- skis: hips stay in the turn while the shoulders stay level and face down the hill
+	-- (angulation and counter-rotation), and the inside knee bends more so both skis stay on edge
+	local inside = if carve > 0 then 1 else -1 -- leaning left: the left leg is on the inside
+	local bend = if board or not onSnow then 0 else math.min(1, math.abs(carve) * 1.6)
+	local waistYaw = if board then -0.35 else 0.45 * steer
+	local waistRoll = if board then 0 else -0.6 * carve
+	local neckYaw = if board then -1.1 else 0.25 * steer
+	local neckRoll = if board then 0 else -0.35 * carve
+	setJoint(a, "waist", CFrame.fromEulerAnglesYXZ(-0.45 * c + lean - 0.2 * tuck, waistYaw, waistRoll))
+	setJoint(a, "neck", CFrame.fromEulerAnglesYXZ(0.25 * c + 0.25 * tuck, neckYaw, neckRoll))
+	local function leg(side: string, isInside: boolean)
+		local extra = if isInside then bend else -0.25 * bend
+		local spread = if onSnow and not board then 0.05 * (if side == "l" then -1 else 1) else 0
+		local tuckAir = if st.air and not st.grabbing then 0.35 else 0
+		setJoint(a, side .. "Hip", CFrame.Angles(0.9 * c + 0.45 * extra + tuckAir, 0, spread))
+		setJoint(a, side .. "Knee", CFrame.Angles(-1.6 * c - 0.9 * extra - tuckAir * 1.4, 0, 0))
+		setJoint(a, side .. "Ankle", CFrame.Angles(0.7 * c + 0.45 * extra + tuckAir * 0.5, 0, 0))
+	end
+	leg("l", inside > 0)
+	leg("r", inside < 0)
+
+	-- arms: tucked in at speed, out for balance in the air, a quick jab forward to plant the pole
+	local la, lz, ra, rz = arms[1], arms[2], arms[3], arms[4]
+	if not board and not celebrating then
+		la += (0.95 - la) * tuck
+		ra += (0.95 - ra) * tuck
+		lz += (0.12 - lz) * tuck
+		rz += (-0.12 - rz) * tuck
+	end
+	if st.air and not st.grabbing and not celebrating then
+		local wob = math.sin((st.time or 0) * 5) * 0.15
+		lz -= 0.55 + wob
+		rz += 0.55 - wob
+		la -= 0.2
+		ra -= 0.2
+	end
+	if plant > 0 then
+		if ride.plantSide > 0 then
+			la += 0.75 * plant
+		else
+			ra += 0.75 * plant
+		end
+	end
+	setJoint(a, "lShoulder", CFrame.Angles(la, 0, lz))
+	setJoint(a, "rShoulder", CFrame.Angles(ra, 0, rz))
+	local elbowT = elbow + 0.9 * tuck
+	setJoint(a, "lElbow", CFrame.Angles(elbowT - (if ride.plantSide > 0 then 0.3 * plant else 0), 0, 0))
+	setJoint(a, "rElbow", CFrame.Angles(elbowT - (if ride.plantSide < 0 then 0.3 * plant else 0), 0, 0))
+
+	setWind(a, if st.hideUpper then 0 else math.clamp((speed - 32) / 26, 0, 1))
 	local hide = if st.hideUpper then 1 else 0
 	for _, p in a.body do
 		p.LocalTransparencyModifier = hide

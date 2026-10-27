@@ -27,7 +27,7 @@ local Course = {
 -- the slope uses the same few colours as everything else (see shared/Theme)
 local C = {
 	snow = Theme.snow,
-	ramp = hex("e9f1f8"),
+	ramp = hex("c4d9ee"), -- a cool blue so kickers stand out from the snow
 	rampEdge = Theme.primary,
 	rail = Theme.primary,
 	railPost = hex("5b6676"),
@@ -40,7 +40,7 @@ local C = {
 	ice = { hex("cfeeff"), hex("b6e2fb"), hex("e9f7ff") },
 	warn = Theme.gold,
 	coin = Theme.gold,
-	table = hex("e9f1f8"),
+	table = hex("c4d9ee"),
 	boostBase = Theme.ink,
 	boostEdge = Theme.primary,
 	chev = hex("9ccaff"),

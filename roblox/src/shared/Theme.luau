@@ -13,7 +13,7 @@ local Theme = {
 	panel = hex("1d2c47"), -- window backgrounds
 	panel2 = hex("2a3d5f"), -- cards, inactive tabs
 	white = hex("ffffff"),
-	snow = hex("f4f7fb"),
+	snow = hex("eaf0f7"),
 	snowShade = hex("dde6ef"),
 	-- the lodge
 	wood = hex("b9824e"),

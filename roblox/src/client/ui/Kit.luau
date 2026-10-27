@@ -1,5 +1,5 @@
--- UI building blocks in the style of popular Roblox games: chunky 3D buttons that bounce,
--- pop-up windows, toasts, progress bars and coin icons.
+-- UI building blocks in one flat, simple style: solid colours, rounded corners, no gradients, drop
+-- shadows or heavy outlines. Buttons still bounce; windows pop; toasts, bars and coin icons.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
@@ -24,9 +24,9 @@ Kit.C = {
 	white = Color3.new(1, 1, 1),
 }
 local C = Kit.C
-Kit.TITLE = Enum.Font.FredokaOne
-Kit.BODY = Enum.Font.GothamBold
-Kit.BLACK = Enum.Font.GothamBlack
+Kit.TITLE = Enum.Font.BuilderSansExtraBold
+Kit.BODY = Enum.Font.BuilderSansBold
+Kit.BLACK = Enum.Font.BuilderSansExtraBold
 
 function Kit.darken(c: Color3, k: number): Color3
 	local h, s, v = c:ToHSV()
@@ -59,14 +59,23 @@ end
 function Kit.round()
 	return make("UICorner", { CornerRadius = UDim.new(1, 0) })
 end
+-- Borders only where they mean something (a highlight colour); the default dark outline is gone.
 function Kit.stroke(thick: number, color: Color3?, transparency: number?)
-	return make("UIStroke", { Thickness = thick, Color = color or C.ink, Transparency = transparency or 0, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+	local plain = color == nil or color == C.ink
+	return make("UIStroke", {
+		Thickness = math.min(thick, 2),
+		Color = color or C.ink,
+		Transparency = if plain then 1 else transparency or 0,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
 end
+-- A soft outline, only where text sits on the 3D world (white snow): enough to read, not a heavy border.
 function Kit.textStroke(thick: number, color: Color3?)
-	return make("UIStroke", { Thickness = thick, Color = color or C.ink, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual })
+	return make("UIStroke", { Thickness = math.clamp(thick * 0.5, 1, 2.5), Color = color or C.ink, Transparency = 0.35, ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual })
 end
-function Kit.gradient(top: Color3, bottom: Color3)
-	return make("UIGradient", { Color = ColorSequence.new(top, bottom), Rotation = 90 })
+-- Flat: one solid colour (kept so callers don't change; `bottom` is the colour used).
+function Kit.gradient(_top: Color3, bottom: Color3)
+	return make("UIGradient", { Color = ColorSequence.new(bottom), Rotation = 90 })
 end
 function Kit.padding(px: number)
 	return make("UIPadding", { PaddingTop = UDim.new(0, px), PaddingBottom = UDim.new(0, px), PaddingLeft = UDim.new(0, px), PaddingRight = UDim.new(0, px) })
@@ -177,7 +186,7 @@ function Kit.unfade(label: TextLabel)
 	label.TextTransparency = 0
 	for _, st in label:GetChildren() do
 		if st:IsA("UIStroke") then
-			st.Transparency = 0
+			st.Transparency = 0.35
 		end
 	end
 end
@@ -197,8 +206,8 @@ function Kit.text(props)
 		base[k] = v
 	end
 	local l = make("TextLabel", base)
-	if outline ~= false then
-		Kit.textStroke(outline or 2).Parent = l
+	if outline ~= nil and outline ~= false then
+		Kit.textStroke(outline).Parent = l
 	end
 	return l
 end
@@ -211,7 +220,7 @@ function Kit.bouncy(gui: GuiObject, scaleTarget: GuiObject?)
 		TweenService:Create(scale, info, { Scale = v }):Play()
 	end
 	gui.MouseEnter:Connect(function()
-		to(1.06)
+		to(1.04)
 		Sfx.hover()
 	end)
 	gui.MouseLeave:Connect(function()
@@ -219,7 +228,7 @@ function Kit.bouncy(gui: GuiObject, scaleTarget: GuiObject?)
 	end)
 	gui.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			to(0.92)
+			to(0.94)
 		end
 	end)
 	gui.InputEnded:Connect(function(input)
@@ -230,7 +239,7 @@ function Kit.bouncy(gui: GuiObject, scaleTarget: GuiObject?)
 	return scale
 end
 
--- A chunky button: a darker "lip" under a gradient face. Returns the holder and the clickable face.
+-- A flat button: one solid colour, rounded. Returns the holder and the clickable face.
 -- props: Text, Color, Size, Position, AnchorPoint, TextSize, LayoutOrder, Parent, Icon
 function Kit.button(props, onClick: (() -> ())?)
 	local color = props.Color or C.green
@@ -244,17 +253,10 @@ function Kit.button(props, onClick: (() -> ())?)
 		Visible = if props.Visible == nil then true else props.Visible,
 		Parent = props.Parent,
 	})
-	make("Frame", {
-		Name = "Lip",
-		BackgroundColor3 = Kit.darken(color, 0.3),
-		Size = UDim2.new(1, 0, 1, 0),
-		Position = UDim2.fromOffset(0, 3),
-		Parent = holder,
-	}, { Kit.corner(props.Radius or 14) })
 	local face = make("TextButton", {
 		Name = "Face",
 		AutoButtonColor = false,
-		BackgroundColor3 = C.white,
+		BackgroundColor3 = color,
 		Size = UDim2.fromScale(1, 1),
 		Text = props.Text or "",
 		Font = props.Font or Kit.TITLE,
@@ -263,10 +265,7 @@ function Kit.button(props, onClick: (() -> ())?)
 		TextWrapped = true,
 		Parent = holder,
 	}, {
-		Kit.corner(props.Radius or 14),
-		Kit.gradient(Kit.lighten(color, 0.08), color),
-		Kit.stroke(1.5, Kit.darken(color, 0.35)),
-		Kit.textStroke(1.4, Kit.darken(color, 0.55)),
+		Kit.corner(props.Radius or 12),
 	})
 	if props.Icon then
 		local hasText = (props.Text or "") ~= ""
@@ -295,15 +294,7 @@ end
 -- recolour a Kit.button
 function Kit.setButtonColor(holder: Frame, color: Color3)
 	local face = holder:FindFirstChild("Face") :: TextButton
-	local lip = holder:FindFirstChild("Lip") :: Frame
-	lip.BackgroundColor3 = Kit.darken(color, 0.35)
-	local g = face:FindFirstChildOfClass("UIGradient") :: UIGradient
-	g.Color = ColorSequence.new(Kit.lighten(color, 0.08), color)
-	for _, s in face:GetChildren() do
-		if s:IsA("UIStroke") then
-			s.Color = if s.ApplyStrokeMode == Enum.ApplyStrokeMode.Border then Kit.darken(color, 0.35) else Kit.darken(color, 0.55)
-		end
-	end
+	face.BackgroundColor3 = color
 end
 
 local function drawnCoin(size: number)
@@ -312,8 +303,6 @@ local function drawnCoin(size: number)
 		Size = UDim2.fromOffset(size, size),
 	}, {
 		Kit.round(),
-		Kit.stroke(math.max(2, size / 10), hex("b8860b")),
-		Kit.gradient(hex("fff1a8"), hex("ffb800")),
 		make("TextLabel", {
 			BackgroundTransparency = 1,
 			Size = UDim2.fromScale(1, 1),
@@ -335,19 +324,19 @@ end
 function Kit.bar(props)
 	local back = make("Frame", {
 		BackgroundColor3 = Kit.C.ink,
-		BackgroundTransparency = 0.2,
+		BackgroundTransparency = 0.35,
 		Size = props.Size,
 		Position = props.Position or UDim2.new(),
 		AnchorPoint = props.AnchorPoint or Vector2.zero,
 		LayoutOrder = props.LayoutOrder or 0,
 		Parent = props.Parent,
-	}, { Kit.round(), Kit.stroke(1.5, C.ink) })
+	}, { Kit.round() })
 	local color = props.Color or C.green
 	local fill = make("Frame", {
-		BackgroundColor3 = C.white,
+		BackgroundColor3 = color,
 		Size = UDim2.fromScale(0, 1),
 		Parent = back,
-	}, { Kit.round(), Kit.gradient(Kit.lighten(color, 0.12), color) })
+	}, { Kit.round() })
 	local label = Kit.text({ Parent = back, Size = UDim2.fromScale(1, 1), TextSize = props.TextSize or 14, ZIndex = 3 })
 	local obj = { frame = back, fill = fill, label = label }
 	function obj.set(_, frac: number, animate: boolean?)
@@ -373,8 +362,7 @@ function Kit.dot(parent: Instance)
 		Parent = parent,
 	}, {
 		Kit.round(),
-		Kit.stroke(2, C.white),
-		Kit.text({ Text = "!", Size = UDim2.fromScale(1, 1), TextSize = 16, ZIndex = 6, Outline = false }),
+		Kit.text({ Text = "!", Size = UDim2.fromScale(1, 1), TextSize = 16, ZIndex = 6 }),
 	})
 end
 
@@ -415,22 +403,20 @@ function Kit.window(name: string, title: string, color: Color3, size: Vector2, i
 		Parent = gui,
 	}, {
 		Kit.maxSize(size.X, size.Y),
-		Kit.corner(20),
-		Kit.stroke(2, C.ink),
+		Kit.corner(18),
 	})
 	local scale = make("UIScale", { Parent = root })
+	-- a plain header on the panel itself: icon, title, close
 	local header = make("Frame", {
-		BackgroundColor3 = C.white,
+		BackgroundTransparency = 1,
 		Size = UDim2.new(1, 0, 0, 62),
 		ZIndex = 31,
 		Parent = root,
-	}, { Kit.corner(18), Kit.gradient(Kit.lighten(C.blue, 0.06), C.blue) })
-	-- square off the header's bottom corners
-	make("Frame", { BackgroundColor3 = C.blue, BorderSizePixel = 0, Size = UDim2.new(1, 0, 0, 20), Position = UDim2.new(0, 0, 1, -20), ZIndex = 31, Parent = header })
-	-- the icon pokes out above the header, like popular games do
-	Kit.icon(icon, emoji, { Parent = header, Size = UDim2.fromOffset(78, 78), Position = UDim2.fromOffset(6, -18), ZIndex = 34, Rotation = -8 })
-	Kit.text({ Parent = header, Text = title, TextSize = 34, Size = UDim2.new(1, -200, 1, 0), Position = UDim2.fromOffset(92, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 33, Outline = 3 })
-	local closeHolder = Kit.button({ Parent = header, Text = "", Icon = "close", IconFallback = "✖", IconSize = 0.85, Color = C.red, Size = UDim2.fromOffset(50, 50), Position = UDim2.new(1, -12, 0.5, -3), AnchorPoint = Vector2.new(1, 0.5), TextSize = 26, Radius = 12 }, function()
+	})
+	make("Frame", { BackgroundColor3 = C.white, BackgroundTransparency = 0.92, BorderSizePixel = 0, Size = UDim2.new(1, -32, 0, 2), Position = UDim2.new(0, 16, 1, -1), ZIndex = 31, Parent = header })
+	Kit.icon(icon, emoji, { Parent = header, Size = UDim2.fromOffset(40, 40), Position = UDim2.fromOffset(18, 11), ZIndex = 34 })
+	Kit.text({ Parent = header, Text = title, TextSize = 30, Size = UDim2.new(1, -200, 1, 0), Position = UDim2.fromOffset(70, 0), TextXAlignment = Enum.TextXAlignment.Left, ZIndex = 33 })
+	local closeHolder = Kit.button({ Parent = header, Text = "✕", Font = Kit.BODY, Color = C.panel2, Size = UDim2.fromOffset(42, 42), Position = UDim2.new(1, -14, 0.5, 0), AnchorPoint = Vector2.new(1, 0.5), TextSize = 22, Radius = 21 }, function()
 		Kit.closeAll()
 	end)
 	for _, d in closeHolder:GetDescendants() do
@@ -464,10 +450,10 @@ function Kit.open(name: string)
 		w.onOpen()
 	end
 	backdrop.Visible = true
-	TweenService:Create(backdrop, TweenInfo.new(0.2), { BackgroundTransparency = 0.45 }):Play()
+	TweenService:Create(backdrop, TweenInfo.new(0.2), { BackgroundTransparency = 0.55 }):Play()
 	w.root.Visible = true
-	w.scale.Scale = 0.6
-	TweenService:Create(w.scale, TweenInfo.new(0.32, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+	w.scale.Scale = 0.85
+	TweenService:Create(w.scale, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	Sfx.open()
 end
 
@@ -515,12 +501,12 @@ function Kit.toast(text: string, kind: string?)
 	end
 	local color = TOAST_COLORS[kind or "info"] or C.blue
 	local f = make("Frame", {
-		BackgroundColor3 = C.white,
-		Size = UDim2.new(1, 0, 0, 46),
+		BackgroundColor3 = color,
+		Size = UDim2.new(1, 0, 0, 44),
 		ZIndex = 60,
 		Parent = toastHolder,
-	}, { Kit.corner(14), Kit.gradient(Kit.lighten(color, 0.06), color), Kit.stroke(1.5, Kit.darken(color, 0.35)) })
-	local label = Kit.text({ Parent = f, Text = text, TextSize = 22, Size = UDim2.fromScale(1, 1), ZIndex = 61, TextColor3 = if kind == "coins" then C.ink else C.white, Outline = if kind == "coins" then false else 2 })
+	}, { Kit.round() })
+	local label = Kit.text({ Parent = f, Text = text, Font = Kit.BODY, TextSize = 20, Size = UDim2.fromScale(1, 1), ZIndex = 61, TextColor3 = if kind == "coins" then C.ink else C.white })
 	local scale = make("UIScale", { Scale = 0.3, Parent = f })
 	TweenService:Create(scale, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
 	task.delay(2.6, function()

@@ -27,8 +27,8 @@ function Hud.init(gui: ScreenGui, callbacks, isTouch: boolean)
 	local top = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 50), Size = UDim2.fromOffset(420, 110), Parent = root })
 	h.score = text({ Parent = top, Text = "0", TextSize = 60, Size = UDim2.new(1, 0, 0, 62), Outline = 4 })
 	h.scoreScale = make("UIScale", { Parent = h.score })
-	h.dist = text({ Parent = top, Text = "0 m", TextSize = 22, TextColor3 = Kit.lighten(C.sky, 0.4), Position = UDim2.fromOffset(0, 62), Size = UDim2.new(1, 0, 0, 24), Outline = 2 })
-	h.bestTag = text({ Parent = top, Text = "NEW BEST!", TextSize = 20, TextColor3 = C.gold, Position = UDim2.fromOffset(0, 86), Size = UDim2.new(1, 0, 0, 22), Visible = false })
+	h.dist = text({ Parent = top, Text = "0 m", Font = Kit.BODY, TextSize = 22, TextColor3 = C.white, Position = UDim2.fromOffset(0, 62), Size = UDim2.new(1, 0, 0, 24), Outline = 2 })
+	h.bestTag = text({ Parent = top, Text = "NEW BEST!", TextSize = 20, TextColor3 = C.gold, Position = UDim2.fromOffset(0, 86), Size = UDim2.new(1, 0, 0, 22), Visible = false, Outline = 2 })
 
 	-- combo
 	h.combo = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 165), Size = UDim2.fromOffset(300, 54), Visible = false, Parent = root })
@@ -50,7 +50,7 @@ function Hud.init(gui: ScreenGui, callbacks, isTouch: boolean)
 	-- speed, bottom right
 	local speed = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -20), Size = UDim2.fromOffset(200, 70), Parent = root })
 	h.speed = text({ Parent = speed, Text = "0", TextSize = 46, Size = UDim2.new(1, 0, 0, 48), TextXAlignment = Enum.TextXAlignment.Right, Outline = 3 })
-	text({ Parent = speed, Text = "KM/H", TextSize = 16, Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 18), TextXAlignment = Enum.TextXAlignment.Right })
+	text({ Parent = speed, Text = "KM/H", TextSize = 16, Position = UDim2.fromOffset(0, 46), Size = UDim2.new(1, 0, 0, 18), TextXAlignment = Enum.TextXAlignment.Right, Outline = 2 })
 	h.speedBar = Kit.bar({ Parent = root, AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -20, 1, -94), Size = UDim2.fromOffset(200, 10), Color = C.blue })
 
 	-- trick feed: small lines stacking up from the bottom of the screen, out of the way of the slope
@@ -70,6 +70,7 @@ function Hud.init(gui: ScreenGui, callbacks, isTouch: boolean)
 		Size = UDim2.new(0.8, 0, 0, 80),
 		TextWrapped = true,
 		Visible = false,
+		Outline = 2,
 	})
 
 	-- countdown

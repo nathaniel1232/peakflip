@@ -8,6 +8,8 @@
 --  · Queued scores can arrive after offline play or after picking a name,
 --    and still count for the original day they were earned.
 begin;
+-- change_name records when a player last renamed; databases set up from an older schema.sql don't have it yet
+alter table public.players add column if not exists renamed_at timestamptz;
 drop index if exists public.players_name_unique;
 create index if not exists players_name_idx on public.players (lower(name));
 

@@ -19,6 +19,7 @@ local World = require(script.Parent.World)
 local Kit = require(script.Parent.ui.Kit)
 local Hud = require(script.Parent.ui.Hud)
 local Menus = require(script.Parent.ui.Menus)
+local Wind = require(script.Parent.ui.Wind)
 require(script.Parent.SkinFx)
 
 local Shared = ReplicatedStorage:WaitForChild("PeakFlip")
@@ -782,6 +783,10 @@ local function updateSkierVisual(dt: number, hideUpper: boolean)
 	pose.hideUpper = hideUpper
 	pose.air = not p.grounded and not p.grinding and not p.crashed
 	pose.grabbing = p.grabbing
+	pose.grounded = p.grounded and not p.grinding and not p.crashed
+	pose.speed = p.speed
+	pose.steer = if p.crashed then 0 else p.heading
+	pose.carve = p.lean
 	pose.time = time
 	pose.dt = dt
 	Rider.pose(pose)
@@ -837,6 +842,11 @@ local function updateCamera(dt: number)
 		if shake > 0 then
 			pos += Vector3.new(rand(-1, 1), rand(-1, 1), 0) * shake * 0.4 * World.S
 			shake = math.max(0, shake - dt * 1.8)
+		end
+		-- a light buzz at high speed on the snow
+		local buzz = if p.grounded and state == "play" then clamp((p.speed - 45) / 35, 0, 1) else 0
+		if buzz > 0 then
+			pos += Vector3.new(math.noise(time * 8, 1.3), math.noise(time * 8, 7.1), 0) * buzz * 0.06 * World.S
 		end
 		camera.CFrame = CFrame.lookAt(pos, camLook)
 		fov = 64
@@ -1324,6 +1334,9 @@ local function frame(rawDt: number)
 	if state == "crash" and p.crashT < 0.45 then
 		dt *= 0.3 -- brief slow-mo on impact
 	end
+	if not riding then
+		Wind.clear()
+	end
 	if paused or not riding then
 		return
 	end
@@ -1363,6 +1376,7 @@ local function frame(rawDt: number)
 	Course.animatePads(time)
 	updateSkierVisual(dt, currentView() == "first")
 	updateCamera(dt)
+	Wind.update(if state == "play" then clamp((p.speed - 24) / 34, 0, 1) else 0, dt)
 	if state == "play" or state == "crash" or state == "countdown" then
 		Hud.setScore(totalScore(), profile.best or 0)
 		Hud.setCoins(p.coins)

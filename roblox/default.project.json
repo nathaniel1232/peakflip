@@ -11,63 +11,63 @@
     "Lighting": {
       "$properties": {
         "Technology": "ShadowMap",
-        "ClockTime": 14,
-        "GeographicLatitude": 35,
-        "Brightness": 2.4,
+        "ClockTime": 15.4,
+        "GeographicLatitude": 42,
+        "Brightness": 2.1,
         "Ambient": [
-          0.52,
-          0.5,
-          0.5
+          0.46,
+          0.44,
+          0.42
         ],
         "OutdoorAmbient": [
-          0.6,
-          0.62,
-          0.68
+          0.44,
+          0.5,
+          0.6
         ],
-        "EnvironmentDiffuseScale": 1,
+        "EnvironmentDiffuseScale": 0.5,
         "EnvironmentSpecularScale": 0.2,
-        "ShadowSoftness": 0.35,
-        "ExposureCompensation": 0.15,
+        "ShadowSoftness": 0.18,
+        "ExposureCompensation": -0.2,
         "GlobalShadows": true
       },
       "Atmosphere": {
         "$className": "Atmosphere",
         "$properties": {
-          "Density": 0.24,
-          "Offset": 0.1,
+          "Density": 0.3,
+          "Offset": 0.05,
           "Color": [
+            0.78,
             0.86,
-            0.93,
-            0.98
+            0.95
           ],
           "Decay": [
-            0.7,
-            0.8,
-            0.9
+            0.56,
+            0.68,
+            0.86
           ],
           "Glare": 0,
-          "Haze": 0.8
+          "Haze": 0.2
         }
       },
       "ColorCorrection": {
         "$className": "ColorCorrectionEffect",
         "$properties": {
-          "Saturation": 0.1,
-          "Contrast": 0.05,
-          "Brightness": 0.02,
+          "Saturation": 0.15,
+          "Contrast": 0.12,
+          "Brightness": 0,
           "TintColor": [
             1,
-            0.99,
-            0.97
+            1,
+            1
           ]
         }
       },
       "Bloom": {
         "$className": "BloomEffect",
         "$properties": {
-          "Intensity": 0.35,
-          "Size": 20,
-          "Threshold": 1.6
+          "Intensity": 0.2,
+          "Size": 16,
+          "Threshold": 2.4
         }
       }
     },
