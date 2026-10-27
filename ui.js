@@ -6,7 +6,7 @@ import {
   collectionCount, missionText, adProgress, adWatched, adUsesLeft, useAd,
   isLimited, setDaysLeft, setAvailable, grantScoreRewards, grantSecret,
   shopToday, msToNewShop, buyItem, buyBundle, giftReady, claimGift, GIFT, fitOffer, buyFit, adItemPrice, buyAdItem,
-  leader, wear, equipped, setLeader,
+  leader, wear, equipped, setLeader, VAULT,
 } from './meta.js';
 import { icon } from './icons.js';
 import { rpc } from './net.js';
@@ -258,7 +258,7 @@ async function miniBoard(force) {
 
 async function refreshLeader(force = false) {
   if (!save.name) {
-    window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { active: false, champion: false, known: true } }));
+    window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: { champion: false, known: true } }));
     return;
   }
   if (leaderPromise) {
@@ -268,14 +268,11 @@ async function refreshLeader(force = false) {
   }
   if (!force && Date.now() - leaderFetchedAt < 25000) return;
   const token = ++leaderRequest;
-  const leaderBoards = [LB.get('endless', null, 1, 'all')];
-  if (CG.build) leaderBoards.push(LB.get('endless', null, 1, 'weekly'));
-  leaderBoards.push(LB.get('endless', null, 1, 'daily'), LB.get('racepts', today(), 1, 'all'));
-  leaderPromise = Promise.all(leaderBoards).then(results => {
+  leaderPromise = LB.get('endless', null, 1, 'all').then(data => {
     leaderFetchedAt = Date.now();
-    // active: #1 on any board (the crown); champion: #1 all-time in Endless (the World #1 outfit)
+    // champion: #1 all-time in Endless (the World #1 outfit)
     if (token === leaderRequest) window.dispatchEvent(new CustomEvent('peakflip-leader', { detail: {
-      active: results.some(data => data?.me?.rank === 1), champion: results[0]?.me?.rank === 1, known: !!results[0],
+      champion: data?.me?.rank === 1, known: !!data,
     } }));
   }).finally(() => { leaderPromise = null; });
   return leaderPromise;
@@ -329,7 +326,7 @@ function renderHelp() {
     <h4>Combos</h4><div class="item">Tricks done within 3 seconds of each other chain into a combo. The multiplier climbs x1.5, x2 … x5, then x6, x7, x8, x9 and the max, <b>x10</b>, at 14 tricks in a row. Rails, grabs and kicker lines keep a combo going.</div>
     <h4>Daily Race</h4><div class="item">A new forest course every day, the same for everyone. Score points across all 11 checkpoints; higher points rank first, and elapsed time breaks ties. Each checkpoint reached adds 500 bonus points. Race against other players' ghosts.
       </div>
-    <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time${CG.build ? ', weekly' : ''}, and daily boards. A golden crown marks the current leader.</div>
+    <h4>Leaderboards</h4><div class="item">Pick any name and every run goes on the board automatically. You can change your name any time. Endless has all time${CG.build ? ', weekly' : ''}, and daily boards.</div>
   </div>`);
   if (CG.build) $('replayLesson').onclick = () => { closePanel(); cfg.onLesson(); };
 }
@@ -356,6 +353,7 @@ function sourceText(it) {
   if (it.ad) return `Watch ${it.ad} ad${it.ad > 1 ? 's' : ''} to unlock`;
   if (it.score) return `Reach a score of ${it.score.toLocaleString()} (your best: ${save.best.toLocaleString()})`;
   if (it.secret) return 'A secret. Keep exploring…';
+  if (it.vault) return `The Vault: only ${VAULT.max} will ever exist, ${VAULT.price.toLocaleString()} coins each`;
   if (isLimited(it)) return setAvailable(it.set) ? `Limited edition · ${daysText(setDaysLeft(it.set))} · shows up in the Limited row` : 'Limited edition, retired';
   return 'Shows up in the item shop from time to time';
 }
@@ -378,6 +376,71 @@ function offerCard(o, big) {
     <div class="offerPrice">${own ? `${icon('check')} Owned` : `${o.was ? `<s>${o.was}</s> ` : ''}${coin} ${o.price.toLocaleString()}`}</div>
   </button>`;
 }
+// ---------- the vault: Event Horizon, 5 copies ever. Ownership lives in the database (supabase/vault.sql). ----------
+let vault = null, vaultAt = 0, vaultLoading = false, vaultFailed = false, vaultConfirm = false, vaultBusy = false;
+async function loadVault(force = false) {
+  if (vaultLoading || (!force && Date.now() - vaultAt < 30000)) return;
+  vaultLoading = true;
+  try {
+    const r = await rpc('get_vault', { p_item: VAULT.id, p_pid: save.pid });
+    if (r?.owners) { vault = r; vaultFailed = false; syncVault(); } else vaultFailed = true;
+  } catch { vaultFailed = true; } finally { vaultLoading = false; vaultAt = Date.now(); }   // a failed check waits 30s too
+  if ($('panelTitle').textContent === 'Item Shop' && !$('panel').classList.contains('hidden') && shopTab === 'today') renderShop();
+}
+// the database is the only proof of ownership: bring the outfit over from another device, or take back one it never sold
+function syncVault() {
+  const inv = save.inv[VAULT.kind], has = inv.includes(VAULT.id);
+  if (vault.mine && !has) { inv.push(VAULT.id); persist(); }
+  else if (!vault.mine && has) {
+    inv.splice(inv.indexOf(VAULT.id), 1);
+    if (save.eq[VAULT.kind] === VAULT.id) { save.eq[VAULT.kind] = inv[0]; cfg.onCosmetics(); }
+    persist();
+  }
+}
+function vaultHtml() {
+  const it = CATALOG[VAULT.kind].find(i => i.id === VAULT.id), own = owns(VAULT.kind, VAULT.id);
+  const owners = vault?.owners || [], left = VAULT.max - owners.length;
+  const slots = Array.from({ length: VAULT.max }, (_, i) => owners[i]
+    ? `<li class="${owners[i].isMe ? 'me' : ''}"><span>${i + 1}</span><b>${esc(clean(owners[i].name))}</b>${owners[i].isMe ? '<small>you</small>' : ''}</li>`
+    : `<li class="open"><span>${i + 1}</span><b>${vault ? 'Unclaimed' : vaultFailed ? '?' : '…'}</b></li>`).join('');
+  let action;
+  if (own) action = save.eq[VAULT.kind] === VAULT.id ? `<button class="btn" disabled>${icon('check')} Wearing</button>` : `<button class="btn go" id="vaultWear">Wear</button>`;
+  else if (vault && left <= 0) action = `<button class="btn" disabled>${icon('lock')} Sold out</button>`;
+  else action = `<button class="btn go ${vaultConfirm ? 'confirm' : ''}" id="vaultBuy" ${!vault || vaultBusy || save.coins < VAULT.price ? 'disabled' : ''}>${vaultBusy ? 'Buying…' : vaultConfirm ? `Tap to confirm ${coin} ${VAULT.price.toLocaleString()}` : `Buy ${coin} ${VAULT.price.toLocaleString()}`}</button>`;
+  return `<div class="secHead">The Vault <small>only ${VAULT.max} will ever exist</small></div>
+    <div class="vault">
+      <div class="vaultArt">${swatch(VAULT.kind, it)}</div>
+      <div class="vaultInfo">
+        <div class="vaultName">${esc(it.name)}</div>
+        <div class="vaultTag">MYTHIC OUTFIT · ${vault ? (left > 0 ? `${left} OF ${VAULT.max} LEFT` : 'SOLD OUT') : vaultFailed ? "CAN'T REACH THE VAULT" : 'CHECKING…'}</div>
+        <div class="vaultBlurb">A collapsing star for a jacket. Its glow shifts violet to cyan, an accretion disk orbits you, and stardust falls inward as you ride.</div>
+        <div class="vaultOwners"><small>Owners</small><ol>${slots}</ol></div>
+        <div class="row"><button class="btn" id="vaultTry">Try on</button>${action}</div>
+        ${!own && vault && left > 0 ? `<div class="note">${!save.name ? 'Pick a leaderboard name first: owners are listed by name.' : save.coins < VAULT.price ? `You need ${(VAULT.price - save.coins).toLocaleString()} more coins.` : 'Yours forever, and your name goes on this list.'}</div>` : ''}
+      </div>
+    </div>`;
+}
+async function buyVault() {
+  if (!save.name) return note('Pick a leaderboard name first (open the Leaderboard). Owners are listed by name.');
+  if (!vaultConfirm) { vaultConfirm = true; renderShop(); setTimeout(() => { if (vaultConfirm) { vaultConfirm = false; if ($('vaultBuy')) renderShop(); } }, 4000); return; }
+  vaultConfirm = false; vaultBusy = true; renderShop();
+  let r = null;
+  // the server checks the coins in your cloud save, so it needs this device's latest first
+  try { if (await Cloud.push()) r = await rpc('claim_vault', { p_pid: save.pid, p_item: VAULT.id }); } catch {}
+  vaultBusy = false;
+  if (r?.ok) {
+    if (!r.already) save.coins = Math.max(0, save.coins - VAULT.price);
+    if (!owns(VAULT.kind, VAULT.id)) save.inv[VAULT.kind].push(VAULT.id);
+    save.eq[VAULT.kind] = VAULT.id; save.bought = (save.bought || 0) + 1; persist();
+    shopSel = null; preview(null); cfg.onCosmetics(); cfg.sfx.perfect(); celebrate(`${CATALOG[VAULT.kind].find(i => i.id === VAULT.id).name} is yours. Welcome to the five.`);
+  } else note(r?.error === 'sold_out' ? 'Too late: all 5 have been claimed.'
+    : r?.error === 'coins' ? "Your saved coins don't cover it yet. Play a run and try again."
+    : r?.error === 'no_name' ? 'Pick a leaderboard name first.'
+    : "Couldn't reach the vault. Nothing was spent. Try again in a moment.");
+  await loadVault(true);
+  renderShop();
+}
+
 function shopHtml() {
   const shop = shopToday(), gift = giftReady(), streak = save.giftDay === new Date(Date.now() - 864e5).toISOString().slice(0, 10) ? (save.streak || 0) + 1 : 1;
   const b = shop.bundle, bundleOwned = b && b.pieces.every(x => owns(x.kind, x.it.id));
@@ -391,6 +454,7 @@ function shopHtml() {
     <button class="giftBar ${gift ? 'ready' : ''}" id="giftBtn" ${gift ? '' : 'disabled'}>${icon('gift')}
       <span>${gift ? `Daily gift · day ${Math.min(streak, GIFT.length)} streak` : `Gift claimed · come back tomorrow (day ${Math.min((save.streak || 0) + 1, GIFT.length)})`}</span>
       <b>${coin} ${gift ? GIFT[Math.min(streak, GIFT.length) - 1] : GIFT[Math.min((save.streak || 0) + 1, GIFT.length) - 1]}</b></button>
+    ${vaultHtml()}
     <div class="secHead">Featured</div>
     <div class="offers featured">${shop.featured.map(o => offerCard(o, true)).join('')}</div>
     ${b ? `<div class="secHead">Bundle <small>${esc(SETS[b.fit.set].name)} · 30% off</small></div>
@@ -487,6 +551,10 @@ function renderShop(tab) {
     if (buyAdItem(kind, id)) { save.eq[kind] = id; persist(); cfg.sfx.perfect(); celebrate(`${CATALOG[kind].find(i => i.id === id).name} is yours!`); preview(tryOn); }
     renderShop();
   };
+  if (shopTab === 'today') loadVault();
+  if ($('vaultTry')) $('vaultTry').onclick = () => { shopSel = null; preview({ [VAULT.kind]: VAULT.id }); renderShop(); };
+  if ($('vaultBuy')) $('vaultBuy').onclick = buyVault;
+  if ($('vaultWear')) $('vaultWear').onclick = () => { save.eq[VAULT.kind] = VAULT.id; persist(); preview(null); cfg.onCosmetics(); cfg.sfx.perfect(); renderShop(); };
   if ($('giftBtn')) $('giftBtn').onclick = () => {
     const g = claimGift(); if (!g) return;
     cfg.sfx.coin(); celebrate(`+${g.amount} coins · day ${g.streak} streak`); renderShop(); showMenuUI();
@@ -532,7 +600,7 @@ function renderLocker() {
     const on = equipped(lockerTab).id;
     body = mine.length > 1 || lockerTab === 'outfit' || lockerTab === 'ski'
       ? `<div class="grid">${mine.map(it => `<button class="skin ${on === it.id ? 'sel' : ''} ${it.leader ? `leaderSkin ${leader.on ? '' : 'locked'}` : ''}" data-id="${it.id}" ${it.leader && !leader.on ? 'title="Only the #1 on the all-time Endless leaderboard can wear this"' : ''}>
-          ${swatch(lockerTab, it)}<div class="nm">${it.leader ? icon('crown') : ''}${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${it.leader && !leader.on ? '#1 only' : RARITY[it.rarity].name}</div></button>`).join('')}</div>`
+          ${swatch(lockerTab, it)}<div class="nm">${esc(it.name)}</div><div class="rr" style="color:${RARITY[it.rarity].color}">${it.leader && !leader.on ? '#1 only' : RARITY[it.rarity].name}</div></button>`).join('')}</div>`
       : emptyLocker(`You don't have any ${KIND_NAME[lockerTab].toLowerCase()} items yet.`);
   }
   const gear = `<div class="tabs gear"><button class="tab ${save.gear !== 'board' ? 'on' : ''}" data-gear="ski">${icon('skis')} Skis</button><button class="tab ${save.gear === 'board' ? 'on' : ''}" data-gear="board">${icon('board')} Snowboard</button></div>`;
@@ -598,7 +666,7 @@ async function renderLeaderboard() {
   const token = ++lbRequest;
   const tabs = `<div class="tabs"><button class="tab ${lbTab === 'endless' ? 'on' : ''}" data-lb="endless">Endless</button><button class="tab ${lbTab === 'race' ? 'on' : ''}" data-lb="race">Daily Race</button>${CG.build ? '' : `<button class="tab ${lbTab === 'coins' ? 'on' : ''}" data-lb="coins">Coins</button>`}</div>`;
   const periods = `<div class="tabs lbPeriods ${lbTab !== 'endless' ? 'hidden' : ''}"><button class="tab ${lbPeriod === 'all' ? 'on' : ''}" data-lb-period="all">All time</button>${CG.build ? `<button class="tab ${lbPeriod === 'weekly' ? 'on' : ''}" data-lb-period="weekly">Weekly</button>` : ''}<button class="tab ${lbPeriod === 'daily' ? 'on' : ''}" data-lb-period="daily">Daily</button></div>`;
-  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'coins' ? 'The riders with the most coins right now. Spending coins moves you down.' : lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : `Leaders earn a golden crown while they hold first place. ${CG.build ? 'Weekly resets Monday at 00:00 UTC; daily' : 'Daily'} resets at 00:00 UTC.`}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
+  openPanel('Leaderboard', `${tabs}${periods}<div id="nameSlot"></div><div class="note">${lbTab === 'coins' ? 'The riders with the most coins right now. Spending coins moves you down.' : lbTab === 'race' ? 'Points rank first; faster time breaks ties. This board resets daily at 00:00 UTC.' : `${CG.build ? 'Weekly resets Monday at 00:00 UTC; daily' : 'Daily'} resets at 00:00 UTC.`}</div><div id="lbList" class="list"><div class="note">Loading…</div></div>`);
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
   $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
@@ -621,7 +689,7 @@ const NAME_ERR = {
 function nameForm(slot, after, compact, editing = false) {
   if (!slot) return;
   if (save.name && !editing) {
-    slot.innerHTML = compact ? '' : `<div class="nameChip">Playing as <b>${esc(save.name)}</b><button class="btn" id="nameEdit">Change</button></div><div class="note">A golden crown marks the current leaderboard leader.</div>`;
+    slot.innerHTML = compact ? '' : `<div class="nameChip">Playing as <b>${esc(save.name)}</b><button class="btn" id="nameEdit">Change</button></div>`;
     if (!compact) $('nameEdit').onclick = () => nameForm(slot, after, compact, true);
     return;
   }
@@ -678,7 +746,7 @@ function lbRows(data, board, limit) {
   return rows + me;
 }
 const rowHtml = (rank, name, val, me, extra = '', time = '') =>
-  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : rank <= 3 ? `r${rank}` : ''} ${extra}"><span class="rank">${rank === 1 ? icon('crown') : rank}</span><span class="grow">${esc(clean(name))}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
+  `<div class="item ${me ? 'me' : ''} ${rank === 1 ? 'first' : rank <= 3 ? `r${rank}` : ''} ${extra}"><span class="rank">${rank}</span><span class="grow">${esc(clean(name))}</span>${time ? `<span class="rowTime">${time}</span>` : ''}<span class="val">${val}</span></div>`;
 
 // ---------- results ----------
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
@@ -822,7 +890,7 @@ async function rankRow(r, token) {
     if (token !== resultToken || !lb || !boards.some(b => b?.me)) return;
     lb.innerHTML = `<div class="ranks">${periods.map(([p, label], i) => {
       const me = boards[i]?.me;
-      return `<button data-rank="${i}"><small>${label}</small><b class="${me?.rank === 1 ? 'top' : ''}">${me ? `${me.rank === 1 ? icon('crown') : ''}#${me.rank}` : '—'}</b><small>${boards[i]?.total ? `of ${boards[i].total}` : ''}</small></button>`;
+      return `<button data-rank="${i}"><small>${label}</small><b class="${me?.rank === 1 ? 'top' : ''}">${me ? `#${me.rank}` : '—'}</b><small>${boards[i]?.total ? `of ${boards[i].total}` : ''}</small></button>`;
     }).join('')}</div>`;
     lb.querySelectorAll('[data-rank]').forEach(b => b.onclick = () => {
       const i = +b.dataset.rank;
@@ -834,7 +902,7 @@ async function rankRow(r, token) {
   if (token !== resultToken) return;
   const lb = $('resLb');
   if (!lb || !data?.me) return;
-  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>Today's race rank · points first</span><b>${data.me.rank === 1 ? icon('crown') : ''}#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
+  lb.innerHTML = `<button class="earn" id="rankRow" style="width:100%"><span>Today's race rank · points first</span><b>#${data.me.rank} <small style="color:var(--muted);font-weight:600">of ${data.total}</small></b></button>`;
   $('rankRow').onclick = () => { const o = overlay(); revealBoard(o, data, board, () => o.remove()); };
 }
 const lbArgs = r => ({ board: r.mode === 'race' ? 'racepts' : 'endless', day: r.mode === 'race' ? r.day : null, value: r.score, time: r.mode === 'race' ? r.time : null, ghost: r.mode === 'race' && r.newBest && r.ghost ? { t: r.ghost.t, score: r.score, f: r.ghost.f } : undefined });
@@ -900,7 +968,6 @@ function revealBoard(el, data, board, done) {
   const from = Math.min(data.total, me.rank + 40);
   card.innerHTML = `
     <div class="rv-kicker">${board === 'race' || board === 'racepts' ? "TODAY'S RACE · POINTS FIRST" : 'WORLD LEADERBOARD'}</div>
-    ${me.rank === 1 ? `<div class="rv-crown">${icon('crown')}</div>` : ''}
     <div class="rv-rank">#<span id="rvRank">${from}</span></div>
     <div class="rv-sub">${me.rank === 1 ? 'You are number one!' : `out of ${data.total} player${data.total === 1 ? '' : 's'}`}</div>
     <div class="list">${rows.map((r, i) => r.gap ? '<div class="rv-gap">···</div>'
@@ -915,7 +982,7 @@ function revealBoard(el, data, board, done) {
     if (node.textContent !== String(n)) { node.textContent = n; cfg.sfx.tone(500 + (1 - k) * 300, 0.03, 'square', 0.03); }
     if (k < 1) requestAnimationFrame(tick);
     else {
-      node.parentElement.classList.add('landed'); el.querySelector('.rv-crown')?.classList.add('on');
+      node.parentElement.classList.add('landed');
       cfg.sfx.perfect(); if (me.rank <= 10) confetti(me.rank === 1 ? 280 : 160);
     }
   };

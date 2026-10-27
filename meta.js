@@ -140,6 +140,8 @@ export const CATALOG = {
     O('arcade', 'Arcade', 'legendary', '#ff00e6', '#00f0ff', '#39ff14', 0, { secret: true }),
     // never owned: only whoever is #1 on the all-time Endless board can wear it, and only while they stay there
     O('numberone', 'World #1', 'mythic', '#15100a', '#0c0905', '#ffd23f', 0, { leader: true, tex: 'leader', glow: '#ffd23f', sw: 'radial-gradient(circle at 50% 38%,#fff3b0 0 12%,#ffd23f 13% 22%,transparent 23%),linear-gradient(135deg,#15100a 40%,#ffd23f 40% 52%,#15100a 52%)' }),
+    // the vault: 10,000,000 coins and only 5 can ever exist. The database hands out the copies (supabase/vault.sql).
+    O('horizon', 'Event Horizon', 'mythic', '#05030c', '#030208', '#0a0614', 0, { vault: true, tex: 'horizon', ptex: 'stars', glow: '#c77dff', sw: 'radial-gradient(circle at 50% 45%,#000 0 16%,#fff 17% 19%,#3cf2ff 20% 26%,#c77dff 27% 36%,#ff4fd8 37% 42%,transparent 43%),radial-gradient(circle at 20% 20%,#fff 0 2%,transparent 3%),radial-gradient(circle at 80% 75%,#c77dff 0 2%,transparent 3%),#05030c' }),
     ...inSet('tradition', [
       O('shabbat', 'Shabbat Best', 'rare', '#111111', '#111111', '#ffffff', 0, { tex: 'suit', sw: 'linear-gradient(90deg,#111 38%,#fff 38% 62%,#111 62%)' }),
       O('tallit', 'Tallit', 'epic', '#f6f3ea', '#1d2b4a', '#ffffff', 0, { tex: 'tallit', sw: 'linear-gradient(#f6f3ea 20%,#1d4ed8 20% 28%,#f6f3ea 28% 34%,#1d4ed8 34% 42%,#f6f3ea 42%)' }),
@@ -415,6 +417,11 @@ export function setLeader(on, known) {
   return changed;
 }
 
+// ---------- the vault ----------
+// Event Horizon costs 10,000,000 coins and only VAULT.max players can ever own one. The server checks the
+// coins in your cloud save, takes them, and records you as an owner, so the cap holds for everyone.
+export const VAULT = { kind: 'outfit', id: 'horizon', price: 10000000, max: 5 };
+
 // ---------- item shop: a new rotation every day at 00:00 UTC, the same for everyone ----------
 // Featured (big, epic/legendary, the first one is the Item of the Day at a discount), Daily, Limited (only while
 // a limited set is on sale) and one Bundle (a whole fit at 30% off). Score rewards, secrets and ad items are never sold.
@@ -427,7 +434,7 @@ export function shopToday(day = utcToday()) {
   const rng = mulberry(hash('peakflip-shop-' + day));
   const all = [];
   for (const kind of Object.keys(CATALOG)) for (const it of CATALOG[kind])
-    if (it.id !== 'none' && !it.ad && !it.score && !it.secret && !it.leader && (!isLimited(it) || setAvailable(it.set))) all.push({ kind, it, price: PRICE[it.rarity] });
+    if (it.id !== 'none' && !it.ad && !it.score && !it.secret && !it.leader && !it.vault && (!isLimited(it) || setAvailable(it.set))) all.push({ kind, it, price: PRICE[it.rarity] });
   const take = (list, n) => { const out = [], pool = list.slice(); while (out.length < n && pool.length) out.push(pool.splice((rng() * pool.length) | 0, 1)[0]); return out; };
   const normal = all.filter(x => !isLimited(x.it));
   const featured = take(normal.filter(x => x.it.rarity === 'legendary' || x.it.rarity === 'epic'), 2);
@@ -464,7 +471,7 @@ export function buyBundle() {
 export const FIT_DISCOUNT = 0.8;
 export function fitOffer(f) {
   const missing = Object.entries(f.pieces).filter(([k, id]) => id !== 'none' && !save.inv[k].includes(id))
-    .map(([kind, id]) => ({ kind, it: item(kind, id) })).filter(x => !x.it.ad && !x.it.score && !x.it.secret && !x.it.leader);
+    .map(([kind, id]) => ({ kind, it: item(kind, id) })).filter(x => !x.it.ad && !x.it.score && !x.it.secret && !x.it.leader && !x.it.vault);
   const full = missing.reduce((n, x) => n + PRICE[x.it.rarity], 0);
   return { missing, was: full, price: missing.length ? round50(full * FIT_DISCOUNT) : 0, available: setAvailable(f.set) };
 }
@@ -488,7 +495,7 @@ export function claimGift() {
 }
 export const collectionCount = () => {
   let have = 0, total = 0;
-  for (const k of Object.keys(CATALOG)) { total += CATALOG[k].filter(i => !i.leader).length; have += save.inv[k].length; }
+  for (const k of Object.keys(CATALOG)) { total += CATALOG[k].filter(i => !i.leader && !i.vault).length; have += save.inv[k].filter(id => !item(k, id).vault).length; }
   return { have, total };
 };
 

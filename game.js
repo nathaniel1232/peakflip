@@ -612,21 +612,22 @@ const slots = {
 };
 slots.hat.position.set(0, 0.95, 0); slots.face.position.set(0, 0.82, -0.148); slots.back.position.set(0, 0.36, 0.17);
 for (const k in slots) { slots[k].name = 'slot-' + k; skier.upper.add(slots[k]); }
-// Leader crown is a separate, temporary marker so cosmetic refreshes cannot remove it.
-const leaderCrown = new THREE.Group();
-const leaderGold = lam(0xffd33d, { emissive: 0x7a4b00, emissiveIntensity: 0.7 });
-leaderCrown.add(new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.22, 0.09, 10), leaderGold));
-for (let i = 0; i < 5; i++) {
-  const a = i / 5 * TAU;
-  const point = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.18, 5), leaderGold);
-  point.position.set(Math.cos(a) * 0.17, 0.12, Math.sin(a) * 0.17);
-  leaderCrown.add(point);
+// Event Horizon (the 5-owner vault outfit): a tilted accretion disk with three moons orbits the rider
+const horizonRing = new THREE.Group();
+{
+  const disk = new THREE.Mesh(new THREE.TorusGeometry(0.62, 0.035, 6, 40), new THREE.MeshBasicMaterial({ color: 0xc77dff, transparent: true, opacity: 0.85, depthWrite: false, fog: false }));
+  const halo = new THREE.Mesh(new THREE.TorusGeometry(0.74, 0.012, 4, 40), new THREE.MeshBasicMaterial({ color: 0x3cf2ff, transparent: true, opacity: 0.6, depthWrite: false, fog: false }));
+  disk.rotation.x = halo.rotation.x = Math.PI / 2;
+  const spin = new THREE.Group(); spin.add(disk, halo);
+  for (let i = 0; i < 3; i++) {
+    const a = i / 3 * TAU, moon = new THREE.Mesh(new THREE.OctahedronGeometry(0.06), new THREE.MeshBasicMaterial({ color: i ? 0xff4fd8 : 0xffffff, fog: false }));
+    moon.position.set(Math.cos(a) * 0.62, 0, Math.sin(a) * 0.62); spin.add(moon);
+  }
+  spin.name = 'horizon-spin'; horizonRing.add(spin);
+  horizonRing.position.set(0, 0.45, 0); horizonRing.rotation.set(0.35, 0, 0.25);
 }
-leaderCrown.position.set(0, 1.31, 0.01);
-leaderCrown.name = 'leader-crown';
-leaderCrown.visible = false;
-skier.upper.add(leaderCrown);
-addEventListener('peakflip-leader', e => { leaderCrown.visible = !!e.detail?.active; });
+horizonRing.name = 'horizon-ring'; horizonRing.visible = false;
+skier.upper.add(horizonRing);
 const accAnim = { prop: null, cape: null, wings: [], jet: false, lasers: null, sun: null, crystal: null };
 function accMesh(geo, color, x = 0, y = 0, z = 0, extra) {
   const m = new THREE.Mesh(geo, lam(color, extra)); m.position.set(x, y, z); return m;
@@ -889,6 +890,19 @@ function outfitTexture(kind, o) {
       if (k === g) { k.fillStyle = '#15100a'; k.fillText('1', 33, 31); }
       k.fillStyle = k === g ? '#fff3b0' : o.glow; k.fillText('1', 32, 30);
     }); break;
+    case 'horizon': {   // Event Horizon: a black hole swallowing a glowing accretion disk, on a field of stars
+      for (let i = 0; i < 26; i++) { g.fillStyle = i % 5 ? '#6b5a8f' : '#ffffff'; g.fillRect((i * 37 + 11) % S, (i * 53 + 7) % S, 1, 1); }
+      both(k => {
+        for (const [r, w, col] of [[22, 3, '#ff4fd8'], [17, 4, '#c77dff'], [13, 2, '#3cf2ff']]) {
+          k.strokeStyle = k === g ? col : o.glow; k.lineWidth = w; k.beginPath(); k.ellipse(32, 30, r, r * 0.42, -0.35, 0, TAU); k.stroke();
+        }
+        k.strokeStyle = k === g ? '#ffffff' : o.glow; k.lineWidth = 1.5; k.beginPath(); k.arc(32, 30, 9.5, 0, TAU); k.stroke();
+      });
+      g.fillStyle = '#000'; g.beginPath(); g.arc(32, 30, 8.5, 0, TAU); g.fill();
+      ge.fillStyle = '#000'; ge.beginPath(); ge.arc(32, 30, 8.5, 0, TAU); ge.fill();
+      break;
+    }
+    case 'stars': for (let i = 0; i < 30; i++) { g.fillStyle = ['#ffffff', '#c77dff', '#3cf2ff'][i % 3]; g.fillRect((i * 29 + 5) % S, (i * 47 + 13) % S, i % 4 ? 1 : 2, i % 4 ? 1 : 2); } break;
     case 'astro': g.strokeStyle = '#b8c2cc'; g.lineWidth = 2; g.strokeRect(6, 6, 52, 52); g.fillStyle = '#1d70d6'; g.fillRect(40, 10, 14, 9);
       g.fillStyle = '#e63946'; g.fillRect(10, 12, 12, 4); g.fillStyle = '#ffd23f'; g.fillRect(22, 34, 20, 8); break;
   }
@@ -914,7 +928,8 @@ function applyCosmetics(tryOn) {
   setPattern(skinMats.jacket, o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
   setPattern(skinMats.pants, o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
   skinMats.helmet.color.set(o.helmet);
-  skinMats.helmet.emissive.set(o.rarity === 'legendary' || o.leader ? o.helmet : '#000000').multiplyScalar(o.leader ? 0.7 : 0.35);
+  skinMats.helmet.emissive.set(o.rarity === 'legendary' || o.leader || o.vault ? o.helmet : '#000000').multiplyScalar(o.leader || o.vault ? 0.7 : 0.35);
+  horizonRing.visible = !!o.vault;
   if (k.color !== 'rainbow') skinMats.ski.color.set(k.color);
   skinMats.tip.color.set(k.tip);
   skinMats.ski.emissive.set(k.glow && k.color !== 'rainbow' ? k.color : '#000000').multiplyScalar(0.4);
@@ -927,6 +942,17 @@ function updateCosmetics() {
   if (o.leader) {
     skinMats.jacket.emissive.set(o.glow).multiplyScalar(0.9 + Math.sin(time * 3) * 0.4);
     if (state === 'play' && Math.random() < 0.35) Particles.emit(p.x + rand(-0.3, 0.3), p.y + rand(0.6, 1.5), p.z + rand(-0.2, 0.4), 1, 0.3, 0.8, Math.random() < 0.5 ? 0xffd23f : 0xfff3b0, -1);
+  }
+  // Event Horizon: the glow cycles violet → magenta → cyan, the disk spins, and stardust falls inward
+  if (o.vault) {
+    skinMats.jacket.emissive.setHSL((0.78 + Math.sin(time * 0.9) * 0.12 + 1) % 1, 1, 0.5).multiplyScalar(1.1 + Math.sin(time * 4) * 0.35);
+    skinMats.helmet.emissive.copy(skinMats.jacket.emissive).multiplyScalar(0.6);
+    horizonRing.children[0].rotation.y += 0.045;
+    horizonRing.rotation.z = 0.25 + Math.sin(time * 1.3) * 0.12;
+    if (state === 'play' && Math.random() < 0.5) {
+      const a = rand(0, TAU);
+      Particles.emit(p.x + Math.cos(a) * 0.9, p.y + rand(0.5, 1.4), p.z + Math.sin(a) * 0.9, 1, 0.15, 0.3, [0xc77dff, 0x3cf2ff, 0xff4fd8, 0xffffff][(Math.random() * 4) | 0], -0.5);
+    }
   }
   // air trail
   const tr = worn('trail');
@@ -953,7 +979,6 @@ const Thumbs = (() => {
     rig = skier.root.clone(true);
     mats = new Map();
     rig.traverse(o => { if (o.isMesh) { if (!mats.has(o.material)) mats.set(o.material, o.material.clone()); o.material = mats.get(o.material); } });
-    rig.getObjectByName('leader-crown').visible = false;
     rig.position.set(0, 0, 0); rig.rotation.set(0, 0, 0);
     const body = rig.getObjectByName('body'); body.rotation.set(0, 0, 0); body.position.set(0, 0.9, 0);
     const up = rig.getObjectByName('upper'); up.rotation.set(0, 0, 0); rig.getObjectByName('legs').rotation.set(0, 0, 0);
@@ -969,6 +994,7 @@ const Thumbs = (() => {
     setPattern(m(skinMats.jacket), o.tex ? outfitTexture(o.tex, o) : null, o.jacket, o.glow);
     setPattern(m(skinMats.pants), o.ptex ? outfitTexture(o.ptex, { ...o, jacket: o.pants, id: o.id + 'p', glow: null }) : null, o.pants);
     m(skinMats.helmet).color.set(o.helmet);
+    rig.getObjectByName('horizon-ring').visible = !!o.vault;
     m(skinMats.ski).color.set(k.color === 'rainbow' ? '#ff4fd8' : k.color); m(skinMats.tip).color.set(k.tip);
     m(skinMats.ski).emissive.set(k.glow && k.color !== 'rainbow' ? k.color : '#000000').multiplyScalar(0.4);
     // building accessories registers their animations on the main rider: keep those as they were
@@ -4734,8 +4760,7 @@ function addGhost(name, data) {
     || !data.f.every(Number.isFinite) || ghosts.length >= 4) return;
   const color = GHOST_COLORS[ghosts.length % GHOST_COLORS.length];
   const root = skier.root.clone(true);
-  const clonedCrown = root.getObjectByName('leader-crown');
-  if (clonedCrown) clonedCrown.visible = false;
+  root.getObjectByName('horizon-ring').visible = false;
   const m = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.4, depthWrite: false });
   root.traverse(o => { if (o.isMesh) o.material = m; });
   root.add(nameTag(name, color));

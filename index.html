@@ -138,7 +138,6 @@
   .lbPeriods .tab:disabled { opacity: .4; }
   .rowTime { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .item.first { background: linear-gradient(90deg, rgba(255,201,60,.19), rgba(255,255,255,.07)); box-shadow: inset 0 0 0 1px rgba(255,201,60,.24); }
-  .item.first .rank .ic { color: var(--gold); fill: rgba(255,201,60,.22); }
   #miniLb { flex: 1; min-height: 150px; }
   #miniLb .item { padding: 8px 10px; }
   .saveBox { display: flex; flex-direction: column; gap: 8px; background: var(--ink-2); border-radius: var(--r); padding: 12px; }
@@ -293,7 +292,6 @@
   #menu #miniLb .item .rank { width: auto; min-width: 1.4em; color: #fff; font-weight: 400; }
   #menu #miniLb .item .rank::after { content: '.'; }
   #menu #miniLb .item.first .rank::after { content: ''; }
-  #menu #miniLb .item.first .rank .ic { width: 1em; height: 1em; color: var(--gold); filter: drop-shadow(0 2px 0 #a86a00); }
   #menu #miniLb .item.first { text-shadow: 0 2px 0 #ffe08a, 0 4px 0 #d99a00, 0 6px 12px rgba(8,30,62,.45); }
   #menu #miniLb .item .grow { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
   #menu #miniLb .item .val { font-size: .62em; font-weight: 400; opacity: .92; }
@@ -465,11 +463,7 @@
   .rv-row { opacity: 0; animation: rowIn .35s ease-out forwards; }
   .rv-me { animation: meIn .7s cubic-bezier(.2,1.3,.4,1) forwards, glow 1.6s ease-in-out 1.6s infinite; }
   .rv-score { text-align: center; font-size: 58px; font-weight: 900; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; animation: cardIn .5s cubic-bezier(.2,1.4,.4,1); }
-  .rv-crown { display: flex; justify-content: center; color: var(--gold); margin-bottom: -10px; opacity: 0; transform: translateY(-40px) scale(.6); transition: all .5s cubic-bezier(.2,1.6,.4,1); }
-  .rv-crown.on { opacity: 1; transform: none; filter: drop-shadow(0 0 14px rgba(255,201,60,.7)); }
-  .rv-crown .ic { width: 56px; height: 56px; }
   .item.first .rank { color: var(--gold); }
-  .item.first .rank .ic { width: 18px; height: 18px; color: var(--gold); }
   .earn b .ic { width: 18px; height: 18px; color: var(--gold); vertical-align: -3px; margin-right: 2px; }
   .rv-gap { text-align: center; color: var(--muted); letter-spacing: .3em; }
   @keyframes fadeIn { from { opacity: 0; } }
@@ -548,6 +542,30 @@
   .bundle { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 16px; background: linear-gradient(160deg, color-mix(in srgb, var(--c) 30%, #102544), #0b1a33 70%); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c) 45%, transparent); }
   .bundleHead { display: flex; justify-content: space-between; align-items: baseline; } .bundleHead b { font-family: var(--snow-font); font-size: 20px; font-weight: 400; } .bundleHead span { font-size: 12px; color: var(--muted); }
   .bundle .btn s { opacity: .6; font-size: 13px; }
+  .vault { position: relative; display: flex; gap: 14px; padding: 14px; border-radius: 18px; overflow: hidden; isolation: isolate;
+    background: radial-gradient(circle at 18% 40%, rgba(199,125,255,.35), transparent 55%), radial-gradient(circle at 90% 10%, rgba(60,242,255,.18), transparent 50%), #07041a;
+    box-shadow: inset 0 0 0 2px rgba(199,125,255,.55), 0 0 26px rgba(199,125,255,.25); animation: vaultGlow 4s ease-in-out infinite; }
+  .vault::before { content: ''; position: absolute; inset: -60%; z-index: -1; background: conic-gradient(from 0deg, transparent, rgba(255,79,216,.18), transparent 30%, rgba(60,242,255,.16), transparent 60%); animation: vaultSpin 9s linear infinite; }
+  @keyframes vaultGlow { 50% { box-shadow: inset 0 0 0 2px rgba(60,242,255,.6), 0 0 34px rgba(255,79,216,.3); } }
+  @keyframes vaultSpin { to { transform: rotate(1turn); } }
+  @media (prefers-reduced-motion: reduce) { .vault, .vault::before { animation: none; } }
+  .vaultArt { flex: none; width: 150px; display: grid; place-items: center; border-radius: 14px; background: radial-gradient(circle at 50% 55%, rgba(199,125,255,.4), transparent 70%); }
+  .vaultArt .thumb { width: 150px; height: 150px; } .vaultArt .sw { transform: scale(1.4); }
+  .vaultInfo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .vaultName { font-family: var(--snow-font); font-size: 26px; line-height: 1; background: linear-gradient(90deg, #fff, #c77dff 45%, #3cf2ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .vaultTag { font-size: 11px; font-weight: 900; letter-spacing: .1em; color: #ff4fd8; }
+  .vaultBlurb { font-size: 12px; color: var(--muted); line-height: 1.35; }
+  .vaultOwners small { font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .vaultOwners ol { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 3px; }
+  .vaultOwners li { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 8px; background: rgba(199,125,255,.14); font-size: 13px; min-width: 0; }
+  .vaultOwners li span { width: 14px; font-weight: 900; color: #c77dff; }
+  .vaultOwners li b { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+  .vaultOwners li small { color: #3cf2ff; letter-spacing: 0; text-transform: none; }
+  .vaultOwners li.open { background: rgba(255,255,255,.04); } .vaultOwners li.open b { color: var(--muted); font-weight: 500; font-style: italic; }
+  .vaultOwners li.me { background: linear-gradient(90deg, rgba(255,79,216,.3), rgba(60,242,255,.2)); }
+  .vault .row .btn { padding: 10px 8px; font-size: 14px; }
+  .vault .btn.confirm { background: linear-gradient(90deg, #ff4fd8, #c77dff); color: #fff; }
+  @media (max-width: 520px) { .vault { flex-direction: column; } .vaultArt { width: 100%; } }
 
   /* ---------- 3D item pictures and whole-outfit cards ---------- */
   .thumb { display: block; width: 64px; height: 64px; margin: 0 auto; object-fit: contain; opacity: 0; transition: opacity .25s; pointer-events: none; }

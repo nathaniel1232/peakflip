@@ -26,7 +26,7 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
    Then run `supabase/coins.sql` for the Coins leaderboard (most coins right now, read from the cloud saves; not in the CrazyGames version).
    Then run `supabase/names.sql`: any name allowed (shared names, accents, emoji), renames any time, and scores
    from players the database hasn't seen yet are accepted. Finally run `supabase/score-cap.sql` to upgrade the
-   score limit and offline submission rules on an existing database. These files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
+   score limit and offline submission rules on an existing database. Run `supabase/vault.sql` for the Vault: Event Horizon, a 10,000,000-coin outfit that only 5 players can ever own (the shop lists the owners). These files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
 2. The project URL and publishable key live in `config.js`. The browser can only call the
    validated score and chat functions — it has no direct table access.
 
@@ -39,7 +39,6 @@ Completed Endless and Daily Race runs are queued locally before their result scr
 once a name is set. Failed uploads retry automatically with bounded requests, including after reconnecting or restoring
 a cloud save. The queue retains the best pending run per board and day until the server acknowledges it; older
 queued runs keep their earned date. Accepted uploads refresh the visible rankings immediately.
-Leading any active board displays a temporary golden crown above your rider, refreshed every 30 seconds.
 
 Global chat shares the latest 50 messages from the last seven days. Players claim a name before sending,
 messages are limited to 240 characters and one per five seconds, and chat identity tokens travel with cloud saves.
