@@ -39,7 +39,7 @@ const track = (...a) => demo ? [] : trackRun(...a);
 
 // ---------- save data / meta-game ----------
 import { save, persist, accountSave, equipped, item, CATALOG, FITS, track as trackRun, resetRun, run as runStats, settleMissions } from './meta.js';
-import { initUI, missionToast, showMenuUI, showResults, fetchGhosts, claimName } from './ui.js';
+import { initUI, missionToast, showMenuUI, showResults, fetchGhosts, claimName, flushScores } from './ui.js';
 import { icon } from './icons.js';
 import { joinRoom } from './mp.js';
 import { Live } from './live.js';
@@ -5227,7 +5227,7 @@ initUI({
 toMenu();
 requestAnimationFrame(frame);
 // cloud save: if newer progress comes back from the server (another device, a new domain), show it
-const progressReplaced = () => { Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); };
+const progressReplaced = () => { flushScores(); Sfx.muted = save.muted; Sfx.apply(); updateMuteBtn(); applyCosmetics(); if (state === 'menu') showMenuUI(); };
 // On CrazyGames the player's account holds the save too, and it wins when it's newer. Their CrazyGames username is
 // their leaderboard name unless they already picked one, and the account is checked again when they log in mid-game.
 function linkCrazyGames() {

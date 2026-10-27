@@ -27,6 +27,6 @@ begin
   perform submit_score_v2('endless', to_char((now() at time zone 'utc')::date - 3, 'YYYY-MM-DD'), a, '', 1234);
   assert exists(select 1 from score_days where pid = a and day = (now() at time zone 'utc')::date - 3 and value = 1234), 'late endless score keeps its day';
   perform submit_score_v2('endless', '2001-01-01', a, '', 50);
-  assert exists(select 1 from score_days where pid = a and day = (now() at time zone 'utc')::date and value = 50), 'too-old day falls back to today';
+  assert exists(select 1 from score_days where pid = a and day = date '2001-01-01' and value = 50), 'queued run keeps its original day';
 end $$;
 rollback;

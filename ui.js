@@ -38,54 +38,93 @@ const LB = {
   // null = network trouble; only { ok: true } confirms that the server accepted a score.
   async submit(board, value, day, time, ghost) {
     if (!save.name) return null;
-    try { return await rpc('submit_score_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_time: time ?? null, p_ghost: ghost || null }); }
+    try { return await rpc('submit_score_v2', { p_board: board, p_day: day || '', p_pid: save.pid, p_name: save.name, p_value: value, p_time: time ?? null, p_ghost: ghost || null }, !ghost, { timeoutMs: 8000 }); }
     catch (e) { return /\b4\d\d\b/.test(e.message) ? { ok: false } : null; }
   },
 };
 
 // ---------- score queue ----------
-// Every finished run goes into a small queue (best per board and day), saved with the rest of the progress.
-// It's sent as soon as there's a name and a connection, so no run is ever lost to "no name yet" or a bad network.
+// Save each finished run immediately. Only the best per board/day needs to wait in
+// the outbox: a lower run cannot improve that leaderboard entry.
 const better = (a, b) => a.value > b.value || (a.value === b.value && (a.time ?? 0) < (b.time ?? 0));
-const daysAgo = day => (Date.parse(today()) - Date.parse(day)) / 864e5;
-let raceGhost = null;   // today's best race recording is too big for the save, so it rides along in memory
+let raceGhost = null;   // the large race recording stays in memory; the score survives a reload
 function queueScore(e) {
   const q = save.lbQueue = (save.lbQueue || []).filter(x => !(x.board === e.board && x.day === e.day && !better(x, e)));
   if (!q.some(x => x.board === e.board && x.day === e.day)) q.push(e);
   persist();
 }
-let flushing = null;
-function flushScores() {
-  if (flushing) return flushing;
-  flushing = (async () => {
+let flushing = null, pumpScores = null, scoreRetryTimer = null, scoreRetryDelay = 2000;
+const scoreWaiters = new Set();
+function scheduleScoreRetry() {
+  clearTimeout(scoreRetryTimer);
+  if (!save.name || !save.lbQueue?.length) return;
+  scoreRetryTimer = setTimeout(() => { scoreRetryTimer = null; flushScores(); }, scoreRetryDelay);
+  scoreRetryDelay = Math.min(scoreRetryDelay * 2, 30000);
+}
+export function flushScores() {
+  if (flushing) { pumpScores?.(); return flushing; }
+  clearTimeout(scoreRetryTimer);
+  const accepted = [];
+  flushing = Promise.resolve().then(async () => {
     if (!save.name) return;
-    // the server only takes Endless days from the last week and the race for today or yesterday
-    save.lbQueue = (save.lbQueue || []).filter(e => daysAgo(e.day) <= (e.board === 'racepts' ? 1 : 6));
+    save.lbQueue ||= [];
     const attempted = new Set();
-    for (let e; (e = save.lbQueue.find(x => !attempted.has(x)));) {
-      attempted.add(e);
+    // Independent uploads prevent an old rejected or stalled run from holding up a new record.
+    const send = async e => {
       const ghost = e.board === 'racepts' && raceGhost?.day === e.day && raceGhost.score === e.value ? raceGhost.ghost : undefined;
       let res = await LB.submit(e.board, e.value, e.day, e.time, ghost);
-      // an older database only knows players who registered there: register this name, then send again
       if (res && res.ok !== true) { await LB.register(save.name); res = await LB.submit(e.board, e.value, e.day, e.time, ghost); }
-      if (res?.ok !== true) continue;   // keep this score; other queued runs can still sync
-      // Remove only the acknowledged object. A better score queued while this request
-      // was in flight is a different object and must survive for its own submission.
+      if (res?.ok !== true) return;
       save.lbQueue = save.lbQueue.filter(x => x !== e);
-    }
-    persist(false);
-  })().finally(() => { flushing = null; });
+      accepted.push(e);
+      persist(); // save each acknowledgement, even if a different upload is still stalled
+      for (const acknowledge of scoreWaiters) acknowledge(e);
+      scoresSynced([e]);
+    };
+    const pending = new Set();
+    pumpScores = () => {
+      const batch = save.lbQueue.filter(e => !attempted.has(e)).sort((a, b) => b.value - a.value).slice(0, 4 - pending.size);
+      for (const e of batch) {
+        attempted.add(e);
+        const task = send(e).finally(() => { pending.delete(task); pumpScores?.(); });
+        pending.add(task);
+      }
+    };
+    pumpScores();
+    while (pending.size) await Promise.race(pending);
+  }).finally(() => {
+    flushing = null; pumpScores = null;
+    if (accepted.length) scoreRetryDelay = 2000;
+    scheduleScoreRetry();
+  });
   return flushing;
 }
-// queue this run, send everything, and report whether this run made it to the server
-async function submitRun(r) {
+const runSubmissions = new WeakMap();
+// Starting this function queues synchronously, before results animation or navigation.
+function submitRun(r) {
+  if (r.submitted) return Promise.resolve(true);
+  if (runSubmissions.has(r)) return runSubmissions.get(r);
   const { board, day, value, time, ghost } = lbArgs(r);
+  r.leaderboardDay ||= day || today();
   if (ghost) raceGhost = { day, score: value, ghost };
-  queueScore({ board, day: day || today(), value, time: time ?? null });
-  await flushScores();
-  const sent = !!save.name && !save.lbQueue.some(x => x.board === board && x.day === (day || today()));
-  if (sent) { miniCache = {}; refreshLeader(true); }
-  return sent;
+  queueScore({ board, day: r.leaderboardDay, value, time: time ?? null });
+  let acknowledge;
+  const receipt = new Promise(resolve => {
+    acknowledge = e => {
+      if (e.board === board && e.day === r.leaderboardDay && !better({ value, time }, e)) {
+        r.submitted = true;
+        resolve(true);
+      }
+    };
+    scoreWaiters.add(acknowledge);
+  });
+  const pending = Promise.race([receipt, flushScores().then(() => {
+    if (r.submitted) return true;
+    r.submitted = !!save.name && !save.lbQueue.some(x => x.board === board && x.day === r.leaderboardDay);
+    return r.submitted;
+  })]).finally(() => { runSubmissions.delete(r); scoreWaiters.delete(acknowledge); });
+  runSubmissions.set(r, pending);
+  return pending;
 }
 // the server used to turn down scores over 3,000,000; a best like that is sent once more until it's taken
 async function resendBigBest() {
@@ -99,7 +138,7 @@ async function resendBigBest() {
   if (res?.ok === true) { save.bigBestSent = value; persist(); miniCache = {}; }
 }
 LB.register = async name => {
-  try { return await rpc('register_name', { p_pid: save.pid, p_name: name }); }
+  try { return await rpc('register_name', { p_pid: save.pid, p_name: name }, true, { timeoutMs: 8000 }); }
   catch { return null; }
 };
 // undefined = the database's change_name is missing (404) or broken (any other error from the server);
@@ -563,6 +602,9 @@ async function renderLeaderboard() {
   $('panelBody').querySelectorAll('[data-lb]').forEach(b => b.onclick = () => { lbTab = b.dataset.lb; renderLeaderboard(); });
   $('panelBody').querySelectorAll('[data-lb-period]').forEach(b => b.onclick = () => { lbPeriod = b.dataset.lbPeriod; renderLeaderboard(); });
   nameForm($('nameSlot'), () => renderLeaderboard());
+  await refreshLeaderboardRows(token);
+}
+async function refreshLeaderboardRows(token = ++lbRequest) {
   const board = lbTab === 'race' ? 'racepts' : 'endless';
   const data = lbTab === 'coins' ? await LB.coins(50) : await LB.get(board, board === 'racepts' ? today() : null, 50, board === 'racepts' ? 'all' : lbPeriod);
   if (token !== lbRequest || !$('lbList')) return;
@@ -642,9 +684,25 @@ const rowHtml = (rank, name, val, me, extra = '', time = '') =>
 // A new record goes straight to the leaderboard moment; everything else shows the results card.
 // Players without a name get the same moment after any run, with a name box, until they pick one
 // (skipping it only quiets the prompt for ordinary runs until the page reloads).
-let skippedName = false;
+let skippedName = false, latestResult = null;
+function scoresSynced(entries) {
+  miniCache = {};
+  refreshLeader(true);
+  if (!$('menu').classList.contains('hidden')) miniBoard(true);
+  if ($('lbList')) refreshLeaderboardRows();
+  const r = latestResult;
+  if (!r || r.mode === 'level') return;
+  const { board } = lbArgs(r);
+  if (entries.some(e => e.board === board && e.day === r.leaderboardDay && !better({ value: r.score, time: r.time }, e))) {
+    r.submitted = true;
+    r.retryReveal?.();
+    if (r.awaitingSync && $('resLb') && !$('over').classList.contains('hidden')) rankRow(r, resultToken);
+  }
+}
 export function showResults(r) {
   const token = ++resultToken;
+  latestResult = r;
+  if (r.mode !== 'level') submitRun(r);
   setTimeout(checkRewards, 1200);
   if (r.mode === 'level') { resultsCard(r, token); return; }   // stars are kept locally, no world board
   if (r.newBest || (!save.name && !skippedName)) recordMoment(r, () => { if (token === resultToken) resultsCard(r, token); }, token);
@@ -737,12 +795,17 @@ async function doubleCoins(r, earned) {
 // small "World rank #n" row on the results card (submits silently if the record moment didn't already)
 async function rankRow(r, token) {
   const { board, day } = lbArgs(r);
-  if (!r.submitted) r.submitted = await submitRun(r);
+  r.awaitingSync = false;
+  if (!r.submitted) {
+    if ($('resLb')) $('resLb').innerHTML = '<div class="note">Saving to leaderboard…</div>';
+    r.submitted = await submitRun(r);
+  }
   if (!r.submitted) {
     const lb = $('resLb');
     if (token !== resultToken || !lb) return;
     if (save.name) {
-      lb.innerHTML = '<div class="saveBox"><div class="note">Leaderboard sync failed. This score is saved on this device and will be retried.</div></div>';
+      r.awaitingSync = true;
+      lb.innerHTML = '<div class="saveBox"><div class="note">Score saved on this device. Leaderboard unavailable — retrying automatically…</div></div>';
       return;
     }
     // The score waits in the queue, and claiming a name here sends it.
@@ -796,7 +859,7 @@ function arm(el) {
 // The new-record moment: big number → (claim a name) → animated leaderboard with your row flying into place.
 function recordMoment(r, done, token) {
   const el = overlay(), card = el.querySelector('#rvCard');
-  const finish = () => { el.remove(); done(); };
+  const finish = () => { r.retryReveal = null; el.remove(); done(); };
   el._done = finish;
   const big = r.score.toLocaleString();
   card.innerHTML = `<div class="rv-kicker">${!r.newBest ? (r.mode === 'race' ? 'RACE POINTS' : 'YOUR SCORE') : r.mode === 'race' ? 'NEW PERSONAL BEST' : 'NEW RECORD'}</div>
@@ -804,6 +867,7 @@ function recordMoment(r, done, token) {
   if (r.newBest) cfg.sfx.perfect();
   const step = $('rvStep');
   const go = async () => {
+    r.retryReveal = null;
     if (token !== resultToken || !document.body.contains(el)) return;
     step.innerHTML = '<div class="note">Checking the leaderboard…</div>';
     const { board, day } = lbArgs(r);
@@ -812,6 +876,7 @@ function recordMoment(r, done, token) {
     const data = r.submitted ? await LB.get(board, day, 7, 'all') : null;
     if (token !== resultToken || !document.body.contains(el)) return;
     if (!data?.me) {
+      if (!r.submitted) r.retryReveal = go;
       step.innerHTML = `<div class="note">Couldn't reach the leaderboard right now. Your score is saved and will be sent automatically.</div><button class="btn primary" id="rvOk">Continue</button>`;
       $('rvOk').onclick = finish; return;
     }
@@ -819,10 +884,6 @@ function recordMoment(r, done, token) {
   };
   if (save.name) go();
   else {
-    // the run is queued right away, so it reaches the board the moment a name is picked (here or later)
-    const { board, day, value, time, ghost } = lbArgs(r);
-    if (ghost) raceGhost = { day, score: value, ghost };
-    queueScore({ board, day: day || today(), value, time: time ?? null });
     step.innerHTML = `<div class="rv-sub" style="margin:6px 0 10px">Pick any name to put this on ${r.mode === 'race' ? "today's race" : 'the world'} leaderboard. You can change it later.</div><div id="rvName"></div><button class="btn" id="rvSkip" style="margin-top:8px;width:100%">Not now</button>`;
     nameForm($('rvName'), go, true);
     $('rvSkip').onclick = () => { skippedName = true; finish(); };
@@ -955,7 +1016,10 @@ export function initUI(c) {
   refreshLeader();
   setTimeout(checkRewards, 1500);   // a best score from before this update (or another device) earns its rewards
   flushScores().then(() => { miniCache = {}; if (!$('menu').classList.contains('hidden')) miniBoard(true); });
-  addEventListener('online', () => flushScores());
+  addEventListener('online', () => { scoreRetryDelay = 2000; flushScores(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && save.lbQueue?.length) flushScores();
+  });
   setInterval(() => {
     if (document.hidden) return;
     if (!$('menu').classList.contains('hidden')) showMenuUI();

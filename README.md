@@ -25,7 +25,8 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
    Then run `supabase/points-and-chat.sql` for the score-based races, period leaderboards, and global chat.
    Then run `supabase/coins.sql` for the Coins leaderboard (most coins right now, read from the cloud saves; not in the CrazyGames version).
    Then run `supabase/names.sql`: any name allowed (shared names, accents, emoji), renames any time, and scores
-   from players the database hasn't seen yet are accepted. All three files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
+   from players the database hasn't seen yet are accepted. Finally run `supabase/score-cap.sql` to upgrade the
+   score limit and offline submission rules on an existing database. These files are safe to run again. The migration is additive: existing lifetime scores and legacy timed races are kept.
 2. The project URL and publishable key live in `config.js`. The browser can only call the
    validated score and chat functions — it has no direct table access.
 
@@ -34,6 +35,10 @@ which resets Monday at 00:00 UTC. Daily resets at 00:00 UTC. Each period uses th
 a player's lifetime best. Period tracking starts with this update; old lifetime scores stay on All time.
 Daily Race awards riding/trick points plus 500 per checkpoint. Highest points wins; faster elapsed time
 breaks equal scores. Scored race records are stored separately from the old timed records.
+Completed Endless and Daily Race runs are queued locally before their result screens open and submitted immediately
+once a name is set. Failed uploads retry automatically with bounded requests, including after reconnecting or restoring
+a cloud save. The queue retains the best pending run per board and day until the server acknowledges it; older
+queued runs keep their earned date. Accepted uploads refresh the visible rankings immediately.
 Leading any active board displays a temporary golden crown above your rider, refreshed every 30 seconds.
 
 Global chat shares the latest 50 messages from the last seven days. Players claim a name before sending,

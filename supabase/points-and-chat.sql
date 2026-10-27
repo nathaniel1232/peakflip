@@ -29,17 +29,31 @@ begin
   if p_board is null or p_board not in ('endless', 'racepts') then raise exception 'bad board'; end if;
   if p_pid is null or p_pid !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad pid'; end if;
   if p_value is null or p_value < 0 or p_value > 100000000 then raise exception 'bad value'; end if;
-  select name into v_name from players where pid = p_pid;
-  if v_name is null then raise exception 'register a name first'; end if;
+  if p_board = 'endless' and p_day = '' then
+    v_day := v_today;
+  else
+    if p_day is null or p_day !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' then raise exception 'bad day'; end if;
+    begin
+      v_day := p_day::date;
+    exception when invalid_datetime_format or datetime_field_overflow then
+      raise exception 'bad day';
+    end;
+    if to_char(v_day, 'YYYY-MM-DD') <> p_day or v_day > v_today then raise exception 'bad day'; end if;
+  end if;
+  v_name := (select name from players where pid = p_pid);
+  if v_name is null then
+    v_name := clean_name(p_name);
+    if length(v_name) < 1 then raise exception 'register a name first'; end if;
+    insert into players (pid, name) values (p_pid, v_name) on conflict (pid) do nothing;
+    v_name := (select name from players where pid = p_pid);
+  end if;
   if p_board = 'endless' then
-    v_day := v_today; p_time := null; p_ghost := null;
+    p_time := null; p_ghost := null;
     insert into scores as s (board, day, pid, name, value)
     values ('endless', '', p_pid, v_name, p_value)
     on conflict (board, day, pid) do update set
       name = excluded.name, value = greatest(s.value, excluded.value), updated_at = now();
   else
-    if p_day is null or p_day not in (to_char(v_today, 'YYYY-MM-DD'), to_char(v_today - 1, 'YYYY-MM-DD')) then raise exception 'bad day'; end if;
-    v_day := p_day::date;
     if p_time is null or p_time < 25 or p_time > 900 then raise exception 'bad time'; end if;
     if p_ghost is not null then
       if jsonb_typeof(p_ghost -> 'f') is distinct from 'array' then

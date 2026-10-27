@@ -14,10 +14,31 @@ const devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 
 // the race ghost is big and only matters for today, so it stays on this device
 const payload = () => { const { ghost, ...rest } = save; return rest; };
+
+// Keep the best outstanding submission for each board and day. Cloud copies can arrive
+// out of order, so merging their queues must never replace a better score with an older one.
+function mergeScoreQueues(...queues) {
+  const best = new Map();
+  for (const queue of queues) for (const entry of Array.isArray(queue) ? queue : []) {
+    if (!entry || typeof entry.board !== 'string' || !entry.board || typeof entry.day !== 'string' || !entry.day || !Number.isFinite(+entry.value)) continue;
+    const score = { board: entry.board, day: entry.day, value: +entry.value, time: entry.time != null && Number.isFinite(+entry.time) ? +entry.time : null };
+    const key = `${score.board}\0${score.day}`, previous = best.get(key);
+    if (!previous || score.value > previous.value || (score.value === previous.value && (score.time ?? 0) < (previous.time ?? 0))) best.set(key, score);
+  }
+  return [...best.values()];
+}
+
 export function adopt(data, savedAt) {
+  const samePlayer = !!save.pid && save.pid === data?.pid;
+  const localBest = save.best;
+  const localQueue = save.lbQueue;
   const ghost = save.ghost;
   for (const k of Object.keys(save)) delete save[k];
   Object.assign(save, data, { savedAt });
+  if (samePlayer) {
+    save.best = Math.max(+save.best || 0, +localBest || 0);
+    save.lbQueue = mergeScoreQueues(localQueue, save.lbQueue);
+  }
   if (ghost && !save.ghost) save.ghost = ghost;
   normalizeSave(); ensureMissions();
   persist(false);
@@ -35,7 +56,9 @@ async function reachable(host) {
 // Bring progress from another address into this one when this browser already has progress of its own:
 // items are combined, the bigger numbers win, and if only the incoming save has a leaderboard name, that
 // identity (player id + name) comes along so the name isn't "taken" by your own old save.
-function merge(inc) {
+export function merge(inc) {
+  const samePlayer = !!save.pid && save.pid === inc.pid;
+  const adoptingIncomingIdentity = !save.name && !!inc.name;
   for (const k of Object.keys(inc.inv || {})) save.inv[k] = [...new Set([...(save.inv[k] || []), ...inc.inv[k]])];
   for (const k of ['coins', 'best', 'runs', 'chestsOpened', 'missionsDone']) save[k] = Math.max(+save[k] || 0, +inc[k] || 0);
   for (const [k, v] of Object.entries(inc.adProgress || {})) save.adProgress[k] = Math.max(save.adProgress[k] || 0, v);
@@ -45,6 +68,8 @@ function merge(inc) {
     if (!prev || result.score > prev.score || (result.score === prev.score && result.time < prev.time)) (save.raceScores ||= {})[d] = result;
   }
   if (!save.name && inc.name) { save.pid = inc.pid; save.name = inc.name; save.code = inc.code || save.code; }
+  if (samePlayer) save.lbQueue = mergeScoreQueues(save.lbQueue, inc.lbQueue);
+  else if (adoptingIncomingIdentity) save.lbQueue = mergeScoreQueues(inc.lbQueue);
   if (save.pid === inc.pid && inc.chatToken && !save.chatToken) save.chatToken = inc.chatToken;
   normalizeSave(); ensureMissions();
   persist();   // a real change: back it up
