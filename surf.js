@@ -628,8 +628,8 @@ export function createSurf(host) {
     ambience: { type: 'lowpass', freq: [350, 1150], level: [0.07, 0.19] },
     copy: {
       drop: ['Drop in', 'Ride into the waves to launch'],
-      hintsTouch: [[0.6, 'Drag your left thumb to steer. Stay off the sand'], [3.5, 'Ride into a wave to launch. Swipe up on the right to backflip, down to frontflip'], [10, 'In the air, drag your left thumb to spin. Land straight'], [17, 'Tap the right side to jump. Keep your thumb down in the air to grab']],
-      hintsKeys: [[0.6, '<kbd>←</kbd> <kbd>→</kbd> to steer. Stay off the sand'], [3.5, 'Ride into a wave to launch. In the air, <kbd>↑</kbd> backflips and <kbd>↓</kbd> frontflips'], [10, 'In the air, <kbd>←</kbd> <kbd>→</kbd> spins. Land straight'], [17, '<kbd>Space</kbd> jumps sharks and buoys. Hold it in the air to grab']],
+      hintsTouch: [[0.6, 'Drag your left thumb to carve. Stay off the sand'], [3.5, 'Ride into a wave to launch. In the air, push the stick up to backflip, down to frontflip'], [10, 'In the air, push the stick across to spin. Let go and you land straight'], [17, 'Tap the button to jump. Hold it in the air to grab']],
+      hintsKeys: [[0.6, '<kbd>←</kbd> <kbd>→</kbd> to carve. Stay off the sand'], [3.5, 'Ride into a wave to launch. In the air, <kbd>↑</kbd> backflips and <kbd>↓</kbd> frontflips'], [10, 'In the air, <kbd>←</kbd> <kbd>→</kbd> spins. Let go and you land straight'], [17, '<kbd>Space</kbd> jumps. Hold it in the air to grab']],
     },
     baseH(u, z) { const hw = laneHW(z); return u < -hw ? base(z) + sandH(-u - hw, z) : base(z); },
     rampE(r, u, hw) {

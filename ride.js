@@ -10,6 +10,7 @@
 // the scenery, the rider and the words on the cards. This file runs the physics, camera, HUD and flow.
 import * as THREE from './lib/three.module.min.js';
 import { save, persist } from './meta.js';
+import { maxHeading, steerRate } from './landscape.js';
 
 // ---------- helpers, shared with the kits ----------
 export const lerp = (a, b, t) => a + (b - a) * t;
@@ -59,7 +60,7 @@ const COMBO_WINDOW = 3.2, COMBO_MAX = 10;   // seconds to land the next trick an
 
 export function createRideMode(host, kit) {
   const { renderer, Sfx, isTouch } = host;
-  const T = { SPEED0: 20, SPEED_MAX: 48, SPEED_GAIN: 0.004, SCORE_SPEED: 14, SLOPE: 0.2, LAT: 11, G: 30, JUMP: 8.5, VY_MAX: 17, FLIP: 7, SPIN: 8.5, ...kit.tune };
+  const T = { SPEED0: 20, SPEED_MAX: 48, SPEED_GAIN: 0.004, SCORE_SPEED: 14, SLOPE: 0.2, LAT: 11, G: 30, JUMP: 10, VY_MAX: 17, FLIP: 7, SPIN: 8.5, ...kit.tune };
   const { SPEED0, SPEED_MAX, SPEED_GAIN, SCORE_SPEED, SLOPE, LAT, G, JUMP, VY_MAX, FLIP, SPIN } = T;
   const YAW_UNIT = kit.yawUnit || Math.PI;   // a board can land backwards after a 180; a bike needs the full 360
   const S = { open: false, state: 'off', mult: 1, bonus: null, t: 0, runT: 0, wipeT: 0, theme: 0, shake: 0, resT: 0, hintI: 0, prompt: '' };
@@ -193,7 +194,7 @@ export function createRideMode(host, kit) {
     Object.assign(P, {
       z: 0, z0: 0, u: 0, lat: 0, v: SPEED0, slow: 0, y: 0, vy: -SPEED0 * SLOPE, air: false, yaw: 0, pitch: 0, grab: false, grabT: 0, airT: 0, launchVy: 0,
       wx: 0, wy: 0, wz: 0, landT: 9, score: 0, coins: 0, combo: 0, comboT: 9, bestCombo: 0, bestTrick: null, launches: 0, steer: 0, flip: 0,
-      tricks: 0, edge: null, onRamp: null, comboTotal: 0, fakie: false,
+      tricks: 0, edge: null, onRamp: null, comboTotal: 0, fakie: false, heading: 0,
     });
   }
   const dist = () => P.z0 - P.z;
@@ -242,21 +243,21 @@ export function createRideMode(host, kit) {
   // ---------- input: ← → steer (spin in the air), ↑ ↓ flip, Space jumps (hold it in the air to grab) ----------
   // Touch: left thumb steers and spins, right thumb taps to jump, swipes up or down to flip, holds to grab
   const K = { left: false, right: false, up: false, down: false, jump: false };
-  const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down', Space: 'jump' };
-  const touch = { stick: null, act: null };
-  function steerInput() {
-    let x = (K.right ? 1 : 0) - (K.left ? 1 : 0);
-    const st = touch.stick;
-    if (st) { const dx = (st.x - st.ax) / 50; x += Math.abs(dx) > 0.15 ? clamp(dx, -1, 1) : 0; }
-    return clamp(x, -1, 1);
+  // the mountain's keys: Space or J jumps; Space, J, Shift, K or G held in the air grabs
+  const KEYMAP = { ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right', ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
+    Space: 'jump', KeyJ: 'jump', ShiftLeft: 'grab', ShiftRight: 'grab', KeyK: 'grab', KeyG: 'grab' };
+  // and its touch layout: a floating stick on the left (across steers and spins, up and down flips), a jump button on the right
+  const touch = { stick: null, act: null }, STICK_R = 56;
+  function stickInput() {
+    const st = touch.stick; if (!st) return [0, 0];
+    const dx = (st.x - st.ax) / STICK_R, dy = (st.y - st.ay) / STICK_R, m = Math.hypot(dx, dy);
+    if (m < 0.18) return [0, 0];
+    const k = Math.min(1, (m - 0.18) / 0.72) / m;
+    return [dx * k, -dy * k];
   }
-  function flipInput() {
-    let f = (K.up ? 1 : 0) - (K.down ? 1 : 0);
-    const a = touch.act;
-    if (a) { const dy = (a.y0 - a.y) / 40; f += Math.abs(dy) > 0.3 ? clamp(dy, -1, 1) : 0; }
-    return clamp(f, -1, 1);
-  }
-  const jumpHeld = () => K.jump || (!!touch.act && Math.abs(touch.act.y - touch.act.y0) < 12);
+  const steerInput = () => clamp((K.right ? 1 : 0) - (K.left ? 1 : 0) + stickInput()[0], -1, 1);
+  const flipInput = () => clamp((K.up ? 1 : 0) - (K.down ? 1 : 0) + stickInput()[1], -1, 1);
+  const jumpHeld = () => K.jump || K.grab || !!touch.act;
   function onKey(e, down) {
     if (!S.open || S.state === 'results') return;
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
@@ -286,14 +287,12 @@ export function createRideMode(host, kit) {
     e.preventDefault(); Sfx.init();
     try { el.tl.setPointerCapture(e.pointerId); } catch {}
     if (e.clientX < innerWidth * 0.5) { if (!touch.stick) touch.stick = { id: e.pointerId, ax: e.clientX, ay: e.clientY, x: e.clientX, y: e.clientY }; }
-    else if (!touch.act) { touch.act = { id: e.pointerId, y0: e.clientY, y: e.clientY }; jump(); }
+    else if (!touch.act) { touch.act = { id: e.pointerId }; jump(); }
     drawTouch();
   });
   el.tl.addEventListener('pointermove', e => {
-    const a = touch.act; if (a && a.id === e.pointerId) { a.y = e.clientY; return; }
     const st = touch.stick; if (!st || st.id !== e.pointerId) return;
     st.x = e.clientX; st.y = e.clientY;
-    if (Math.abs(st.x - st.ax) > 56) st.ax = st.x - Math.sign(st.x - st.ax) * 56;   // the stick follows a thumb that keeps going
     drawTouch();
   });
   const tUp = e => { if (touch.stick?.id === e.pointerId) touch.stick = null; if (touch.act?.id === e.pointerId) touch.act = null; drawTouch(); };
@@ -303,7 +302,7 @@ export function createRideMode(host, kit) {
   function drawTouch() {
     const st = touch.stick;
     hud.stick.classList.toggle('on', !!st);
-    if (st) { hud.stick.style.transform = `translate(${st.ax - 56}px, ${st.ay - 56}px)`; hud.knob.style.transform = `translate(${st.x - st.ax}px, 0)`; }
+    if (st) { hud.stick.style.transform = `translate(${st.ax - STICK_R}px, ${st.ay - STICK_R}px)`; hud.knob.style.transform = `translate(${st.x - st.ax}px, ${st.y - st.ay}px)`; }
     else { hud.stick.style.transform = ''; hud.knob.style.transform = ''; }
     hud.jump.classList.toggle('down', !!touch.act);
   }
@@ -369,18 +368,22 @@ export function createRideMode(host, kit) {
     const d = dist(), top = speedAt(d), hw = laneHW(P.z);
     const x = bot ? botSteer() : steerInput(), fl = bot ? 0 : flipInput();
     P.steer = x; P.flip = fl;
-    if (!P.air) P.lat = damp(P.lat, x * (LAT + P.v * 0.1), 8, dt);
+    // carving, the same as skis: steering sets a heading, you travel along it, and in the air you keep the line you took off on
+    if (!P.air) {
+      P.heading = damp(P.heading, x * maxHeading(P.v, true), steerRate(true, !!x), dt);
+      P.lat = Math.sin(P.heading) * P.v;
+    }
     P.u += P.lat * dt;
     const [lo, hi] = kit.uLimit ? kit.uLimit(hw) : [-hw - 2.2, hw + 2.2];
-    if (P.u < lo || P.u > hi) { P.u = clamp(P.u, lo, hi); P.lat = 0; }
+    if (P.u < lo || P.u > hi) { P.u = clamp(P.u, lo, hi); P.lat = 0; P.heading *= 0.5; }
     // leaving the lane (sand, grass, deep water) drags you down
     const edge = P.air ? null : kit.edge(P.u, P.z, hw);
     if (edge && edge !== P.edge && !bot) { pop(edge.msg, 0, 'warn'); Sfx.noise(0.3, 0.3, 300); }
     P.edge = edge;
     P.slow = edge ? Math.min(edge.slow, P.slow + dt * 0.9) : Math.max(0, P.slow - dt * 0.5);
-    P.v = top * (1 - P.slow);
+    P.v = top * (1 - P.slow) * (1 - 0.12 * Math.abs(Math.sin(P.heading)));   // carving scrubs a little speed
     const z0 = P.z;
-    P.z -= P.v * dt;
+    P.z -= (P.air ? P.v : Math.cos(P.heading) * P.v) * dt;
     if (!bot) { P.score += (z0 - P.z) * S.mult; if (!P.air) P.comboT += dt; }   // the combo clock stops while you're in the air, like on skis
     const g = surfaceH(P.u, P.z);
     if (P.air) {
@@ -552,7 +555,7 @@ export function createRideMode(host, kit) {
     } else {
       const hx = surfaceH(P.u + 0.3, P.z) - surfaceH(P.u - 0.3, P.z), hz = surfaceH(P.u, P.z + 0.3) - surfaceH(P.u, P.z - 0.3);
       nrm.set(-hx / 0.6, 1, -hz / 0.6).normalize();
-      fwd.set(P.lat * 0.03, 0, -1); fwd.addScaledVector(nrm, -fwd.dot(nrm)).normalize();
+      fwd.set(Math.sin(P.heading), 0, -Math.cos(P.heading)); fwd.addScaledVector(nrm, -fwd.dot(nrm)).normalize();
       side.crossVectors(fwd, nrm);
       qGround.setFromRotationMatrix(mat4.makeBasis(fwd, nrm, side));
       if (P.fakie) qGround.multiply(_q2.setFromAxisAngle(_Y, Math.PI));
@@ -708,7 +711,7 @@ export function createRideMode(host, kit) {
     S.bonus = { end: dist() + z.len, prev: S.theme }; S.mult = 2;
     setTheme(z.theme);
     clearStuff(); resetRider();
-    P.u = 0; P.lat = 0; P.slow = 0; P.y = surfaceH(0, P.z); P.vy = -P.v * SLOPE; P.air = false;
+    P.u = 0; P.lat = 0; P.heading = 0; P.slow = 0; P.y = surfaceH(0, P.z); P.vy = -P.v * SLOPE; P.air = false;
     nextZ = P.z - 25; kit.reset(false, E);
     while (nextZ > P.z - 170) nextZ -= kit.spawn(nextZ, P.z0 - nextZ, false, E);
     placeRider(0); updateCamera(0, true); kit.updateScenery?.(camera.position.z, true, 0, E);
