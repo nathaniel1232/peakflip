@@ -1,34 +1,24 @@
 // ============================================================
-//  PEAK SURF: ride one endless wave
+//  PEAK SURF: ride down the beach break, launch off the waves
 // ============================================================
-// A kit for the ride engine (ride.js). You ride along the face of a wave that never ends, and like the mountain it
-// keeps going downhill. The wall rises on your left to a curling lip; at its foot on the right the sea runs flat
-// to the beach. Carve down the face for speed, up to the lip to launch an aerial, over foam sections for airs, and
-// into the barrel where the lip throws over the face. Sharks, jellyfish, reefs, buoys and other surfers are in
-// the way; now and then a whale breaches out behind the wave, and a whirlpool at its foot pulls you into the lagoon.
-// The surfer is the rider you dressed in the Locker, on a board in your Locker colours.
+// A kit for the ride engine (ride.js). The beach is on your left; on your right the ocean runs out to the horizon.
+// Waves roll up the slope at you and break onto the sand. Ride into one and it throws you in the air.
+// In the water: rocks, sharks, swimming jellyfish, turtles, buoys and other surfers. Now and then a whale surfaces
+// in the lane (ride up its back) or breaches out at sea.
 import * as THREE from './lib/three.module.min.js';
 import { equipped } from './meta.js';
-import { createRideMode, lerp, clamp, rand, smooth, hash, TAU, rgb, wrap, pick, lam, unitBox, mix, put3, grid } from './ride.js';
+import { createRideMode, lerp, clamp, rand, smooth, hash, TAU, rgb, wrap, pick, lam, unitBox, mix, put3, grid, place, knee } from './ride.js';
 
-const SLOPE = 0.16;
-// the wave winds a little and its face gets wider and narrower as you go
-const laneX = z => 4 * Math.sin(z * 0.005) + 1.5 * Math.sin(z * 0.015 + 1);
-const laneHW = z => 9.5 + Math.sin(z * 0.008 + 0.5);
+const SLOPE = 0.2;
+const WV = 7;   // how fast the waves roll up the slope at you
+// the water winds a little and gets wider and narrower as you go
+const laneX = z => 5 * Math.sin(z * 0.006) + 2 * Math.sin(z * 0.017 + 1);
+const laneHW = z => 11 + 2 * Math.sin(z * 0.009 + 0.5);
 const base = z => z * SLOPE;
-const FACE_H = 8, BEACH = 42;
-// how far the wave stands above the sea at u: from the trough on the right up the face to the crest at -hw,
-// then down the back of the wave
-function faceH(u, hw) {
-  if (u >= hw) return 0;
-  if (u >= -hw) { const k = (hw - u) / (2 * hw); return FACE_H * k * k * (0.35 + 0.65 * k); }   // gentle at the foot, steep up top
-  return FACE_H * smooth(-hw - 10, -hw, u);
-}
-// the beach past the flat water: a wet strip at the water's edge, then dunes
+// the beach: a wet strip at the water's edge, then dunes rising away from it
 function sandH(o, z) {
   return 0.3 * smooth(0, 1.5, o) + 1.0 * smooth(2, 12, o) + 0.03 * o + 1.6 * smooth(10, 30, o) * (0.5 + 0.5 * Math.sin(z * 0.045 + 2.1 + o * 0.15)) + 2.5 * smooth(40, 70, o);
 }
-function groundH(u, z) { const hw = laneHW(z), o = u - hw - BEACH; return base(z) + (o > 0 ? sandH(o, z) : faceH(u, hw)); }
 
 // ---------- conditions ----------
 const THEMES = [
@@ -48,8 +38,8 @@ const THEMES = [
     sand: 0x5e4f94, wet: 0x382c6e, green: 0x1c2f58, leaf: 0x34b48e, trunk: 0x3a2c5a, cloud: 0x2a6a7a, spec: 0xb0ffff, emissive: 0x05303c },
 ];
 
-// ---------- the surfboard ----------
-const finMat = lam(0x1f2a36), white = lam(0xffffff);
+// ---------- the surfer ----------
+const skinMat = lam(0xf0c49a), hairMat = lam(0x3a2716), finMat = lam(0x1f2a36), white = lam(0xffffff);
 function boardGeo(len = 2.05, wid = 0.54) {
   const g = new THREE.BoxGeometry(len, 0.08, wid, 10, 1, 2), p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
@@ -58,114 +48,138 @@ function boardGeo(len = 2.05, wid = 0.54) {
   }
   g.computeVertexNormals(); return g;
 }
-// the Locker rider, standing sideways on the board facing the wave
+function makeRider() {
+  const o = equipped('outfit'), jacket = lam(new THREE.Color(o.jacket || '#e94f37').getHex()), pants = lam(new THREE.Color(o.pants || '#2d3142').getHex()), accent = lam(new THREE.Color(o.helmet || '#ffffff').getHex());
+  const root = new THREE.Group(), gear = new THREE.Group();
+  const board = new THREE.Mesh(boardGeo(), new THREE.MeshLambertMaterial({ color: 0xfff6e6 })); gear.add(board);
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.012, 0.07), jacket); stripe.position.y = 0.046; gear.add(stripe);
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.012, 0.03), accent); rail.position.set(-0.05, 0.047, 0.12); gear.add(rail);
+  const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.03), finMat); fin.position.set(-0.82, -0.12, 0); fin.rotation.z = -0.3; gear.add(fin);
+  root.add(gear);
+  const body = new THREE.Group(); root.add(body);
+  const mk = (geo, mat) => { const m = new THREE.Mesh(geo, mat); body.add(m); return m; };
+  const r = {
+    root, gear, body,
+    thighF: mk(unitBox(0.15, 0.17), pants), thighB: mk(unitBox(0.15, 0.17), pants),
+    shinF: mk(unitBox(0.11, 0.12), skinMat), shinB: mk(unitBox(0.11, 0.12), skinMat),
+    torso: mk(new THREE.BoxGeometry(0.4, 0.58, 0.23).translate(0, 0.29, 0), jacket),
+    shorts: mk(new THREE.BoxGeometry(0.38, 0.22, 0.26).translate(0, 0.02, 0), pants),
+    upF: mk(unitBox(0.11, 0.11), jacket), upB: mk(unitBox(0.11, 0.11), jacket),
+    loF: mk(unitBox(0.09, 0.09), skinMat), loB: mk(unitBox(0.09, 0.09), skinMat),
+    head: mk(new THREE.BoxGeometry(0.25, 0.27, 0.25).translate(0, 0.13, 0), skinMat),
+  };
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.1, 0.28), hairMat); hair.position.y = 0.28; r.head.add(hair);
+  const fringe = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.08, 0.06), hairMat); fringe.position.set(0, 0.22, 0.12); r.head.add(fringe);
+  const band = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.05, 0.27), accent); band.position.y = 0.2; r.head.add(band);
+  const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.035, 0.01), finMat); eyes.position.set(0, 0.15, 0.126); r.head.add(eyes);
+  return r;
+}
 const V = () => new THREE.Vector3();
+const J = { hip: V(), hipF: V(), hipB: V(), footF: V(), footB: V(), kneeF: V(), kneeB: V(), chest: V(), shF: V(), shB: V(), hF: V(), hB: V(), elF: V(), elB: V(), dir: V(), bend: V() };
+const _Y = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
+// pose in board space: X along the board (nose forward), Y off the deck, Z the way the rider faces
+function poseRider(r, pose, t) {
+  const c = pose.crouch, lean = pose.lean, tb = lean + 0.45 * c + pose.bend;
+  const hipH = 0.92 - 0.36 * c;
+  J.hip.set(-0.02, hipH * Math.cos(lean), hipH * Math.sin(lean) - 0.08 * c);
+  J.footF.set(0.36, 0.05, 0.02); J.footB.set(-0.38, 0.05, 0);
+  J.hipF.copy(J.hip).x += 0.09; J.hipB.copy(J.hip).x -= 0.09;
+  J.bend.set(0.12, 0, 1).normalize();
+  knee(J.hipF, J.footF, 0.47, J.bend, J.kneeF); J.bend.x = -0.12; knee(J.hipB, J.footB, 0.47, J.bend, J.kneeB);
+  place(r.thighF, J.hipF, J.kneeF); place(r.shinF, J.kneeF, J.footF); place(r.thighB, J.hipB, J.kneeB); place(r.shinB, J.kneeB, J.footB);
+  J.dir.set(0, Math.cos(tb), Math.sin(tb));
+  _q.setFromUnitVectors(_Y, J.dir); _q2.setFromAxisAngle(_Y, 0.5); _q.multiply(_q2);
+  r.torso.position.copy(J.hip); r.torso.quaternion.copy(_q);
+  r.shorts.position.copy(J.hip); r.shorts.quaternion.copy(_q);
+  J.chest.copy(J.hip).addScaledVector(J.dir, 0.56);
+  r.head.position.copy(J.chest).addScaledVector(J.dir, 0.06);
+  _q2.setFromAxisAngle(_Y, pose.mode === 'wipe' ? Math.sin(t * 9) : 0.75); r.head.quaternion.copy(_q).multiply(_q2);
+  J.shF.copy(J.chest).x += 0.2; J.shB.copy(J.chest).x -= 0.2;
+  const a = pose.arm, m = pose.mode;
+  if (m === 'grab') {
+    J.hF.set(0.2, 0.08, 0.27); J.hB.set(-0.75, J.chest.y + 0.35, 0.1);
+  } else if (m === 'tuck') {
+    J.hF.set(0.25, J.chest.y - 0.35, 0.32); J.hB.set(-0.2, J.chest.y - 0.4, 0.32);   // hugging the knees through a flip
+  } else if (m === 'wipe') {
+    J.hF.set(0.5, J.chest.y + 0.5 + Math.sin(t * 13) * 0.3, 0.2); J.hB.set(-0.5, J.chest.y + 0.5 + Math.cos(t * 11) * 0.3, -0.2);
+  } else {
+    J.hF.set(0.72 + a * 0.1, J.chest.y - 0.18 + Math.sin(t * 2.2) * 0.04 + a * 0.25, 0.32);
+    J.hB.set(-0.62, J.chest.y - 0.3 - a * 0.1, 0.12 + a * 0.2);
+  }
+  J.bend.set(0, -0.6, 0.8).normalize();
+  knee(J.shF, J.hF, 0.33, J.bend, J.elF); knee(J.shB, J.hB, 0.33, J.bend, J.elB);
+  place(r.upF, J.shF, J.elF); place(r.loF, J.elF, J.hF); place(r.upB, J.shB, J.elB); place(r.loB, J.elB, J.hB);
+}
 
+// ---------- shared models ----------
 export function createSurf(host) {
-  function makeRider() {
-    const L = host.rider(), sk = equipped('ski'), o = equipped('outfit');
-    const deck = sk.color === 'rainbow' ? '#ff4fd8' : sk.color || '#fff6e6';
-    const root = new THREE.Group(), gear = new THREE.Group(); root.add(gear);
-    gear.add(new THREE.Mesh(boardGeo(2.1, 0.56), lam(new THREE.Color(deck).getHex())));
-    const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.012, 0.08), lam(new THREE.Color(sk.tip || o.jacket || '#ffffff').getHex())); stripe.position.y = 0.047; gear.add(stripe);
-    const fin = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.03), finMat); fin.position.set(-0.85, -0.12, 0); fin.rotation.z = -0.3; gear.add(fin);
-    const stance = new THREE.Group(); root.add(stance); stance.add(L.root);
-    L.root.rotation.y = -Math.PI / 2;   // the rider's front (−Z) along the board
-    L.legs.rotation.set(0, Math.PI / 2, 0, 'YXZ'); L.legs.scale.set(1.7, 1, 1);
-    return { root, gear, stance, L };
-  }
-  // crouch over the board, arms out for balance, lean into the turn, tuck for flips, reach down to grab
-  function poseRider(r, pose, t) {
-    const { L } = r, c = pose.crouch, m = pose.mode;
-    r.stance.rotation.x = m === 'wipe' ? 0 : pose.lean * 0.9;
-    L.body.position.y = 0.88 - 0.14 * c; L.legs.scale.y = 1 - 0.16 * c;
-    const bend = m === 'tuck' ? 0.9 : m === 'grab' ? 0.75 : 0.18 + 0.32 * c;
-    L.upper.rotation.set(-bend, Math.PI / 2 + (m === 'wipe' ? Math.sin(t * 8) * 0.6 : 0), 0, 'YXZ');
-    L.arms.forEach((a, i) => {
-      const sx = i ? 1 : -1;
-      if (m === 'grab') a.rotation.set(i ? 1.5 : 0.4, 0, sx * (i ? 0.1 : 1.1));
-      else if (m === 'tuck') a.rotation.set(1.2, 0, sx * 0.35);
-      else if (m === 'wipe') a.rotation.set(Math.sin(t * 11 + i * 2) * 1.5, 0, sx * (1.2 + Math.cos(t * 9 + i) * 0.5));
-      else a.rotation.set(0.25 + pose.arm * 0.3 + Math.sin(t * 2.1 + i) * 0.05, 0, sx * (1.05 + 0.2 * pose.arm));
-    });
-  }
-
   // ---------- materials the themes recolour ----------
-  // the sea and the wave share one smooth material; part of its colour glows, the way light comes through a wave
-  const seaMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 60, specular: 0x6a8a99, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 2, polygonOffsetUnits: 2 });
-  const lipMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 60, specular: 0x6a8a99, side: THREE.DoubleSide });
-  const chopMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: 0x6a8a99, side: THREE.DoubleSide });
-  const glowFace = { value: 0.34 };
-  const glowLip = { value: 0.62 };   // the curl is thin, so light comes through it most of all
-  for (const mtl of [seaMat, lipMat, chopMat]) mtl.onBeforeCompile = sh => {
-    sh.uniforms.glowFace = mtl === lipMat ? glowLip : glowFace;
+  const waterMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 140, specular: 0x6a8a99, polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
+  const sandMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+  const swashMat = new THREE.MeshLambertMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const waveMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 55, specular: 0x6a8a99, side: THREE.DoubleSide });
+  // light shines through a wave's face, so part of its colour glows even with the sun behind it
+  const glowFace = { value: 0.42 };
+  waveMat.onBeforeCompile = sh => {
+    sh.uniforms.glowFace = glowFace;
     sh.fragmentShader = 'uniform float glowFace;\n' + sh.fragmentShader.replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n\ttotalEmissiveRadiance += vColor.rgb * glowFace;');
   };
-  const sandMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide });
-  const swashMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const trunkMat = lam(0x8a6a45), leafMat = lam(0x3fa34d), nutMat = lam(0x5a3a1e), rockMat = lam(0x3b342f), barnMat = lam(0x5d5146);
-  const sharkMat = lam(0x55657a), whaleMat = lam(0x2f3d55), whaleBelly = lam(0xc9d2dc);
+  const sharkMat = lam(0x55657a), sharkBelly = lam(0xd9dde2), whaleMat = lam(0x2f3d55), whaleBelly = lam(0xc9d2dc);
   const jellyMat = new THREE.MeshLambertMaterial({ color: 0xff8ad0, emissive: 0x7a2a6a, transparent: true, opacity: 0.78 });
   const jellyCore = new THREE.MeshBasicMaterial({ color: 0xffd0f0 });
   const shellMat = lam(0x5a7a3a), turtleSkin = lam(0x8fbf6a), buoyRed = lam(0xff4b3e);
-  const skinMat = lam(0xf0c49a), hairMat = lam(0x3a2716);
-  let C = {}, T = null;
+  let C = {}, T = THEMES[0];
   const tmpA = [0, 0, 0], tmpB = [0, 0, 0], tmpW = [0, 0, 0];
   let E;   // the engine, once it's built
 
-  // ---------- the sea: the back of the wave, its face, the flat water in front, the beach ----------
+  // ---------- the ground: sand on the left, water across the lane and out to sea on the right ----------
   const DZ = 2, NEAR = 140, NR = 200, FAR_DZ = 9;   // 2 m rows close up, 9 m rows out to ~820 m
-  const BACK = [-80, -50, -30, -19, -13, -9.5, -7, -5, -3.4, -2, -0.9];   // behind the crest, from -hw
-  const NF = 30, TROUGH = [1.2, 3, 6, 10, 16, 24, 32, 38, BEACH - 0.5];   // the face, then out from its foot
-  const WC = BACK.length + NF + TROUGH.length;
   const SAND = [0, 0.7, 2, 4, 7, 11, 17, 26, 40, 56, 75, 100];
-  const sea = new THREE.Mesh(grid(NR, WC), seaMat), sand = new THREE.Mesh(grid(NR, SAND.length), sandMat), swash = new THREE.Mesh(grid(NR, 6), swashMat);
-  for (const mm of [sea, sand, swash]) mm.frustumCulled = false;
-  const colU = (j, hw) => j < BACK.length ? -hw + BACK[j] : j < BACK.length + NF ? -hw + 2 * hw * (j - BACK.length) / (NF - 1) : hw + TROUGH[j - BACK.length - NF];
-  // the colour of the sea at a spot: dark at the foot of the face, glassy turquoise up it, white along the crest
+  const OCEAN = [1.5, 4, 8, 14, 22, 34, 52, 80, 120, 180, 260, 380];
+  const NW = 26, WC = NW + OCEAN.length;
+  const water = new THREE.Mesh(grid(NR, WC), waterMat), sand = new THREE.Mesh(grid(NR, SAND.length), sandMat), swash = new THREE.Mesh(grid(NR, 6), swashMat);
+  for (const m of [water, sand, swash]) m.frustumCulled = false;
+  // the colour of the open water at a spot: pale green-blue in the shallows, deep blue out to sea, swells rolling through
   function waterCol(u, z, t, hw, out) {
-    const streak = 0.5 + 0.5 * Math.sin(z * 0.61 + u * 0.4) * Math.sin(z * 0.17 - 1.3);
-    if (u <= hw && u >= -hw) {
-      const k = (hw - u) / (2 * hw);
-      mix(out, 0, C.trough, C.face, smooth(0, 0.6, k));
-      mix(out, 0, out, C.glow, smooth(0.45, 0.95, k) * C.glowK);
-      mix(out, 0, out, C.foam, smooth(0.9, 0.995, k) * (0.45 + 0.55 * streak));
-    } else if (u < -hw) {
-      mix(out, 0, C.face, C.deep, smooth(-hw, -hw - 14, u));
-      mix(out, 0, out, C.foam, smooth(-hw - 2.5, -hw, u) * (0.4 + 0.5 * streak));
-    } else {
-      mix(out, 0, C.trough, C.water, smooth(hw, hw + 10, u));
-      mix(out, 0, out, C.shallow, smooth(hw + 22, hw + BEACH, u));
-      mix(out, 0, out, C.foam, smooth(hw + 4, hw, u) * 0.35 * streak);   // whitewater left at the foot by the last break
-    }
+    mix(out, 0, C.shallow, C.water, smooth(-hw - 0.5, -hw + 5, u) * 0.85 + 0.15);
+    mix(out, 0, out, C.deep, smooth(hw - 3, hw + 60, u));
+    const sw = 0.5 + 0.5 * Math.sin((z - t * WV) * 0.3 + u * 0.04);
+    mix(out, 0, out, C.face, sw * 0.1 * (1 - smooth(hw, hw + 80, u)));
     return out;
   }
   function updateGround(zc, t) {
     const z0 = Math.ceil((zc + 30) / DZ) * DZ;
-    const WP = sea.geometry.attributes.position.array, WCo = sea.geometry.attributes.color.array;
+    const WP = water.geometry.attributes.position.array, WCo = water.geometry.attributes.color.array, WN = water.geometry.attributes.normal.array;
     const SP = sand.geometry.attributes.position.array, SC = sand.geometry.attributes.color.array, SN = SAND.length;
     const FP = swash.geometry.attributes.position.array, FC = swash.geometry.attributes.color.array;
     for (let i = 0; i < NR; i++) {
       const z = z0 - (i < NEAR ? i * DZ : NEAR * DZ + (i - NEAR) * FAR_DZ), hw = laneHW(z), cx = laneX(z), b = base(z), row = Math.round(z / DZ);
-      for (let j = 0, k = i * WC * 3; j < WC; j++, k += 3) {
-        const u = colU(j, hw);
-        WP[k] = cx + u; WP[k + 1] = b + faceH(u, hw) + (u >= hw ? 0.03 * Math.sin(u * 0.9 + z * 0.7 - t * 1.7) : 0); WP[k + 2] = z;
+      // water: flat, with small ripples in the normals so the sun glints off it
+      for (let j = 0; j < WC; j++) {
+        const k = (i * WC + WC - 1 - j) * 3;   // stored right to left, so the triangles face up
+        const u = j < NW ? -hw - 1.5 + (2 * hw + 1.5) * j / (NW - 1) : hw + OCEAN[j - NW], x = cx + u;
+        WP[k] = x; WP[k + 1] = b; WP[k + 2] = z;
+        const a = 0.9 * x + 0.7 * z - 1.7 * t, c = -0.6 * x + 1.3 * z - 2.3 * t, f = 0.9 / (1 + Math.max(0, u - hw) / 15);
+        const hx = (0.036 * Math.cos(a) - 0.018 * Math.cos(c)) * f, hz = (0.028 * Math.cos(a) + 0.039 * Math.cos(c)) * f;
+        const nx = -hx, ny = 1, nz = -(SLOPE + hz), nl = Math.hypot(nx, ny, nz);
+        WN[k] = nx / nl; WN[k + 1] = ny / nl; WN[k + 2] = nz / nl;
         waterCol(u, z, t, hw, tmpA); put3(WCo, k, tmpA, 0.97 + 0.05 * hash(row * 31 + j));
       }
-      // the beach: wet at the waterline, dry dunes, then the jungle behind it
+      // sand: wet at the waterline, dry dunes, then the jungle behind the beach
       for (let j = 0, k = i * SN * 3; j < SN; j++, k += 3) {
         const o = SAND[j], hs = hash(row * 17 + j);
-        SP[k] = cx + hw + BEACH + o; SP[k + 1] = b + sandH(o, z); SP[k + 2] = z;
+        SP[k] = cx - hw - o; SP[k + 1] = b + sandH(o, z); SP[k + 2] = z;
         mix(tmpA, 0, C.wet, C.sand, smooth(0.5, 3.5, o)); mix(tmpA, 0, tmpA, C.green, smooth(45, 70, o));
         put3(SC, k, tmpA, 0.93 + 0.1 * hs);
       }
-      // the swash: water running up the sand and sliding back, leaving a lacy line of foam
-      const reach = 0.6 + 2.4 * (0.5 + 0.5 * Math.sin(t * 0.85 + z * 0.045)) * (0.6 + 0.4 * Math.sin(z * 0.13 + 1.7)), e0 = hw + BEACH;
-      const cols = [e0 - 3, e0 - 1, e0 + reach - 0.9, e0 + reach - 0.35, e0 + reach, e0 + reach + 0.6];
+      // the swash: each wave runs up the sand and slides back, leaving a lacy line of foam
+      const reach = 0.6 + 2.4 * (0.5 + 0.5 * Math.sin(t * 0.85 + z * 0.045)) * (0.6 + 0.4 * Math.sin(z * 0.13 + 1.7));
+      const cols = [-hw + 3, -hw + 1, -hw - reach + 0.9, -hw - reach + 0.35, -hw - reach, -hw - reach - 0.6];
       for (let j = 0, k = i * 6 * 3; j < 6; j++, k += 3) {
-        const u = cols[j], o = Math.max(0, u - e0), lace = 0.55 + 0.45 * hash(row * 7 + j);
-        FP[k] = cx + u; FP[k + 1] = b + (u < e0 ? 0 : sandH(o, z)) + 0.035; FP[k + 2] = z;
-        waterCol(Math.min(u, e0), z, t, hw, tmpW);
+        const u = cols[j], o = Math.max(0, -u - hw), lace = 0.55 + 0.45 * hash(row * 7 + j);
+        FP[k] = cx + u; FP[k + 1] = b + (u > -hw ? 0 : sandH(o, z)) + 0.035; FP[k + 2] = z;
+        waterCol(u, z, t, hw, tmpW);
         if (j === 0) put3(FC, k, tmpW);
         else if (j === 1) { mix(tmpA, 0, tmpW, C.foam, 0.25 * lace); put3(FC, k, tmpA); }
         else if (j === 2) { mix(tmpA, 0, C.shallow, C.foam, 0.55 * lace); put3(FC, k, tmpA); }
@@ -174,72 +188,55 @@ export function createSurf(host) {
         else put3(FC, k, C.wet, 0.97);
       }
     }
-    for (const mm of [sea, sand, swash]) { mm.geometry.attributes.position.needsUpdate = true; mm.geometry.attributes.color.needsUpdate = true; mm.geometry.computeVertexNormals(); }
+    water.geometry.attributes.position.needsUpdate = true; water.geometry.attributes.color.needsUpdate = true; water.geometry.attributes.normal.needsUpdate = true;
+    sand.geometry.attributes.position.needsUpdate = true; sand.geometry.attributes.color.needsUpdate = true; sand.geometry.computeVertexNormals();
+    swash.geometry.attributes.position.needsUpdate = true; swash.geometry.attributes.color.needsUpdate = true; swash.geometry.computeVertexNormals();
   }
 
-  // ---------- barrels: stretches where the lip throws right over the face ----------
-  const barrels = [];   // { za (where it opens), zb (where it closes), warned }
-  function barrelK(z) {
-    let k = 0;
-    for (const b of barrels) if (z < b.za && z > b.zb) k = Math.max(k, smooth(b.za, b.za - 18, z) * smooth(b.zb, b.zb + 18, z));
-    return k;
-  }
-  // the curl's cross-section at z: an arc from the crest, up and over; in a barrel it reaches far out over the face
-  const curl = z => { const k = barrelK(z); return { k, rx: lerp(1.1, 4.2, k), ry: lerp(1.2, 3.6, k), end: lerp(0.15, -0.2, k) * Math.PI }; };
-  const tubeReach = z => { const c = curl(z); return c.rx * (1 + Math.cos(c.end)); };   // how far out from the crest the lip lands
-
-  // ---------- the lip: a sheet curling over the top of the wave, rebuilt every frame ----------
-  const LROWS = 120, LCOLS = 18;
-  const lip = new THREE.Mesh(grid(LROWS, LCOLS), lipMat); lip.frustumCulled = false;
-  function updateLip(zc, t) {
-    const z0 = Math.ceil((zc + 30) / DZ) * DZ;
-    const Pa = lip.geometry.attributes.position.array, Ca = lip.geometry.attributes.color.array;
-    for (let i = 0; i < LROWS; i++) {
-      const z = z0 - i * DZ, hw = laneHW(z), cx = laneX(z), b = base(z), c = curl(z), row = Math.round(z / DZ);
-      const wob = 0.12 * Math.sin(z * 0.4 + t * 2.3);
-      for (let j = 0, k = i * LCOLS * 3; j < LCOLS; j++, k += 3) {
-        const s = j / (LCOLS - 1), th = lerp(Math.PI, c.end, s);
-        const u = -hw + c.rx + c.rx * Math.cos(th), y = FACE_H + c.ry * Math.sin(th) + wob * s;
-        Pa[k] = cx + u; Pa[k + 1] = b + y; Pa[k + 2] = z;
-        // white water tumbling over the top, glassy green-blue underneath, a fringe of foam where it lands
-        const n = 0.5 + 0.5 * Math.sin(z * 0.9 + s * 7 + t * 3) * Math.sin(z * 0.31 - t);
-        mix(tmpA, 0, C.face, C.glow, 0.45 + 0.55 * s);
-        // foam rolling over the top of a small curl; in a barrel the sheet is glassy, with foam only along its edge
-        const top = smooth(0.05, 0.4, s) * (1 - smooth(0.55, 0.85, s)) * (0.55 + 0.45 * n) * (1 - 0.75 * c.k);
-        const edge = smooth(0.86, 1, s) * (0.5 + 0.5 * n);
-        mix(Ca, k, tmpA, C.foam, Math.max(top, edge));
-        Ca[k] *= 0.97 + 0.05 * hash(row * 13 + j);
-      }
-    }
-    lip.geometry.attributes.position.needsUpdate = true; lip.geometry.attributes.color.needsUpdate = true; lip.geometry.computeVertexNormals();
-  }
-
-  // ---------- foam sections: whitewater bumps on the face that kick you into the air ----------
-  const FACE_ROWS = [1, 0.8, 0.62, 0.46, 0.32, 0.2, 0.11, 0.05, 0.015, 0], BACK_ROWS = [0.08, 0.2, 0.36, 0.55, 0.78, 1];
-  const CROWS = FACE_ROWS.length + BACK_ROWS.length, CCOLS = 22, CMAX = 12;
-  const chopPool = [];
-  const chopF = (r, dz) => dz >= 0 ? (dz < r.LF ? Math.pow(1 - dz / r.LF, r.p) : 0) : (dz > -r.LB ? 0.5 + 0.5 * Math.cos(Math.PI * dz / r.LB) : 0);
-  function drawChop(r, t) {
+  // ---------- waves: each its own smooth mesh, so the crest stays sharp as it moves ----------
+  const FACE = [1, 0.82, 0.66, 0.52, 0.4, 0.3, 0.21, 0.14, 0.085, 0.045, 0.018, 0], BACK = [0.05, 0.12, 0.21, 0.32, 0.45, 0.6, 0.78, 1];
+  const WROWS = FACE.length + BACK.length, WCOLS = 42, WMAX = 10;
+  const meshPool = [];
+  const waveF = (r, dz) => dz >= 0 ? (dz < r.LF ? Math.pow(1 - dz / r.LF, r.p) : 0) : (dz > -r.LB ? 0.5 + 0.5 * Math.cos(Math.PI * dz / r.LB) : 0);
+  const us = new Float32Array(WCOLS);
+  function drawWave(r, t) {
     const m = r.mesh; if (!m) return;
     const Pa = m.geometry.attributes.position.array, Ca = m.geometry.attributes.color.array, amp = E.rampAmp(r);
-    for (let i = 0; i < CROWS; i++) {
-      const face = i < FACE_ROWS.length, dz = face ? FACE_ROWS[i] * r.LF : -BACK_ROWS[i - FACE_ROWS.length] * r.LB;
-      const z = r.z + dz, hw = laneHW(z), cx = laneX(z), f = chopF(r, dz);
-      for (let j = 0, k = i * CCOLS * 3; j < CCOLS; j++, k += 3) {
-        const u = lerp(r.ua - r.fade, r.ub + r.fade, j / (CCOLS - 1)), e = E.rampE(r, u, hw);
-        Pa[k] = cx + u; Pa[k + 1] = groundH(u, z) + amp * f * e + 0.05; Pa[k + 2] = z;
-        const n = 0.5 + 0.5 * Math.sin(u * 2.1 + r.seed + t * 2) * Math.sin(z * 0.8 - t * 1.4);
+    for (let i = 0; i < WROWS; i++) {
+      const face = i < FACE.length, dz = face ? FACE[i] * r.LF : -BACK[i - FACE.length] * r.LB;
+      const z = r.z + dz, hw = laneHW(z), cx = laneX(z), b = base(z), f = waveF(r, dz);
+      // columns: dense across the lane, then spreading out over the open sea
+      const u0 = Math.max(-hw - 1.5, r.ua - 3), u1 = Math.min(hw + 50, r.ub + 3);
+      if (u1 > hw + 2) { for (let j = 0; j < 32; j++) us[j] = lerp(u0, hw, j / 31); for (let j = 32; j < WCOLS; j++) us[j] = lerp(hw, u1, Math.pow((j - 31) / (WCOLS - 32), 1.4)); }
+      else for (let j = 0; j < WCOLS; j++) us[j] = lerp(u0, u1, j / (WCOLS - 1));
+      for (let j = 0, k = i * WCOLS * 3; j < WCOLS; j++, k += 3) {
+        const u = us[j], e = E.rampE(r, u, hw), h = amp * e;
+        // the lip pitches forward over the face near the top: that's the curl
+        const lip = face ? smooth(0.62, 1, f) * smooth(0.25, 0.8, e) * Math.min(1, amp / 3) : 0;
+        Pa[k] = cx + u; Pa[k + 1] = b + h * f + 0.04 + lip * 0.12; Pa[k + 2] = z + lip * 1.15;
+        // deep at the foot, see-through turquoise up the face, foam spilling over the lip and trailing behind
+        const n = 0.5 + 0.5 * Math.sin(u * 1.9 + r.seed + t * 1.3) * Math.sin(u * 0.63 - t * 0.7 + r.seed * 2);
+        const shore = smooth(-hw + 6, -hw + 0.5, u);   // where it breaks onto the sand it's all whitewater
+        if (face) {
+          mix(tmpA, 0, C.trough, C.face, smooth(0.03, 0.42, f));
+          mix(tmpB, 0, tmpA, C.glow, smooth(0.4, 0.9, f) * C.glowK * (1 - shore));
+          mix(tmpA, 0, tmpB, C.foam, Math.max(smooth(0.86, 0.99, f) * (0.55 + 0.45 * n), shore * smooth(0.15, 0.6, f) * (0.6 + 0.4 * n)));
+        } else {
+          mix(tmpB, 0, C.trough, C.face, f * 0.7);
+          const soup = smooth(-r.LB * 0.8, -0.3, dz);
+          mix(tmpA, 0, tmpB, C.foam, Math.max(soup * (0.25 + 0.6 * n), shore * 0.7) * 0.9);
+        }
+        // blend into the water around it where the wave dies away
         waterCol(u, z, t, hw, tmpW);
-        mix(tmpA, 0, tmpW, C.glow, smooth(0.2, 0.7, f) * 0.5);
-        mix(tmpB, 0, tmpA, C.foam, smooth(0.35, 0.95, f) * (0.55 + 0.45 * n) + (face ? 0 : 0.3 * f));
-        mix(Ca, k, tmpW, tmpB, smooth(0, 0.5, e));
+        mix(tmpB, 0, tmpW, tmpA, smooth(0, 0.3, e * smooth(0, 0.6, amp)));
+        put3(Ca, k, tmpB);
       }
     }
-    m.geometry.attributes.position.needsUpdate = true; m.geometry.attributes.color.needsUpdate = true; m.geometry.computeVertexNormals();
+    m.geometry.attributes.position.needsUpdate = true; m.geometry.attributes.color.needsUpdate = true;
+    m.geometry.computeVertexNormals();
   }
 
-
-  // ---------- whales breach out behind the wave ----------
+  // ---------- the whale: rises in the lane and you can ride up its back ----------
   function makeWhale() {
     const g = new THREE.Group();
     const body = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 12), whaleMat); g.add(body);
@@ -253,14 +250,24 @@ export function createSurf(host) {
     g.userData = { body, tail };
     return g;
   }
-  const whale = makeWhale();
+  const whales = [makeWhale(), makeWhale()];   // one for the lane, one breaching out at sea
+  function placeLaneWhale(r) {
+    const g = r.whale, amp = E.rampAmp(r), mid = r.z + (r.LF - r.LB) / 2, len = (r.LF + r.LB) / 2;
+    const u = (r.ua + r.ub) / 2, b = base(mid), x = laneX(mid) + u;
+    g.position.set(x, b - 0.35, mid);
+    g.userData.body.scale.set(3, amp + 0.35, len * 0.95);
+    g.rotation.set(-Math.atan(SLOPE), 0, 0);
+    g.userData.tail.position.set(0, 0, -len * 0.9);
+    g.userData.tail.rotation.x = Math.sin(E.S.t * 1.6) * 0.25;
+    if (Math.random() < 0.012) E.burst(x, b + amp + 0.4, mid + len * 0.45, 30, 0.6, 9, 0.18, 1.2, C.sprayHex, 9);   // blowing
+  }
   const breach = { on: false, t: 0, next: 18 };
   function updateBreach(dt, zc) {
-    const g = whale;
+    const g = whales[1];
     if (!breach.on) {
       breach.next -= dt;
       if (breach.next <= 0 && E.S.state !== 'results') {
-        breach.on = true; breach.t = 0; breach.z = zc - rand(110, 160); breach.u = -laneHW(breach.z) - rand(30, 70); breach.dir = Math.random() < 0.5 ? 1 : -1;
+        breach.on = true; breach.t = 0; breach.z = zc - rand(110, 160); breach.u = laneHW(breach.z) + rand(30, 70); breach.dir = Math.random() < 0.5 ? 1 : -1;
         g.visible = true; g.userData.body.scale.set(2.6, 2.2, 7); g.userData.tail.position.set(0, 0, -6.4);
       }
       return;
@@ -343,7 +350,7 @@ export function createSurf(host) {
   const facing = o => Math.atan2(o.vu, o.vz);
   // hit: wipe (ends the run) or slow; clear: how high above the water you need to be to pass over it
   const KIND = {
-    rock: { make: o => makeRock(o.r), w: o => o.r + 0.3, clear: 1.7, hit: 'wipe', why: ['Hit a rock', 'Steer round the reef, or jump it'],
+    rock: { make: o => makeRock(o.r), w: o => o.r + 0.3, clear: 1.7, hit: 'wipe', why: ['Hit a rock', 'Steer round the rocks, or launch over them off a wave'],
       bob: () => -0.25, anim: (o, t) => { o.g.userData.ring.scale.setScalar(1 + 0.12 * Math.sin(t * 2.4 + o.ph)); } },
     shark: { make: () => makeShark(), w: () => 0.95, clear: 1.2, hit: 'wipe', hop: 'Shark Jump', pts: 400, why: ['Bitten by a shark', 'Steer round the fins, or jump them'],
       move: (o, dt) => swim(o, dt, 3), bob: (o, t) => Math.sin(t * 1.7 + o.ph) * 0.05,
@@ -443,7 +450,7 @@ export function createSurf(host) {
       props.push({ g, z: 0, off: 0, palm: mk === makePalm });
     }
   }
-  // out to sea behind the wave: sailboats and little islands drifting past on the horizon
+  // far out on the right: sailboats and little islands drifting past on the horizon
   const sailMat = lam(0xffffff), hullMat = lam(0x30425a), islandMat = lam(0x3f7a40), islandSand = lam(0xe8cf9a);
   const farOut = [];
   for (let i = 0; i < 6; i++) {
@@ -465,16 +472,16 @@ export function createSurf(host) {
       if (p.z > zc + 25 || !p.off) {
         if (!reset && p.off) p.z -= PROP_N * PROP_GAP;
         p.off = p.palm ? rand(3.5, 40) : rand(3, 18);
-        p.g.rotation.y = Math.PI + (p.palm ? rand(-0.5, 0.5) : rand(-0.6, 0.6));   // facing the water
+        p.g.rotation.y = p.palm ? rand(-0.5, 0.5) : rand(-0.6, 0.6);
       }
       const hw = laneHW(p.z);
-      p.g.position.set(laneX(p.z) + hw + BEACH + p.off, base(p.z) + sandH(p.off, p.z) - 0.05, p.z);
+      p.g.position.set(laneX(p.z) - hw - p.off, base(p.z) + sandH(p.off, p.z) - 0.05, p.z);
     });
     for (const g of farOut) {
       const u = g.userData; u.u += u.sp * dt * 0.3;
-      const z = zc - u.dz; g.position.set(laneX(z) - laneHW(z) - u.u, base(z) - 0.2, z);
+      const z = zc - u.dz; g.position.set(laneX(z) + laneHW(z) + u.u, base(z) - 0.2, z);
       g.rotation.y = 0.6;
-      u.dz -= dt * 2.5;
+      u.dz -= dt * 2.5;   // drifting slowly closer, then round again
       if (u.dz < 140) u.dz += 520;
     }
   }
@@ -482,7 +489,7 @@ export function createSurf(host) {
   // ---------- the whirlpool: ride into it and it pulls you under, out into the lagoon (double points) ----------
   // A disc of water laid on the sea: spiral foam arms winding into a dark core, a churning lip of foam at the rim,
   // and normals shaped like a funnel so the light falls into it. Its edge matches the water around it.
-  const WR = 8, WRINGS = 28, WSEGS = 80;
+  const WR = 9.5, WRINGS = 28, WSEGS = 80;
   const whirlGeo = (() => {
     const g = new THREE.BufferGeometry(), n = (WRINGS + 1) * WSEGS, idx = [];
     for (let i = 0; i < WRINGS; i++) for (let j = 0; j < WSEGS; j++) {
@@ -547,128 +554,114 @@ export function createSurf(host) {
   }
 
   // ---------- what turns up ahead ----------
-  let nextChop = 0, nextBarrelD = 0, tube = null, high = false;
-  function addChop(zm, d) {
-    const hw = laneHW(zm), hard = clamp(d / 2500, 0, 1), lagoon = !!E.S.bonus;
-    const w = lagoon ? 2 * hw : rand(4.5, 7.5), uc = lagoon ? 0 : rand(-0.65, 0.7) * hw;
-    const h = lagoon ? rand(2.8, 3.4) : rand(1.7, 2.3) + hard * 0.6;
-    return E.addRamp(zm, { kind: 'chop', wv: 0, LF: 5.5, LB: 3.5, p: 1.4, h, ua: uc - w / 2, ub: uc + w / 2, fade: 1.6, ring: lagoon, seed: rand(0, 50) });
-  }
-  function spawn(z, d) {
-    const hw = laneHW(z), hard = clamp(d / 2500, 0, 1);
-    // a barrel: the lip throws over the top of the face for a stretch; nothing in the way inside, coins down the tube
-    if (!E.S.bonus && d > nextBarrelD && !E.ramps.some(r => r.zm < z + 25 && r.zm > z - 140)) {
-      const len = rand(80, 130);
-      barrels.push({ za: z, zb: z - len, warned: false });
-      for (let i = 0; i < len / 4 - 6; i++) E.coins.push({ z: z - 20 - i * 4, u: -hw + 3.2 + Math.sin(i * 0.5) * 0.8, lift: 0.9 });
-      nextBarrelD = d + len + rand(260, 460); nextChop = Math.min(nextChop, z - len - 20);
-      return len + 10;
+  let nextWave = 0, nextWhaleD = 0;
+  function addWave(zm, d, intro) {
+    const hw = laneHW(zm), r = Math.random();
+    let ua = -99, ub = 99, h = rand(3.1, 3.7), big = false;
+    if (!intro && d > 400 && r < 0.14) { h = rand(4.6, 5.2); big = true; }
+    else if (!intro && d > 150 && r < 0.4) {   // only part of the way across: ride into it or go round
+      if (Math.random() < 0.5) { ua = -hw; ub = rand(-1, 2); } else { ua = rand(-2, 1); ub = 99; }
+      h = rand(3.5, 4.1);
     }
-    if (z <= nextChop) {
-      const gap = addChop(z, d);
-      nextChop = z - gap - rand(Math.max(10, 30 - d * 0.006), Math.max(22, 55 - d * 0.01));
+    if (E.S.bonus) { h = rand(4.4, 5.2); ua = -99; ub = 99; big = false; }   // the lagoon's swell is bigger, and every wave has a ring
+    return E.addRamp(zm, { kind: 'wave', wv: WV, LF: 7, LB: 10, p: 1.6, h, ua, ub, big, ring: !!E.S.bonus, seed: rand(0, 50), warn: big ? ['Big set', 'Room for a double'] : null });
+  }
+  function addWhale(zm) {
+    const hw = laneHW(zm), u = rand(-0.45, 0.45) * hw;
+    E.coinLine(zm + 16, u, 0, 4);
+    return E.addRamp(zm, { kind: 'whale', wv: 2.5, LF: 6, LB: 9, round: true, h: 2.6, ua: u - 1.6, ub: u + 1.6, fade: 2.2, grow: 2.5, coins: false,
+      bonus: ['Whale Ride', 800], warn: ['Whale!', 'Ride up its back'] });
+  }
+  function spawn(z, d, intro) {
+    const hw = laneHW(z);
+    if (z <= nextWave) {
+      let gap;
+      if (!intro && d > nextWhaleD) { nextWhaleD = d + rand(650, 950); gap = addWhale(z); }
+      else gap = addWave(z, d, intro);
+      nextWave = z - gap - rand(Math.max(6, 20 - d * 0.005), Math.max(14, 40 - d * 0.009));
       return gap;
     }
-    if (d < 50) { E.coinLine(z, rand(-0.3, 0.3) * hw, 1.5, 5); return 16; }
-    // a whirlpool in the flat water at the foot of the wave
-    if (!E.S.bonus && !whirl && d > nextWhirlD) {
-      placeWhirl(z, hw + 4);
-      nextWhirlD = d + rand(1000, 1400);
+    if (intro || d < 60) { E.coinLine(z, rand(-0.4, 0.4) * hw, 1.5, 5); return 18; }
+    // a whirlpool, where no wave will roll across it while you can see it
+    if (!E.S.bonus && !whirl && d > nextWhirlD && !E.ramps.some(r => r.zm > z - 8 && r.zm < z + 70)) {
+      placeWhirl(z, rand(-0.4, 0.4) * hw);
+      nextWhirlD = d + rand(1000, 1400); nextWave = Math.min(nextWave, z - 18);
       return 30;
     }
     if (E.S.bonus && Math.random() < 0.55) {   // the lagoon: coins everywhere, fewer things in the way
       E.coinLine(z, rand(-0.6, 0.6) * hw, rand(1, 3), 9);
       return rand(16, 22);
     }
-    const busy = 0.6 + 0.33 * hard;
-    if (Math.random() > busy) {
-      if (Math.random() < 0.45) {   // coins up over the lip: carve up and launch for them
-        for (let i = 0; i < 6; i++) { const a = Math.sin(i / 5 * Math.PI); E.coins.push({ z: z - i * 3, u: -hw + 0.4 - a * 0.6, lift: 1.4 + a * 3.2 }); }
-      } else E.coinLine(z, rand(-0.6, 0.6) * hw, rand(1, 3));
+    // it gets busier and meaner the further you go: hard reaches full strength around 2.5 km
+    const hard = clamp(d / 2500, 0, 1), busy = 0.62 + 0.33 * hard;
+    if (Math.random() > busy) {   // a breather with coins
+      E.coinLine(z, rand(-0.6, 0.6) * hw, rand(0.5, 2.5));
       return rand(16, 22);
     }
     const k = Math.random(), side = () => (Math.random() < 0.5 ? -1 : 1);
-    if (k < 0.2) {   // a reef breaking the surface low on the face, with one way through
-      const lanes = [-0.2, 0.15, 0.45, 0.75, 1.05], free = (Math.random() * lanes.length) | 0;
-      lanes.filter((_, i) => i !== free).sort(() => Math.random() - 0.5).slice(0, 2 + Math.round(hard * 2)).forEach(f => E.addThing('rock', z - rand(-2, 2), f * hw + rand(-0.4, 0.4), { r: rand(0.75, 1.15) }));
+    if (k < 0.22) {   // a reef: rocks across the lane with one way through, sometimes a shark patrolling it
+      const lanes = [-0.7, -0.35, 0, 0.35, 0.7], free = (Math.random() * lanes.length) | 0;
+      lanes.filter((_, i) => i !== free).sort(() => Math.random() - 0.5).slice(0, 2 + Math.round(hard * 2)).forEach(f => E.addThing('rock', z - rand(-2, 2), f * hw + rand(-0.4, 0.4), { r: rand(0.75, 1.2) }));
       E.coinLine(z - 6, lanes[free] * hw, 0.2, 4);
-    } else if (k < 0.42 && d > 80) {   // sharks cruising along the face
-      for (let i = 0, n = 1 + Math.round(hard * 2); i < n; i++) E.addThing('shark', z - i * 11, rand(-0.7, 0.8) * hw, { vu: side() * rand(3, 4 + 2.5 * hard), vz: rand(1.5, 3.5) });
-    } else if (k < 0.56) {   // a bloom of jellyfish
-      for (let i = 0, n = 4 + Math.round(hard * 4) + (Math.random() * 3 | 0); i < n; i++) E.addThing('jelly', z - i * rand(2.5, 4.5), rand(-0.85, 0.9) * hw, { vu: rand(-1.2, 1.2), vz: rand(0, 0.8) });
-    } else if (k < 0.68) {   // buoys across the bottom of the face
-      const n = 3 + Math.round(hard * 2), gap = (1.4 * hw) / n, off = rand(0, gap), skip = (Math.random() * n) | 0;
-      for (let i = 0; i < n; i++) if (i !== skip) E.addThing('buoy', z, -0.2 * hw + off + i * gap);
-    } else if (k < 0.86) {   // surfers paddling out over the wave
-      for (let i = 0, n = 1 + Math.round(hard * 2); i < n; i++) E.addThing('kook', z - i * 7, rand(-0.6, 0.8) * hw);
+      if (hard > 0.3 && Math.random() < hard) E.addThing('shark', z - 16, rand(-0.5, 0.5) * hw, { vu: side() * rand(3, 5), vz: rand(2, 3.5) });
+    } else if (k < 0.42 && d > 100) {   // sharks cruising across, more and faster later on
+      for (let i = 0, n = 1 + Math.round(hard * 2); i < n; i++) E.addThing('shark', z - i * 11, rand(-0.65, 0.65) * hw, { vu: side() * rand(3, 4 + 2.5 * hard), vz: rand(1.5, 3.5) });
+    } else if (k < 0.56) {   // a bloom of jellyfish spread across the lane
+      for (let i = 0, n = 4 + Math.round(hard * 4) + (Math.random() * 3 | 0); i < n; i++) E.addThing('jelly', z - i * rand(2.5, 4.5), rand(-0.85, 0.85) * hw, { vu: rand(-1.2, 1.2), vz: rand(0, 0.8) });
+    } else if (k < 0.68) {   // a line of buoys with narrow gaps
+      const n = 4 + Math.round(hard * 2), gap = (2 * hw - 2) / n, off = rand(0, gap), skip = (Math.random() * n) | 0;
+      for (let i = 0; i < n; i++) if (i !== skip) E.addThing('buoy', z, -hw + 1 + off + i * gap);
+    } else if (k < 0.84) {   // a pack of surfers paddling out
+      for (let i = 0, n = 1 + Math.round(hard * 2); i < n; i++) E.addThing('kook', z - i * 7, rand(-0.65, 0.65) * hw);
     } else {
-      for (let i = 0, n = 1 + Math.round(hard); i < n; i++) E.addThing('turtle', z - i * 9, rand(-0.4, 0.8) * hw, { vu: rand(-1.5, 1.5), vz: rand(0.5, 1.2) });
+      for (let i = 0, n = 1 + Math.round(hard); i < n; i++) E.addThing('turtle', z - i * 9, rand(-0.6, 0.6) * hw, { vu: rand(-1.5, 1.5), vz: rand(0.5, 1.2) });
     }
     return rand(18, 27) * (1 - 0.3 * hard);
-  }
-  // the barrel: inside it you score for every second; up under the lip there's no room
-  function updateTube(dt) {
-    const P = E.P, hw = laneHW(P.z), k = barrelK(P.z);
-    for (const b of barrels) if (!b.warned && P.z - b.za < 80 && P.z > b.za) { b.warned = true; E.banner('Barrel', 'Stay up the face, under the lip'); E.Sfx.tone(262, 0.7, 'triangle', 0.1, 392); }
-    while (barrels.length && barrels[0].zb > E.camera.position.z + 20) barrels.shift();
-    if (E.S.state !== 'ride') { tube = null; return; }
-    if (k > 0.5 && P.u < -hw + 1.4) {   // the lip is right overhead: no launching out of a barrel
-      P.u = -hw + 1.4; P.lat = Math.max(0, P.lat); P.heading = Math.max(0, P.heading);
-      if (!high) { high = true; E.pop('Too high!', 0, 'warn'); }
-    } else high = false;
-    const inside = k > 0.6 && !P.air && P.u < -hw + tubeReach(P.z) * 0.85;
-    if (inside) {
-      if (!tube) { tube = { t: 0 }; E.pop('In the barrel!', 0, 'big'); E.Sfx.noise(0.8, 0.25, 600); }
-      tube.t += dt;
-      if (Math.random() < dt * 25) { const z = P.z - rand(2, 8), u = -hw + rand(1, tubeReach(z)); E.emit(laneX(z) + u, groundH(u, z) + rand(1, 4), z, rand(-0.5, 0.5), rand(-0.5, 0.5), rand(2, 5), rand(0.05, 0.1), 0.8, C.sprayHex, 0); }
-    } else if (tube) {
-      if (tube.t > 0.4) E.trick(`Barrel ${tube.t.toFixed(1)} s`, Math.round(300 + tube.t * 700), 'big');
-      tube = null;
-    }
   }
 
   const kit = {
     id: 'surf', saveKey: 'surf', yawUnit: Math.PI, grab: 'Indy', under: true, sink: 0.3,
     tune: { SLOPE },
-    laneX, laneHW, themes: THEMES, KIND, camSide: 3, camFollow: 0.95,
+    laneX, laneHW, themes: THEMES, KIND,
     pickTheme: () => (Math.random() * 3) | 0,
-    bonus: { name: 'Whirlpool', theme: 3, len: 650, fade: '#0b5f7a', back: 'Back on the wave' },
+    bonus: { name: 'Whirlpool', theme: 3, len: 650, fade: '#0b5f7a', back: 'Back on the beach' },
     ambience: { type: 'lowpass', freq: [350, 1150], level: [0.07, 0.19] },
     copy: {
-      drop: ['Drop in', 'Carve up to the lip to launch'],
-      hintsTouch: [[0.6, 'Drag your left thumb to carve. Down the wave is faster'], [4, 'Carve up to the top of the wave to launch off the lip'], [10, 'In the air, push the stick up or down to flip, across to spin'], [17, 'Tap the button to jump. Hold it in the air to grab']],
-      hintsKeys: [[0.6, '<kbd>←</kbd> <kbd>→</kbd> to carve. Down the wave is faster'], [4, 'Carve <kbd>←</kbd> up to the top of the wave to launch off the lip'], [10, 'In the air, <kbd>↑</kbd> <kbd>↓</kbd> flip and <kbd>←</kbd> <kbd>→</kbd> spin. Let go to land straight'], [17, '<kbd>Space</kbd> jumps. Hold it in the air to grab']],
+      drop: ['Drop in', 'Ride into the waves to launch'],
+      hintsTouch: [[0.6, 'Drag your left thumb to carve. Stay off the sand'], [3.5, 'Ride into a wave to launch. In the air, push the stick up to backflip, down to frontflip'], [10, 'In the air, push the stick across to spin. Let go and you land straight'], [17, 'Tap the button to jump. Hold it in the air to grab']],
+      hintsKeys: [[0.6, '<kbd>←</kbd> <kbd>→</kbd> to carve. Stay off the sand'], [3.5, 'Ride into a wave to launch. In the air, <kbd>↑</kbd> backflips and <kbd>↓</kbd> frontflips'], [10, 'In the air, <kbd>←</kbd> <kbd>→</kbd> spins. Let go and you land straight'], [17, '<kbd>Space</kbd> jumps. Hold it in the air to grab']],
     },
-    baseH: groundH,
-    rampE(r, u) { return smooth(r.ua - r.fade, r.ua, u) * (1 - smooth(r.ub, r.ub + r.fade, u)); },
-    edge(u, z, hw) { return u > hw + 6 ? OFF_EDGE : null; },
-    uLimit: hw => [-hw - 0.4, hw + 16],
-    // down the face is faster, up it is slower, like a real wave
-    speedK: P => 1 + 0.1 * Math.sin(P.heading),
-    // carve over the crest and the wave throws you up, and back towards the face
-    onTakeoff(e, r) {
-      const P = e.P, hw = laneHW(P.z);
-      if (r || P.u > -hw + 1.3 || P.lat > -3) return;
-      P.vy = Math.max(P.vy, 8.5 + P.v * 0.13); P.lat = 3.2; P.launches++;
-      e.Sfx.noise(0.4, 0.3, 1500, 'highpass');
-      e.burst(P.wx, P.wy + 0.4, P.wz, 30, 3, 5, 0.14, 0.8, C.sprayHex);
+    baseH(u, z) { const hw = laneHW(z); return u < -hw ? base(z) + sandH(-u - hw, z) : base(z); },
+    rampE(r, u, hw) {
+      const side = smooth(r.ua - r.fade, r.ua, u) * (1 - smooth(r.ub, r.ub + r.fade, u));
+      if (r.kind !== 'wave') return side * smooth(0, 1, hw - Math.abs(u) + 1);
+      // a wave breaks onto the sand on the left and fades into open swell on the right
+      return side * smooth(-hw - 0.5, -hw + 3, u) * (1 - 0.8 * smooth(hw, hw + 45, u));
     },
+    edge(u, z, hw) {
+      if (u < -hw + 0.3) return SAND_EDGE;
+      if (u > hw + 1) return DEEP_EDGE;
+      return null;
+    },
+    uLimit: hw => [-hw - 2.2, hw + 5],
     makeRider, pose: poseRider,
     sfxLaunch: Sfx => Sfx.noise(0.35, 0.3, 1400, 'highpass'),
     build(e) {
       E = e;
-      e.scene.add(sea, sand, swash, lip);
-      for (let i = 0; i < CMAX; i++) { const m = new THREE.Mesh(grid(CROWS, CCOLS), chopMat); m.frustumCulled = false; m.visible = false; e.scene.add(m); chopPool.push(m); }
-      whale.visible = false; e.scene.add(whale);
+      e.scene.add(water, sand, swash);
+      for (let i = 0; i < WMAX; i++) { const m = new THREE.Mesh(grid(WROWS, WCOLS), waveMat); m.frustumCulled = false; m.visible = false; e.scene.add(m); meshPool.push(m); }
+      for (const w of whales) { w.visible = false; e.scene.add(w); }
       for (const g of farOut) e.scene.add(g);
       e.scene.add(whirlG);
-      e.placeWhirl = placeWhirl; e.barrels = barrels;
+      e.placeWhirl = placeWhirl;
     },
     applyTheme(th) {
       T = th;
       C = { shallow: rgb(th.shallow), water: rgb(th.water), deep: rgb(th.deep), trough: rgb(th.deep).map(v => v * 0.6), face: rgb(th.face), glow: rgb(th.glow), foam: rgb(th.foam),
-        sand: rgb(th.sand), wet: rgb(th.wet), green: rgb(th.green), sprayHex: rgb(th.spray), glowK: th.night ? 0.75 : 0.6 };
-      for (const mtl of [seaMat, lipMat, chopMat]) { mtl.specular.setHex(th.spec).multiplyScalar(0.6); mtl.emissive.setHex(th.emissive ?? 0); }
+        sand: rgb(th.sand), wet: rgb(th.wet), green: rgb(th.green), sprayHex: rgb(th.spray), glowK: th.night ? 0.75 : 0.55 };
+      SAND_EDGE.trail = C.sand;
+      waterMat.specular.setHex(th.spec).multiplyScalar(0.55); waveMat.specular.setHex(th.spec);
+      waterMat.emissive.setHex(th.emissive ?? 0); waveMat.emissive.setHex(th.emissive ?? 0);
       sandMat.emissive.setHex(th.night ? 0x0a0a20 : 0);
       white.color.setHex(th.foam); white.emissive.setHex(th.night ? th.foam : 0).multiplyScalar(0.35);
       trunkMat.color.setHex(th.trunk); leafMat.color.setHex(th.leaf);
@@ -679,37 +672,41 @@ export function createSurf(host) {
     // a new run starts the schedule over; coming out of the lagoon (or into it) carries on from here
     reset() {
       const P = E.P, fresh = P.z0 - P.z < 5;
-      nextChop = P.z - (fresh ? 60 : 40); whirl = null; whirlG.visible = false; barrels.length = 0; tube = null; high = false;
-      if (fresh) { nextBarrelD = rand(220, 320); nextWhirlD = rand(500, 700); breach.next = rand(10, 18); }
-      breach.on = false; whale.visible = false;
+      nextWave = P.z - (fresh ? 75 : 50); whirl = null; whirlG.visible = false;
+      if (fresh) { nextWhaleD = rand(300, 450); nextWhirlD = rand(450, 650); breach.next = rand(10, 18); }
+      breach.on = false; whales[1].visible = false;
     },
     spawn,
-    rampOn(r) { r.mesh = chopPool.pop() || null; if (r.mesh) r.mesh.visible = true; },
-    rampOff(r) { if (r.mesh) { r.mesh.visible = false; chopPool.push(r.mesh); r.mesh = null; } },
-    drawRamp(r, t) { drawChop(r, t); },
-    updateGround: (zc, t) => { updateGround(zc, t); updateLip(zc, t); },
+    rampOn(r) {
+      if (r.kind === 'whale') { r.whale = whales[0]; r.whale.visible = true; return; }
+      r.mesh = meshPool.pop() || null; if (r.mesh) r.mesh.visible = true;
+    },
+    rampOff(r) {
+      if (r.whale) { r.whale.visible = false; r.whale = null; }
+      if (r.mesh) { r.mesh.visible = false; meshPool.push(r.mesh); r.mesh = null; }
+    },
+    drawRamp(r, t) { if (r.whale) placeLaneWhale(r); else drawWave(r, t); },
+    updateGround: (zc, t) => updateGround(zc, t),
     updateScenery: (zc, reset, dt) => updateScenery(zc, reset, dt),
     update(dt, focus) {
-      // spray blowing back off the lip
-      for (let n = dt * 30; n > Math.random(); n--) {
-        const z = focus - rand(-5, 70), hw = laneHW(z), c = curl(z), th = lerp(Math.PI, c.end, rand(0.3, 1));
-        const u = -hw + c.rx + c.rx * Math.cos(th);
-        E.emit(laneX(z) + u, base(z) + FACE_H + c.ry * Math.sin(th) + 0.2, z, rand(-2.5, -0.5), rand(1, 3), rand(-1, 1), rand(0.06, 0.13), 0.9, C.sprayHex, 7);
+      // spray blowing back off the crests
+      for (const r of E.ramps) if (r.kind === 'wave' && E.rampAmp(r) > 1 && Math.abs(r.z - focus) < 90 && Math.random() < dt * 22) {
+        const hw = laneHW(r.z), u = rand(Math.max(-hw + 2, r.ua), Math.min(hw + 8, r.ub)), A = E.rampAmp(r) * E.rampE(r, u, hw);
+        if (A > 1) E.emit(laneX(r.z) + u, base(r.z) + A + 0.15, r.z + 0.6, rand(-0.4, 0.4), rand(1.5, 3.5), rand(-4, -1.5), rand(0.06, 0.13), 0.9, C.sprayHex, 7);
       }
       updateBreach(dt, focus);
       updateWhirl(dt);
-      updateTube(dt);
       // the lagoon glows: plankton drifting up around you
       if (T.id === 'lagoon') {
         const cam = E.camera.position;
         for (let i = 0, n = dt * 45; i < n; i++) {
-          const z = cam.z - rand(22, 110), u = rand(-10, 40);
-          E.emit(laneX(z) + u, groundH(u, z) + rand(0.2, 5), z, rand(-0.3, 0.3), rand(0.2, 0.8), rand(-0.3, 0.3), rand(0.05, 0.09), rand(2, 3.5), pick(PLANKTON), -0.05);
+          const z = cam.z - rand(22, 110), u = rand(-30, 40);
+          E.emit(laneX(z) + u, base(z) + rand(0.2, 5), z, rand(-0.3, 0.3), rand(0.2, 0.8), rand(-0.3, 0.3), rand(0.05, 0.09), rand(2, 3.5), pick(PLANKTON), -0.05);
         }
       }
     },
   };
   const PLANKTON = [rgb(0x9dfff0), rgb(0x7cf3ff), rgb(0xffa8e0), rgb(0xfff2a8)];
-  const OFF_EDGE = { slow: 0.45, msg: 'Off the wave!' };
+  const SAND_EDGE = { slow: 0.55, msg: 'On the sand!', trail: null }, DEEP_EDGE = { slow: 0.4, msg: 'Too far out!' };
   return createRideMode(host, kit);
 }

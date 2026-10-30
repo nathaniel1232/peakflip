@@ -237,7 +237,7 @@ export function createRideMode(host, kit) {
     if (!c.r) return out.set(laneX(c.z) + c.u, surfaceH(c.u, c.z) + c.lift, c.z);
     const r = c.r, A = rampAmp(r) * rampE(r, c.u, laneHW(r.z)), v = Math.max(P.v, 12), rel = v + r.wv, vy = launchVy(A, v, r);
     const z = r.z - rel * c.tau, lift = A + vy * c.tau - 0.5 * G * c.tau * c.tau;
-    return out.set(laneX(z) + c.u, kit.baseH(c.u, z) + Math.max(0.6, lift + 0.9), z);
+    return out.set(laneX(z) + c.u, base(z) + Math.max(0.6, lift + 0.9), z);
   }
 
   // ---------- input: ← → steer (spin in the air), ↑ ↓ flip, Space jumps (hold it in the air to grab) ----------
@@ -351,7 +351,6 @@ export function createRideMode(host, kit) {
     P.air = true; P.airT = 0; P.yaw = 0; P.pitch = 0; P.yawV = 0; P.pitchV = 0; P.grabT = 0; P.launchVy = P.vy; P.h0 = P.heading;
     qAir.copy(rider.root.quaternion);
     const r = P.vy > 5 ? rampUnder() : null;
-    kit.onTakeoff?.(E, r);
     if (r) {
       P.launches++; kit.sfxLaunch?.(Sfx, r);
       if (!bot && r.bonus) trick(r.bonus[0], r.bonus[1], 'big');
@@ -382,7 +381,7 @@ export function createRideMode(host, kit) {
     if (edge && edge !== P.edge && !bot) { pop(edge.msg, 0, 'warn'); Sfx.noise(0.3, 0.3, 300); }
     P.edge = edge;
     P.slow = edge ? Math.min(edge.slow, P.slow + dt * 0.9) : Math.max(0, P.slow - dt * 0.5);
-    P.v = top * (1 - P.slow) * (1 - 0.12 * Math.abs(Math.sin(P.heading))) * (kit.speedK ? kit.speedK(P, E) : 1);   // carving scrubs a little speed
+    P.v = top * (1 - P.slow) * (1 - 0.12 * Math.abs(Math.sin(P.heading)));   // carving scrubs a little speed
     const z0 = P.z;
     P.z -= (P.air ? P.v : Math.cos(P.heading) * P.v) * dt;
     if (!bot) { P.score += (z0 - P.z) * S.mult; if (!P.air) P.comboT += dt; }   // the combo clock stops while you're in the air, like on skis
@@ -576,8 +575,6 @@ export function createRideMode(host, kit) {
     pose.bend = P.grab ? 0.2 : 0; pose.arm = damp(pose.arm, P.air ? 1 : clamp(P.lat * 0.08, -0.5, 1), 6, dt);
     kit.pose(rider, pose, S.t, dt, P);
     P.landT += dt;
-    const trail = P.air && S.state === 'ride' ? host.trail?.() : null;
-    if (trail) for (let i = 0; i < 2; i++) emit(P.wx + rand(-0.2, 0.2), P.wy + 0.6, P.wz + 0.4, rand(-0.3, 0.3), rand(0.2, 0.7), rand(0.5, 1.5), rand(0.08, 0.14), 0.7, pick(trail), 1);
     if (!P.air && S.state !== 'wipe') {
       const rate = (P.v * 0.5 + Math.abs(P.lat) * 3) * dt, col = P.edge?.trail ?? C.trail;
       for (let i = 0; i < rate; i++) emit(P.wx + rand(-0.3, 0.3), P.wy + 0.05, P.wz + 0.9, -P.lat * 0.2 + rand(-1, 1), rand(1, 3), rand(1, 4), rand(0.04, 0.12), rand(0.3, 0.6), col, 10);
@@ -593,15 +590,13 @@ export function createRideMode(host, kit) {
     if (st === 'results') { tz = P.z; tx = laneX(tz); ty = base(tz); }
     const back = (portrait ? 10 : 8) + P.v * 0.06, up = portrait ? 4.2 : 3.1, ahead = 18;
     const lift = Math.max(0, ty - base(tz));
-    const cs = kit.camSide || 0;   // a kit can sit the camera off to one side (surf: out from the wave wall)
-    const follow = kit.camFollow ?? 0.75;   // how closely the camera tracks you across the lane
-    camTmp.set(lerp(laneX(tz + back), tx, follow) + cs, base(tz + back) + up + lift * 0.72, tz + back);
-    lookTmp.set(lerp(laneX(tz - ahead), tx, follow * 0.85) + cs * 0.3, base(tz - ahead) + 2.2 + lift * 0.8, tz - ahead);
+    camTmp.set(lerp(laneX(tz + back), tx, 0.75), base(tz + back) + up + lift * 0.72, tz + back);
+    lookTmp.set(lerp(laneX(tz - ahead), tx, 0.6), base(tz - ahead) + 2.2 + lift * 0.8, tz - ahead);
     if (st === 'results') { camTmp.set(tx + Math.sin(S.t * 0.3) * 3, base(tz + 9) + 5, tz + 9); lookTmp.set(tx, base(tz - 20), tz - 20); }
     if (st === 'intro' && !portrait) lookTmp.x -= 4;   // the card sits on the left
     if (snap) { camPos.copy(camTmp); camLook.copy(lookTmp); }
     else {
-      camPos.x = damp(camPos.x, camTmp.x, 7, dt); camPos.y = damp(camPos.y, camTmp.y, 4, dt); camPos.z = camTmp.z;
+      camPos.x = damp(camPos.x, camTmp.x, 5, dt); camPos.y = damp(camPos.y, camTmp.y, 4, dt); camPos.z = camTmp.z;
       camLook.x = damp(camLook.x, lookTmp.x, 4, dt); camLook.y = damp(camLook.y, lookTmp.y, 4, dt); camLook.z = lookTmp.z;
     }
     camera.position.copy(camPos);
