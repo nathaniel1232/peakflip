@@ -165,7 +165,7 @@ returns json language sql stable security definer set search_path = public as $$
   from (select m.id, m.pid, p.name, m.body, m.created_at,
     left(encode(sha256(convert_to(m.pid, 'UTF8')), 'hex'), 24) as author
     from chat_messages m join players p using(pid)
-    where not m.hidden and m.created_at > now() - interval '7 days' order by m.id desc limit 50) t;
+    where not m.hidden order by m.id desc limit 50) t;
 $$;
 
 create or replace function public.send_chat_message(p_pid text, p_token text, p_body text)

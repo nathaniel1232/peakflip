@@ -591,7 +591,7 @@ const skier = (() => {
     const pole = add(arm, new THREE.CylinderGeometry(0.018, 0.018, 1.15, 4), poleMat, 0, -0.95, 0.12); poles.push(pole);
     add(pole, box(0.05, 0.12, 0.05), trim, 0, 0.52, 0);                   // grip
     add(pole, new THREE.CylinderGeometry(0.07, 0.07, 0.015, 6), trim, 0, -0.48, 0);   // basket
-    pole.rotation.x = -0.25;
+    pole.rotation.x = -0.25; pole.name = 'pole';
     arm.rotation.x = 0.35; arm.rotation.z = sx * 0.18;
     arms.push(arm);
   }
@@ -3788,6 +3788,16 @@ const rideHost = {
     trickPts: $('trickPts'), hint: $('hint'), race: $('raceInfo'), speed: $('speedo'), stick: $('tStick'), knob: $('tKnob'), jump: $('tJump') },
   paused: () => paused,
   pause: () => togglePause(true),
+  // the rider you dressed in the Locker (a live copy of the mountain's rider, so every outfit, hat and pattern shows)
+  rider() {
+    const r = skier.root.clone(true);
+    r.position.set(0, 0, 0); r.rotation.set(0, 0, 0); r.visible = true;
+    r.traverse(o => { if (o.name === 'skis' || o.name === 'board' || o.name === 'pole') o.visible = false; });
+    const body = r.getObjectByName('body'); body.position.set(0, 0.9, 0); body.rotation.set(0, 0, 0);
+    const n = k => r.getObjectByName(k);
+    return { root: r, body, legs: n('legs'), upper: n('upper'), arms: n('upper').children.filter(c => c.isGroup && c.children.some(m => m.name === 'pole')) };
+  },
+  trail() { const c = worn('trail').colors; return !c ? null : (c === 'rainbow' ? ['#ff5a5a', '#ffb35a', '#ffe45a', '#5aff8a', '#5ac8ff', '#b05aff'] : c).map(h => parseInt(h.slice(1), 16)); },
   fade: color => fadeScreen(color),
   zone: name => Music.play(name ? 'agartha' : 'surf'),   // the lagoon past the whirlpool gets Agartha's dreamy song
   onResult: res => { Platform.gameplayStop(); showResults({ ...res, missions: { done: [], total: 0 } }); },

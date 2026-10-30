@@ -41,7 +41,7 @@ once a name is set. Failed uploads retry automatically with bounded requests, in
 a cloud save. The queue retains the best pending run per board and day until the server acknowledges it; older
 queued runs keep their earned date. Accepted uploads refresh the visible rankings immediately.
 
-Global chat shares the latest 50 messages from the last seven days. Players claim a name before sending,
+Global chat shares the latest 50 messages, however old (run `supabase/chat-history.sql` once to drop the old 7-day cutoff). Players claim a name before sending,
 messages are limited to 240 characters and one per five seconds, and chat identity tokens travel with cloud saves.
 Players can mute others on their device and report messages. Reports are stored in `public.chat_reports` for
 owner review; hide a message by setting `chat_messages.hidden = true`, or mute a sender with
@@ -91,13 +91,15 @@ Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). 
 
 ## Peak Surf (Surf on the home screen)
 Ski and Surf sit side by side on the home screen (← → to choose, Space to ride). Surf lives in `ride.js` (physics,
-camera, flow) and `surf.js` (the beach, waves, creatures and rider); `game.js` hands it the renderer, the synth and the
-mountain's own HUD, pause screen and results card, so both modes look and play the same.
-You ride downhill on a beach break: sand on the left, open ocean on the right, waves rolling up the slope at you.
-Riding into a wave launches you; ← → steers, and in the air ↑ ↓ flips, ← → spins and holding Space grabs. Rocks, sharks,
-buoys and paddling surfers wipe you out; jellyfish, turtles, the sand and deep water slow you. Now and then a whale
-surfaces in the lane (ride up its back for a bonus) or breaches out at sea.
-**Whirlpool:** every 1,000 to 1,400 m a whirlpool opens in the lane. Ride into it and it pulls you under and out into a
+camera, flow) and `surf.js` (the wave, creatures and scenery); `game.js` hands it the renderer, the synth, the
+mountain's HUD, pause screen and results card, and a copy of your Locker rider, so both modes look and play the same.
+You ride along one endless wave that keeps going downhill: the face rises on your left to a curling lip, the flat sea
+and the beach are on your right. Steering carves exactly like the skis: down the face is faster, up it slower. Carve
+up to the lip and it throws you into an aerial; whitewater sections on the face kick you up too. In a barrel the lip
+throws over the face: ride inside it for a Barrel bonus that grows every second. ↑ ↓ flip and ← → spin in the air,
+Space or J jumps, and holding Space, J, Shift, K or G grabs. Reefs, sharks, buoys and paddling surfers wipe you out;
+jellyfish, turtles and riding off the wave slow you. Whales breach out behind the wave.
+**Whirlpool:** every 1,000 to 1,400 m a whirlpool opens in the flat water at the foot of the wave. Ride into it and it pulls you under and out into a
 glowing lagoon worth double points for 650 m, like the special worlds on the mountain.
 Coins go into the normal wallet. Scores go to their own board, `surf`, with All time and Daily tabs (run
 `supabase/surf.sql` once to add it; test with `supabase/tests/surf.sql`). Until then surf scores wait in the local queue.
