@@ -3,25 +3,23 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 const source = readFileSync(new URL('../game.js', import.meta.url), 'utf8');
-function quality({ quality = 'auto', weak = false, touch = false } = {}) {
-  const context = vm.createContext({ LOW: quality === 'low', LITE: quality === 'low' || (quality !== 'high' && weak), WEAK: weak,
-    save: { quality }, isTouch: touch, window: { devicePixelRatio: 3 }, innerWidth: 1000, innerHeight: 800,
-    renderer: { setPixelRatio() {}, setSize() {} } });
+const ui = readFileSync(new URL('../ui.js', import.meta.url), 'utf8');
+function quality(dpr) {
+  const calls = [];
+  const context = vm.createContext({ window: { devicePixelRatio: dpr }, innerWidth: 1000, innerHeight: 800,
+    renderer: { setPixelRatio: r => calls.push(r), setSize() {} } });
   vm.runInContext(source.slice(source.indexOf('const Quality = {'), source.indexOf('Quality.apply();')) + '\nthis.quality = Quality;', context);
-  return context.quality;
+  context.quality.apply();
+  return { q: context.quality, calls };
 }
-const windowAt = (q, fps) => { for (let i = 0; i < Math.ceil(fps * 1.5); i++) q.sample(1000 / fps); };
-test('automatic graphics reserve pixel headroom and High preserves its sharper cap', () => {
-  assert.equal(quality().max, 1.5);
-  assert.equal(quality({ touch: true }).max, 1.25);
-  assert.equal(quality({ weak: true }).max, 1);
-  assert.equal(quality({ quality: 'high' }).max, 1.75);
+test('graphics are always full quality: anti-aliased and sharp up to 2x', () => {
+  assert.match(source, /new THREE\.WebGLRenderer\(\{ antialias: true/);
+  assert.equal(quality(1).q.ratio, 1);
+  assert.equal(quality(2).q.ratio, 2);
+  assert.equal(quality(3).calls[0], 2);
 });
-test('graphics respond to sustained missed frames and recover only after consecutive smooth windows', () => {
-  const q = quality();
-  windowAt(q, 50); assert.equal(q.ratio, 1.35);
-  windowAt(q, 60); windowAt(q, 60); assert.equal(q.ratio, 1.35);
-  windowAt(q, 56); assert.equal(q.good, 0);
-  windowAt(q, 60); windowAt(q, 60); assert.equal(q.ratio, 1.35);
-  windowAt(q, 60); assert.equal(q.ratio, 1.45);
+test('there is no low quality mode left to pick', () => {
+  assert.doesNotMatch(source, /\bLITE\b|\bLOW\b|save\.quality/);
+  assert.doesNotMatch(ui, /Graphics|data-q=/);
+  assert.equal(typeof quality(2).q.sample, 'undefined');
 });

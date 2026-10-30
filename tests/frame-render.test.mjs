@@ -9,7 +9,7 @@ function harness() {
   const context = vm.createContext({
     performance: { now: () => 0 }, FixedClock, requestAnimationFrame() {},
     paused: false, document: { hidden: false }, state: 'play', demo: false,
-    mode: 'endless', p: {}, Quality: { sample: ms => counts.samples.push(ms) },
+    mode: 'endless', p: {}, time: 0,
     simulate: () => counts.ticks++, allPools: [{ flush: () => counts.flush++ }],
     renderer: { render: () => counts.renders++ }, scene: {}, camera: {},
     renderRearView: () => counts.rear++,
@@ -25,7 +25,6 @@ test('draws only new simulation states on 30, 60, 144 and 165 Hz displays', () =
     assert.equal(counts.renders, Math.min(hz, 60) * 10, `${hz} Hz draws`);
     assert.equal(counts.flush, counts.renders);
     assert.equal(counts.rear, counts.renders);
-    assert.ok(Math.abs(counts.samples.reduce((a, b) => a + b, 0) - 10000) < 0.001);
   }
 });
 test('paused and background tabs do no work and resume without a catch-up burst', () => {
@@ -35,5 +34,12 @@ test('paused and background tabs do no work and resume without a catch-up burst'
   assert.equal(counts.ticks, 0); assert.equal(counts.renders, 0);
   context.document.hidden = false; context.run(60000 + 1000 / 60);
   assert.equal(counts.ticks, 1); assert.equal(counts.renders, 1);
-  assert.ok(counts.samples[0] < 17);
+});
+test('Surf steps with the real frame time and draw every frame', () => {
+  const { context, counts } = harness();
+  const steps = [];
+  context.state = 'ride'; context.ride = { update: dt => steps.push(dt), render: () => counts.renders++ };
+  for (let i = 1; i <= 144; i++) context.run(i * 1000 / 144);
+  assert.equal(steps.length, 144); assert.equal(counts.renders, 144); assert.equal(counts.ticks, 0);
+  assert.ok(steps.every(dt => Math.abs(dt - 1 / 144) < 1e-9));
 });

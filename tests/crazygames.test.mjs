@@ -110,10 +110,12 @@ test('CrazyGames upload remains CrazyGames-only and packages imports at the zip 
   const archive = execFileSync('unzip', ['-Z1', 'peak-flip-crazygames.zip'], { cwd: root, encoding: 'utf8' }).trim().split('\n');
 
   const mainHtml = readFileSync(resolve(root, 'index.html'), 'utf8');
-  assert.match(mainHtml, /data-text="play">play<\/span>/);
-  assert.doesNotMatch(mainHtml, /crazygames\.css|homeTagline|ride mountain|#ff9558/);
+  assert.match(mainHtml, /data-text="ski">ski<\/span>/);
+  assert.match(mainHtml, /data-text="surf">surf<\/span>/);
+  assert.doesNotMatch(mainHtml, /crazygames\.css|homeTagline|#ff9558/);
   assert.match(html, /<link rel="stylesheet" href="crazygames\.css">/);
-  assert.match(html, /data-text="ride mountain">ride mountain<\/span>/);
+  assert.match(html, /data-text="surf">surf<\/span>/);
+  assert.ok(['ride.js', 'surf.js'].every(f => archive.includes(f)), 'Surf ships in the upload');
   assert.ok(archive.includes('crazygames.css'));
   assert.match(config, /platform:\s*'crazygames'/);
   assert.match(config, /adsenseClient:\s*''/);

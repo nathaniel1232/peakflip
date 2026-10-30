@@ -47,6 +47,8 @@ import { Ads } from './ads.js';
 import { Cloud, adopt } from './cloud.js';
 import { CG } from './crazy.js';
 import { clean, isClean } from './clean.js';
+import { createSurf } from './surf.js';
+import { spooky } from './ride.js';
 
 // ---------- CrazyGames SDK wrapper (safe no-op when not on CrazyGames) ----------
 const ADS_ENABLED = true;   // an ad between runs (when you press Ride again); the ad network decides how often
@@ -128,6 +130,12 @@ const SONGS = {
   // North Pole: bright and bouncy in C (C · F · G · C) with sleigh bells; the melody is the traditional "Jingle Bells" chorus
   xmas: { bpm: 132, chords: [[60, 64, 67], [60, 65, 69], [59, 62, 67], [60, 64, 67]], bass: [36, 41, 43, 36], every: 1, arp: 2, kick: [0, 8], sleigh: true,
     tune: [76, null, 76, null, 76, null, null, null, 76, null, 76, null, 76, null, null, null, 76, null, 79, null, 72, null, 74, null, 76, null, null, null, null, null, null, null] },
+  // Peak Surf: sunny and driving in E (E · C#m · A · B)
+  surf: { bpm: 112, chords: [[64, 68, 71], [61, 64, 68], [57, 61, 64], [59, 63, 66]], bass: [40, 37, 33, 35], every: 1, arp: 2, kick: [0, 8],
+    tune: [76, null, 78, 80, null, 78, 76, null, 73, null, 76, null, 80, null, null, null, 81, null, 80, 78, null, 76, 73, null, 75, null, 78, null, 76, null, null, null] },
+  // Haunted: a creeping waltz-feel in A minor (Am · Dm · E · Am), bell melody
+  halloween: { bpm: 92, chords: [[57, 60, 64], [62, 65, 69], [56, 59, 64], [57, 60, 64]], bass: [33, 38, 28, 33], every: 1, arp: 2, kick: [0], bell: true,
+    tune: [76, null, null, 75, 76, null, 72, null, 74, null, null, 72, 71, null, 68, null, 69, null, null, 71, 72, null, 74, null, 76, null, 75, null, 76, null, null, null] },
 };
 const Music = (() => {
   const midi = n => 440 * 2 ** ((n - 69) / 12);
@@ -188,27 +196,11 @@ document.addEventListener('visibilitychange', () => { if (Sfx.ctx) (document.hid
 for (const ev of ['pointerdown', 'keydown', 'touchend']) addEventListener(ev, () => Sfx.init(), { capture: true });
 
 // ---------- renderer / scene ----------
-// weaker phones/laptops (few cores or little memory) start in a lighter mode
-const WEAK = (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
-const LITE = save.quality === 'low' || (save.quality !== 'high' && WEAK);   // Settings → Graphics (Auto / High / Low)
-const LOW = save.quality === 'low';                                         // the user asked for the smoothest mode
-const renderer = new THREE.WebGLRenderer({ antialias: !LITE && window.devicePixelRatio < 2, powerPreference: 'high-performance' });
-// Adaptive resolution: if frames get slow, render fewer pixels (the biggest cost on phones); raise it again when there's headroom
+// Always full quality in every mode: anti-aliasing, and sharp pixels up to 2x on high-density screens
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 const Quality = {
-  max: LOW ? 0.85 : Math.min(window.devicePixelRatio, save.quality === 'high' ? (isTouch ? 1.5 : 1.75) : WEAK ? 1 : isTouch ? 1.25 : 1.5), min: LOW ? 0.5 : 0.6,
-  ratio: LOW ? 0.75 : Math.min(window.devicePixelRatio, LITE ? 1 : isTouch && save.quality !== 'high' ? 1.25 : 1.5),
-  t: 0, frames: 0, good: 0,
-  cap: Infinity,
-  apply() { renderer.setPixelRatio(Math.min(this.ratio, this.cap)); renderer.setSize(innerWidth, innerHeight); },
-  sample(ms) {
-    if (ms > 250) return;   // tab was in the background
-    this.t += ms; this.frames++;
-    if (this.t < 1500) return;
-    const fps = this.frames * 1000 / this.t; this.t = this.frames = 0;
-    if (fps < 55 && this.ratio > this.min) { this.ratio = Math.max(this.min, +(this.ratio - 0.15).toFixed(2)); this.good = 0; this.apply(); }
-    else if (fps > 58.5 && this.ratio < this.max && ++this.good >= 3) { this.ratio = Math.min(this.max, +(this.ratio + 0.1).toFixed(2)); this.good = 0; this.apply(); }
-    else if (fps <= 58.5) this.good = 0;
-  },
+  ratio: Math.min(window.devicePixelRatio || 1, 2),
+  apply() { renderer.setPixelRatio(this.ratio); renderer.setSize(innerWidth, innerHeight); },
 };
 Quality.apply();
 $('game').appendChild(renderer.domElement);
@@ -469,6 +461,11 @@ const THEMES = {
     top: 0x07123a, horizon: 0x2f5a8f, hemi: [0xe2ebff, 0x34405e, 1.4], sun: [0xcfe0ff, 1.1], disc: [0xf3f6ff, -120, 150, -360, 60],
     mountains: [0x6a82ab, 0x56709a, 0x45608a], cap: 0xffffff, cloud: 0x56688f, clouds: false, stars: true, aurora: true, lamp: 1.4, fall: 'heavy',
   },
+  halloween: {
+    top: 0x0e0418, horizon: 0x4a2238, hemi: [0xd0a8ff, 0x24102c, 1.35], sun: [0xffb070, 1.3], disc: [0xff9a3c, -110, 115, -360, 125],
+    mountains: [0x3a2440, 0x2e1c36, 0x24162c], cap: 0x9a8aa8, cloud: 0x3a2a4a, clouds: false, stars: true, aurora: false, lamp: 1.6, fall: 'leaves',
+    snow: 0xd6cde2, patch: 0xbcaed0, patchGlow: 0x1a0a20,
+  },
   night: {
     top: 0x030817, horizon: 0x1d335f, hemi: [0x9ab8ff, 0x1c2848, 1.05], sun: [0xbcd4ff, 1.0], disc: [0xe8f0ff, 140, 170, -360, 55],
     mountains: [0x3a4d78, 0x2d3d63, 0x223052], cap: 0x8fa4cc, cloud: 0x3b4b70, clouds: false, stars: true, aurora: true, lamp: 1.4,
@@ -492,8 +489,8 @@ function setTheme(name) {
   col.needsUpdate = true;
   sunDisc.material.color.set(t.disc[0]); sunDisc.position.set(t.disc[1], t.disc[2], t.disc[3]); sunDisc.scale.setScalar(t.disc[4]);
   mountMats.forEach((m, i) => m.color.set(t.mountains[i])); capMatSky.color.set(t.cap);
-  clouds.group.visible = !!t.clouds && !LOW; clouds.mat.color.set(t.cloud);
-  stars.visible = !!t.stars; aurora.group.visible = !!t.aurora && !LOW;
+  clouds.group.visible = !!t.clouds; clouds.mat.color.set(t.cloud);
+  stars.visible = !!t.stars; aurora.group.visible = !!t.aurora;
   headlamp.intensity = t.lamp || 0;
   mat.snow.color.set(t.snow ?? 0xf5f9fc); mat.patch.color.set(t.patch ?? 0xdce9f3); mat.patch.emissive.set(t.patchGlow ?? 0);
   Snowfall.style(t.fall);
@@ -1131,7 +1128,6 @@ const Particles = (() => {
   return {
     obj: pts,
     emit(x, y, z, n, spread, up, color, vz = 0) {
-      if (LITE) n = Math.ceil(n * (LOW ? 0.35 : 0.6));
       c.set(color);
       for (let k = 0; k < n; k++) {
         const i = head; head = (head + 1) % N;
@@ -1161,7 +1157,7 @@ const Particles = (() => {
 
 // falling snow around the camera
 const Snowfall = (() => {
-  const N = LOW ? 110 : LITE ? 220 : 500, R = 30;
+  const N = 500, R = 30;
   const geo = new THREE.BufferGeometry(), pos = new Float32Array(N * 3);
   for (let i = 0; i < N; i++) { pos[i * 3] = rand(-R, R); pos[i * 3 + 1] = rand(-15, 15); pos[i * 3 + 2] = rand(-R, R); }
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -1170,8 +1166,8 @@ const Snowfall = (() => {
   let vy = -3;
   return {
     style(kind) {
-      vy = kind === 'spores' ? 0.9 : kind === 'heavy' ? -5 : -3;
-      pts.material.color.set(kind === 'spores' ? 0x7cf7d4 : 0xffffff);
+      vy = kind === 'spores' ? 0.9 : kind === 'heavy' ? -5 : kind === 'leaves' ? -1.6 : -3;
+      pts.material.color.set(kind === 'spores' ? 0x7cf7d4 : kind === 'leaves' ? 0xff8a3a : 0xffffff);
       pts.material.size = kind === 'spores' ? 0.16 : kind === 'heavy' ? 0.18 : 0.12;
     },
     update(dt, cam) {
@@ -1373,7 +1369,7 @@ const fairSpeed = z => baseSpeed(-z) * 1.2;   // a tucked rider runs ~1.1x base 
 const inLane = (x, z, r = 0.6) => Math.abs(x - laneX(z)) < (mode === 'endless' ? laneHalfWidth(fairSpeed(z)) : 2.2) + r;
 // The run-up to rails, kickers, cave mouths and the exit portal stays free of rocks, crystals, presents and trees:
 // whatever is already there is removed, and nothing new is placed there afterwards.
-const CLEARABLE = new Set(['rock', 'crystal', 'gift', 'tree']);
+const CLEARABLE = new Set(['rock', 'crystal', 'gift', 'tree', 'pumpkin', 'grave']);
 let approaches = [];   // { x, hw, zTop, zBot }
 const inApproach = (x, z, r) => approaches.some(a => z < a.zTop && z > a.zBot && Math.abs(x - a.x) < a.hw + r);
 function keepClear(x, hw, zTop, zBot) {
@@ -1386,7 +1382,7 @@ function keepClear(x, hw, zTop, zBot) {
 }
 function addTree(x, z, s, obstacle, ry = rand(0, 6), variant = 0) {
   if (obstacle) { x = clamp(x, -X_LIMIT + 0.5, X_LIMIT - 0.5); if (blocked(x, z) || inLane(x, z, 0.55 * s) || inApproach(x, z, 0.55 * s)) return; }
-  const pool = zone === 'xmas' ? xmasTrees : !obstacle && zone === 'normal' ? sceneryTrees[variant % 2] : trees;
+  const pool = zone === 'xmas' ? xmasTrees : zone === 'halloween' ? deadTrees : !obstacle && zone === 'normal' ? sceneryTrees[variant % 2] : trees;
   // A small buried base follows the faceted hillside without leaving trunks hanging above it.
   const idx = pool.add(x, obstacle ? 0 : Math.max(0, wallH(x, z) - 0.18), z, s, ry);
   if (obstacle) obstacles.push({ kind: 'tree', x, z, r: 0.55 * s, h: 3.8 * s, idx, pool });
@@ -1397,6 +1393,11 @@ function addRock(x, z, s) {
   if (zone === 'agartha') {
     const idx = crystals.add(x, 0, z, s * 1.1, rand(0, 6), s * 1.5);
     obstacles.push({ kind: 'crystal', x, z, r: 0.75 * s, h: 3 * s, idx, pool: crystals });
+    return;
+  }
+  if (zone === 'halloween') {   // jack-o'-lanterns and gravestones instead of rocks
+    const grave = Math.random() < 0.4, pool = grave ? graves : pumpkins, idx = pool.add(x, 0, z, s * (grave ? 1 : 1.15), rand(-0.4, 0.4));
+    obstacles.push(grave ? { kind: 'grave', x, z, r: 0.8 * s, h: 1.7 * s, idx, pool } : { kind: 'pumpkin', x, z, r: 0.95 * s, h: 1.4 * s, idx, pool });
     return;
   }
   if (zone === 'xmas') {   // giant presents instead of rocks
@@ -1797,7 +1798,9 @@ const caves = [];
 const WORLDS = {
   agartha: { name: 'AGARTHA', theme: 'agartha', slope: 0.34, speed: 1.15, len: 750, fog: [45, 200], fade: '#000', tune: [110, 165, 220, 330], ring: 0xffd166 },
   xmas: { name: 'NORTH POLE', theme: 'xmas', slope: 0.3, speed: 1.1, len: 750, fog: [55, 210], fade: '#fff', tune: [523, 659, 784, 1047], ring: 0xff2d55 },
+  halloween: { name: 'HAUNTED HOLLOW', theme: 'halloween', slope: 0.32, speed: 1.12, len: 750, fog: [38, 180], fade: '#000', tune: [220, 262, 311, 415], ring: 0xff7518 },
 };
+const WORLD_ORDER = ['agartha', 'xmas', 'halloween'];
 const special = () => zone !== 'normal';
 let nextWorld = 'agartha';
 
@@ -2179,6 +2182,103 @@ function addReindeer(x, z, vz) {
   animals.push({ g, legs, vx: 0, vz, ph: rand(0, 6) }); decor.push({ z: z - 3, mesh: g });
 }
 
+// ---------- Haunted Hollow: dead trees, jack-o'-lanterns, gravestones, iron fences, ghosts, a witch on a broom ----------
+const branch = (len, rz, ry, y) => ({ geo: new THREE.CylinderGeometry(0.035, 0.1, len, 4).translate(0, len / 2, 0), color: 0x2b2228, m: R(0, ry, rz).premultiply(T(0, y, 0)) });
+const deadTrees = new Pool(merged([
+  { geo: new THREE.CylinderGeometry(0.12, 0.32, 4.8, 6), color: 0x2b2228, m: T(0, 2.4, 0) },
+  branch(1.7, 0.9, 0.2, 3.1), branch(1.4, -1.0, -0.4, 2.7), branch(1.5, 0.75, 2.3, 3.8), branch(1.2, -0.7, 4.1, 3.5), branch(1.1, 0.5, -2.5, 4.3),
+  branch(0.8, 0.3, 1.2, 4.7),
+]), vcol, 520);
+const pumpkinGeo = merged([
+  ...[0, 1, 2, 3, 4].map(k => ({ geo: new THREE.SphereGeometry(0.62, 9, 7), color: 0xff7518, m: new THREE.Matrix4().makeScale(1, 0.82, 1).premultiply(T(Math.cos(k * 1.2566) * 0.3, 0.55, Math.sin(k * 1.2566) * 0.3)) })),
+  { geo: new THREE.CylinderGeometry(0.07, 0.11, 0.35, 6), color: 0x3a5a1a, m: R(0, 0, 0.25).premultiply(T(0, 1.17, 0)) },
+  // a carved face looking up the slope at you
+  { geo: new THREE.ConeGeometry(0.15, 0.22, 3), color: 0xffd23f, m: R(-Math.PI / 2, 0, 0).premultiply(T(-0.25, 0.72, 0.84)) },
+  { geo: new THREE.ConeGeometry(0.15, 0.22, 3), color: 0xffd23f, m: R(-Math.PI / 2, 0, 0).premultiply(T(0.25, 0.72, 0.84)) },
+  { geo: new THREE.BoxGeometry(0.6, 0.12, 0.08), color: 0xffd23f, m: T(0, 0.42, 0.86) },
+]);
+const lanternLit = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, emissive: 0x3a1600 });
+const pumpkins = new Pool(pumpkinGeo, lanternLit, 200);
+const graves = new Pool(merged([
+  { geo: new THREE.BoxGeometry(1.1, 1.2, 0.3), color: 0x8a8494, m: T(0, 0.6, 0) },
+  { geo: new THREE.CylinderGeometry(0.55, 0.55, 0.3, 10, 1, false, 0, Math.PI), color: 0x8a8494, m: R(Math.PI / 2, 0, -Math.PI / 2).premultiply(T(0, 1.2, 0)) },
+  { geo: new THREE.BoxGeometry(0.5, 0.08, 0.32), color: 0x5e5868, m: T(0, 0.85, 0.01) },
+  { geo: new THREE.BoxGeometry(0.08, 0.5, 0.32), color: 0x5e5868, m: T(0, 0.95, 0.01) },
+  { geo: new THREE.BoxGeometry(1.3, 0.15, 0.5), color: 0x6a6474, m: T(0, 0.07, 0) },
+]), vcol, 200);
+const ironMat = lam(0x1a1420), spookGlow = new THREE.SpriteMaterial({ map: glowTex, color: 0xff8a2a, transparent: true, depthWrite: false, opacity: 0.85 });
+function addIronFence(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  for (let i = 0; i < 4; i++) {
+    const post = new THREE.Mesh(box(0.1, 1.5, 0.1), ironMat); post.position.set(0, 0.75, -i * 1.1); g.add(post);
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.25, 4), ironMat); tip.position.set(0, 1.62, -i * 1.1); g.add(tip);
+  }
+  for (const y of [0.35, 1.2]) { const rail = new THREE.Mesh(box(0.06, 0.07, 3.4), ironMat); rail.position.set(0, y, -1.65); g.add(rail); }
+  world.add(g); decor.push({ z: z - 4, mesh: g });
+}
+function addSpookLamp(x, z) {
+  const g = new THREE.Group(); g.position.set(x, 0, z);
+  const pole = new THREE.Mesh(box(0.16, 3.6, 0.16), ironMat); pole.position.y = 1.8; g.add(pole);
+  const arm = new THREE.Mesh(box(0.9, 0.08, 0.08), ironMat); arm.position.set(-Math.sign(x) * 0.4, 3.55, 0); g.add(arm);
+  const head = new THREE.Mesh(box(0.36, 0.45, 0.36), new THREE.MeshBasicMaterial({ color: 0xffa040 })); head.position.set(-Math.sign(x) * 0.8, 3.3, 0); g.add(head);
+  const gl = new THREE.Sprite(spookGlow); gl.scale.setScalar(4.5); gl.position.copy(head.position); g.add(gl);
+  world.add(g); decor.push({ z: z - 1, mesh: g });
+}
+function addHauntedHouse(x, z) {
+  const g = new THREE.Group(); g.position.set(x, wallH(x, z), z); g.rotation.y = (x < 0 ? 1 : -1) * rand(0.3, 0.7);
+  const wall = lam(0x3a2a44), roofM = lam(0x1c1424), lit = new THREE.MeshBasicMaterial({ color: 0xffc04a });
+  const body = new THREE.Mesh(box(7, 5.5, 6), wall); body.position.y = 2.75; body.rotation.z = 0.03; g.add(body);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(5.6, 4, 4), roofM); roof.position.y = 7.4; roof.rotation.y = Math.PI / 4; roof.scale.set(1, 1, 0.9); g.add(roof);
+  const tower = new THREE.Mesh(box(2.2, 9, 2.2), wall); tower.position.set(3.4, 4.5, 2); g.add(tower);
+  const spire = new THREE.Mesh(new THREE.ConeGeometry(1.8, 4.5, 4), roofM); spire.position.set(3.4, 11.2, 2); spire.rotation.y = Math.PI / 4; g.add(spire);
+  for (const [wx, wy] of [[-2, 2], [0.3, 2], [-2, 4.2], [0.3, 4.2]]) { const w = new THREE.Mesh(box(1, 1.2, 0.1), lit); w.position.set(wx, wy, 3.05); g.add(w); }
+  const tw = new THREE.Mesh(box(0.8, 1, 0.1), lit); tw.position.set(3.4, 7, 3.15); g.add(tw);
+  const door = new THREE.Mesh(box(1.2, 2.2, 0.1), roofM); door.position.set(2, 1.1, 3.05); g.add(door);
+  const gl = new THREE.Sprite(spookGlow); gl.scale.setScalar(16); gl.position.set(-0.8, 3, 4); g.add(gl);
+  world.add(g); decor.push({ z: z - 10, mesh: g });
+}
+// ghosts drift beside the slope, bobbing and turning to watch you go by
+const spirits = [], ghostMat = new THREE.MeshLambertMaterial({ color: 0xf2f0ff, emissive: 0x5a5470, transparent: true, opacity: 0.88 }), eyeMat = new THREE.MeshBasicMaterial({ color: 0x120a18 });
+function addSpirit(x, z) {
+  const g = new THREE.Group(); g.position.set(x, wallH(x, z) + 1.2, z);
+  const sheet = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.2, 10, 1, true), ghostMat); sheet.position.y = 0.6; g.add(sheet);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10), ghostMat); head.position.y = 1.55; g.add(head);
+  for (const sx of [-0.2, 0.2]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), eyeMat); e.scale.y = 1.6; e.position.set(sx, 1.62, 0.55); g.add(e); }
+  const mouth = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 5), eyeMat); mouth.scale.set(1, 1.5, 0.5); mouth.position.set(0, 1.35, 0.58); g.add(mouth);
+  world.add(g); decor.push({ z: z - 2, mesh: g });
+  spirits.push({ g, y: g.position.y, ph: rand(0, 6) });
+}
+function updateSpirits(t) {
+  for (let i = spirits.length - 1; i >= 0; i--) {
+    const gh = spirits[i];
+    if (!gh.g.parent) { spirits.splice(i, 1); continue; }
+    gh.g.position.y = gh.y + Math.sin(t * 1.6 + gh.ph) * 0.4;
+    gh.g.rotation.y = Math.atan2(p.x - gh.g.position.x, p.z - gh.g.position.z);
+  }
+  if (zone === 'halloween') lanternLit.emissive.setRGB(0.22 + 0.06 * Math.sin(t * 13) * Math.sin(t * 7.3), 0.08, 0);   // candles flicker inside
+}
+// a witch on her broom crosses the moon now and then
+const witch = (() => {
+  const g = new THREE.Group(), nb = c => new THREE.MeshBasicMaterial({ color: c, fog: false });
+  const ink = nb(0x0a0410);
+  const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 6, 5).rotateZ(Math.PI / 2), ink); g.add(stick);
+  const bristle = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.8, 6).rotateZ(Math.PI / 2), ink); bristle.position.x = -3.6; g.add(bristle);
+  const body = new THREE.Mesh(new THREE.ConeGeometry(0.9, 2.2, 6), ink); body.position.set(-0.4, 1.1, 0); g.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), ink); head.position.set(-0.2, 2.4, 0); g.add(head);
+  const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.08, 10), ink); brim.position.set(-0.2, 2.75, 0); g.add(brim);
+  const hat = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.6, 8), ink); hat.position.set(-0.45, 3.5, 0); hat.rotation.z = 0.4; g.add(hat);
+  const cape = new THREE.Mesh(box(1.8, 1.2, 0.08), ink); cape.position.set(-1.4, 1.4, 0); cape.rotation.z = 0.5; g.add(cape);
+  g.scale.setScalar(3.4); g.visible = false; sky.add(g);
+  return {
+    update(t) {
+      g.visible = zone === 'halloween';
+      if (!g.visible) return;
+      const u = ((t * 0.05) % 1.5) - 0.25;   // one pass every 30 s, low across the moon
+      g.position.set(-300 + u * 520, 112 + Math.sin(t * 1.1) * 8 + u * 10, -330); g.rotation.z = Math.sin(t * 2) * 0.06;
+    },
+  };
+})();
+
 // ---------- alpine terrain: broad snowfields and asymmetric ridges around the playable piste ----------
 // Adjacent chunks sample the same world coordinates, so ridges and groves continue without seams.
 const WALL_IN = 19, WALL_CHUNK = 40, WALL_COLS = [-1.5, 0, 1.5, 3.5, 6, 9, 13, 18, 25, 34, 46, 62];
@@ -2187,6 +2287,7 @@ const WALL_COLORS = {
   normal: { rock: [0x8a94a3, 0x77818f], snow: 0xf2f7fb, snowLine: 22 },
   agartha: { rock: [0xc4bbe3, 0xb2a8d8], snow: 0xf7f5ff, snowLine: 8, snowSlope: 0.55 },
   xmas: { rock: [0x8a94a3, 0x77818f], snow: 0xf8fbff, snowLine: 12 },
+  halloween: { rock: [0x4a3a52, 0x3e3046], snow: 0xcfc6dc, snowLine: 16 },
 };
 let wallZ = 30;
 function wallH(x, z) {
@@ -2206,7 +2307,7 @@ const wallMats = {
 function addWallChunk(z0) {
   const pal = WALL_COLORS[zone] || WALL_COLORS.normal, pos = [], col = [], c = new THREE.Color();
   const alpine = zone === 'normal', all = alpine ? ALPINE_COLS : WALL_COLS;
-  const cols = LOW ? all.filter((o, i) => i < 2 || i % 2 === 1 || i === all.length - 1) : all;   // Low: half the wall detail
+  const cols = all;
   const rows = WALL_CHUNK / 4 + 1, a = new THREE.Vector3(), b = new THREE.Vector3(), n = new THREE.Vector3();
   for (const side of [-1, 1]) {
     const P = [];
@@ -2262,8 +2363,47 @@ const caveSignTex = (() => {
 })();
 // the next special world's entrance: alternates between the Agartha cave and the North Pole gate
 function featureEntrance(z) {
-  const w = nextWorld; nextWorld = w === 'agartha' ? 'xmas' : 'agartha';
-  return w === 'xmas' ? featureXmasGate(z) : featureCave(z);
+  const w = nextWorld; nextWorld = WORLD_ORDER[(WORLD_ORDER.indexOf(w) + 1) % WORLD_ORDER.length];
+  return w === 'xmas' ? featureXmasGate(z) : w === 'halloween' ? featureHauntedGate(z) : featureCave(z);
+}
+const hauntTex = (() => {
+  const c = document.createElement('canvas'); c.width = 512; c.height = 128; const g = c.getContext('2d');
+  g.fillStyle = '#140818'; g.fillRect(0, 0, 512, 128); g.fillStyle = '#ff7518'; g.fillRect(0, 0, 512, 8); g.fillRect(0, 120, 512, 8);
+  g.fillStyle = '#ff9a3c'; g.font = '900 56px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('HAUNTED HOLLOW', 256, 78);
+  g.fillStyle = '#b8f28a'; g.font = '800 22px system-ui, sans-serif'; g.fillText('x2 POINTS  ·  THIS WAY', 256, 110);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+function featureHauntedGate(z) {
+  const side = crng() < 0.5 ? -1 : 1, mz = z - 70, cx = side * 10.5;
+  const g = new THREE.Group(); g.position.set(0, 0, mz);
+  const stone = lam(0x5a4e66), pump = new THREE.Mesh(pumpkinGeo, lanternLit);
+  // two stone pillars with jack-o'-lanterns on top, an iron arch and a banner between them, a green glow in the middle
+  for (const sx of [-1, 1]) {
+    const pil = new THREE.Mesh(box(1.4, 8, 1.4), stone); pil.position.set(cx + sx * 3.5, 4, 0); g.add(pil);
+    const capS = new THREE.Mesh(box(1.8, 0.4, 1.8), stone); capS.position.set(cx + sx * 3.5, 8.2, 0); g.add(capS);
+    const pk = pump.clone(); pk.scale.setScalar(1.3); pk.position.set(cx + sx * 3.5, 8.4, 0); g.add(pk);
+    const gl = new THREE.Sprite(spookGlow); gl.scale.setScalar(6); gl.position.set(cx + sx * 3.5, 9.3, 0.6); g.add(gl);
+  }
+  const arch = new THREE.Mesh(new THREE.TorusGeometry(3.5, 0.12, 5, 24, Math.PI), ironMat); arch.position.set(cx, 8, 0); g.add(arch);
+  const banner = new THREE.Mesh(box(7, 1.5, 0.15), [ironMat, ironMat, ironMat, ironMat, new THREE.MeshBasicMaterial({ map: hauntTex }), ironMat]); banner.position.set(cx, 6.6, 0); g.add(banner);
+  const shimmer = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 5.8), new THREE.MeshBasicMaterial({ color: 0x9cff7a, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
+  shimmer.position.set(cx, 2.9, -0.2); g.add(shimmer);
+  for (const [dx, dz, sc] of [[-4.8, 1, 0.8], [-5.6, -0.5, 0.6], [4.9, 0.8, 0.9], [5.7, -0.6, 0.6]]) {
+    const gx = cx + dx; if (Math.abs(gx) < 13.6) continue;   // keep the slope itself clear
+    const pk = pump.clone(); pk.scale.setScalar(sc); pk.position.set(gx, 0, dz); g.add(pk);
+  }
+  const sign = new THREE.Group(); sign.position.set(side * 3.5, 0, 32); g.add(sign);
+  for (const sx of [-1.1, 1.1]) { const post = new THREE.Mesh(box(0.15, 2.6, 0.15), ironMat); post.position.set(sx, 1.3, 0); sign.add(post); }
+  const board = new THREE.Mesh(box(3.2, 0.8, 0.1), [ironMat, ironMat, ironMat, ironMat, new THREE.MeshBasicMaterial({ map: hauntTex }), ironMat]); board.position.y = 2.6; sign.add(board);
+  for (const [t, zz] of [[0.25, 22], [0.55, 13], [0.85, 5]]) {
+    const ch = chevron(new THREE.MeshBasicMaterial({ color: 0xff8a2a }), 1.6, 0.3); ch.rotation.x = -Math.PI / 2; ch.rotation.z = -side * 0.9; ch.position.set(cx * t, 0.06, zz); g.add(ch);
+  }
+  world.add(g); decor.push({ z: mz - 10, mesh: g });
+  caves.push({ x: cx, z: mz, used: false, to: 'halloween' });
+  keepClear(cx / 2, Math.abs(cx) / 2 + 3, mz + 45, mz - 3);
+  for (const sx of [3.5, -3.5]) { const px = cx + sx; if (Math.abs(px) < 13.5) obstacles.push({ kind: 'rock', x: px, z: mz, r: 0.8, h: 9, mesh: new THREE.Group() }); }
+  for (let i = 0; i < 12; i++) { const t = i / 11; addCoin(cx * (1 - Math.cos(Math.PI * t)) / 2, 1.2, mz + 40 - t * 40); }
+  return [90, 0];
 }
 const northTex = (() => {
   const c = document.createElement('canvas'); c.width = 512; c.height = 128; const g = c.getContext('2d');
@@ -2351,6 +2491,7 @@ function addPortal(z) {
 function pickSpecial() {
   const w = [['ramp', 16], ['big', 12], ['rollers', 9], ['table', 9], ['stepdown', 6], ['mega', 6], ['line', 9], ['rail', 9], ['railKick', 7], ['rocks', 8], ['snake', 7]];
   if (zone === 'xmas') w.push(['slalom', 10], ['logs', 7]);   // decorated-tree slaloms and yule logs
+  if (zone === 'halloween') w.push(['slalom', 12], ['rocks', 6]);   // dead-tree slaloms and pumpkin patches
   let r = crng() * w.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of w) if ((r -= v) < 0) return k;
   return 'ramp';
@@ -3020,6 +3161,22 @@ function spawnDecor(z) {
     if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-18, 18), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
     return;
   }
+  if (zone === 'halloween') {
+    for (const side of [-1, 1]) {
+      for (let i = 0, n = Math.random() < 0.5 ? 1 : 2; i < n; i++) {
+        const x = side * rand(15.5, 40), zz = z - rand(0, 4);
+        if (wallH(x, zz) < 22) addTree(x, zz, rand(0.9, 1.6), false);
+      }
+      if (Math.random() < 0.24) decor.push({ z, idx: pumpkins.add(side * rand(14.3, 18), 0, z - rand(0, 4), rand(0.5, 0.95), -side * Math.PI / 4 + rand(-0.3, 0.3)), pool: pumpkins });
+      if (Math.random() < 0.2) { const x = side * rand(15, 22), zz = z - rand(0, 4); decor.push({ z, idx: graves.add(x, wallH(x, zz), zz, rand(0.6, 0.9), -side * Math.PI / 3 + rand(-0.3, 0.3)), pool: graves }); }
+    }
+    if (decorN % 6 === 0) for (const sd of [-1, 1]) addIronFence(sd * 14.4, z);
+    if (decorN % 10 === 5) for (const sd of [-1, 1]) addSpookLamp(sd * 14.8, z);
+    if (decorN % 60 === 30) addHauntedHouse((decorN % 120 === 30 ? -1 : 1) * rand(28, 34), z);
+    if (Math.random() < 0.05) addSpirit((Math.random() < 0.5 ? -1 : 1) * rand(15.5, 20), z);
+    if (Math.random() < 0.85) decor.push({ z, idx: patches.add(rand(-18, 18), 0.02, z - rand(0, 4), rand(0.8, 3), rand(0, 6), 1), pool: patches });
+    return;
+  }
   if (zone === 'xmas') {
     for (const side of [-1, 1]) {
       for (let i = 0, n = Math.random() < 0.55 ? 1 : 2; i < n; i++) {
@@ -3041,7 +3198,7 @@ function spawnDecor(z) {
   }
   // World-space groves have their own deterministic scatter, independent of course generation.
   // A strip owns only its actual tree positions, rather than placing a row at the strip boundary.
-  for (const tree of landscapeTrees(z, 4, forest).filter((t, i) => !LITE || i % (LOW ? 3 : 2) === 0)) {
+  for (const tree of landscapeTrees(z, 4, forest)) {
     addTree(tree.x, tree.z, tree.scale, false, tree.rotation, tree.variant);
   }
   if (!forest && decorN % 12 === 0) addLiftTower(z);
@@ -3544,7 +3701,11 @@ const frChat = (() => {
   const api = {
     show(on) { el.classList.toggle('on', on); btn.style.display = on && !CG.chatOff ? '' : 'none'; el.querySelector('#frChatHint').style.display = CG.chatOff ? 'none' : ''; api.admin(); if (!on) { close(); log.textContent = ''; } },
     admin() { flyBtn.style.display = fr.on && Live.fly ? '' : 'none'; },
-    open() { if (!fr.on || CG.chatOff) return; el.classList.add('typing'); clearTouch(); setTimeout(() => input.focus(), 0); },
+    open() {
+      if (!fr.on || CG.chatOff) return;
+      // same 13+ age screen as Global chat (chat.js); the answer is kept in the save
+      if (save.chatAge !== '13+') { line('', save.chatAge === 'under13' ? 'Chat is for players aged 13 and over.' : 'Open Global chat once to confirm your age, then you can chat here.', '#fff', true); return; }
+      el.classList.add('typing'); clearTouch(); setTimeout(() => input.focus(), 0); },
     system(text) { if (fr.on) line('', text, '#fff', true); },
     receive(m) {
       if (CG.chatOff) return;   // the player switched chat off in their CrazyGames settings
@@ -3617,6 +3778,33 @@ function leaveFreeride() {
   world.add(skier.root); world.add(skier.shadow); world.add(Particles.obj);
   camera.far = 500; camera.updateProjectionMatrix();
   Platform.gameplayStop();
+}
+
+// ---------- Peak Surf: a separate mode with its own scene (ride.js + surf.js) ----------
+// It uses the mountain's HUD, pause screen and results card, so the two modes look and play alike.
+const rideHost = {
+  renderer, Sfx, isTouch, platform: Platform,
+  hud: { score: $('score'), coins: $('coinCount'), combo: $('combo'), comboText: $('comboText'), comboFill: $('comboFill'), trick: $('trick'), trickName: $('trickName'),
+    trickPts: $('trickPts'), hint: $('hint'), race: $('raceInfo'), speed: $('speedo'), stick: $('tStick'), knob: $('tKnob'), jump: $('tJump') },
+  paused: () => paused,
+  pause: () => togglePause(true),
+  fade: color => fadeScreen(color),
+  zone: name => Music.play(name ? 'agartha' : 'surf'),   // the lagoon past the whirlpool gets Agartha's dreamy song
+  onResult: res => { Platform.gameplayStop(); showResults({ ...res, missions: { done: [], total: 0 } }); },
+};
+const RIDES = { surf: createSurf(rideHost) };
+let ride = null;   // the one that's open while state === 'ride'
+function startRide(id) {
+  leaveFreeride();
+  demo = false; Sfx.quiet = false; clearTouch(); Sfx.init(); Music.play(id);
+  if (closet.on) setCloset(false);
+  for (const r of Object.values(RIDES)) r.close();
+  state = 'ride'; paused = false; mode = id; ride = RIDES[id];
+  save.lastMode = id; persist();
+  show('menu', false); show('over', false); show('pause', false); show('panel', false); show('hud', true);
+  document.body.classList.add('riding');
+  hud.race.classList.add('hidden'); hud.combo.classList.add('hidden'); hud.hint.style.opacity = 0;
+  ride.open();
 }
 
 // ---- riding ----
@@ -4039,13 +4227,12 @@ addEventListener('keydown', e => {
   // hold jump to crouch & charge, release to pop
   if (JUMP_KEYS.includes(e.code) && (state === 'play' || state === 'freeride')) { jumpQueued = true; jumpPower = JUMP_POP; }
   if (e.code === 'KeyG' && state === 'play') nextGrab();
-  if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play' || state === 'freeride')) togglePause();
+  if ((e.code === 'Escape' || e.code === 'KeyP') && (state === 'play' || state === 'freeride' || state === 'ride')) togglePause();
   if (e.code === 'KeyM') Sfx.toggle();
   if (e.code === 'KeyR' && state === 'freeride' && !e.repeat) frToTop();
   if (e.code === 'KeyF' && state === 'freeride') frToggleFly();
   if ((e.code === 'Enter' || e.code === 'KeyT') && state === 'freeride') { e.preventDefault(); frChat.open(); }
-  if (e.code === 'KeyC' || e.code === 'KeyV') cycleView();
-  if ((e.code === 'Space' || e.code === 'Enter') && state === 'menu' && !overlayBusy && $('panel').classList.contains('hidden')) startRun();
+  if ((e.code === 'KeyC' || e.code === 'KeyV') && state !== 'ride') cycleView();
 });
 addEventListener('keyup', e => {
   keys[e.code] = false; latched.delete(e.code);
@@ -4303,8 +4490,8 @@ function leaveRail(pop, h = 0) {
   if (pop > 5) Sfx.ollie();
 }
 
-const SMASHABLE = new Set(['rock', 'crystal', 'gift']);
-const SMASH_COL = { rock: 0x9aa5b1, crystal: 0x3cf2ff, gift: 0xd62839 };
+const SMASHABLE = new Set(['rock', 'crystal', 'gift', 'pumpkin', 'grave']);
+const SMASH_COL = { rock: 0x9aa5b1, crystal: 0x3cf2ff, gift: 0xd62839, pumpkin: 0xff7518, grave: 0x8a8494 };
 function smash(o) {
   o.dead = true; o.passed = true;
   if (o.pool) o.pool.remove(o.idx); else world.remove(o.mesh);
@@ -4312,7 +4499,7 @@ function smash(o) {
   p.speed *= 0.72; p.lean = rand(-0.6, 0.6); p.combo = 0; p.comboTimer = 0; shake = Math.max(shake, 0.3);
   Particles.emit(o.x, 0.6, o.z, 26, 3, 4, SMASH_COL[o.kind], -2); Particles.emit(o.x, 0.3, o.z, 12, 2, 2, 0xffffff, -1);
   Sfx.tone(120, 0.18, 'triangle', 0.12, 60); Sfx.noise(0.2, 0.5, 600);
-  showTrick({ rock: 'Smashed a rock!', crystal: 'Shattered a crystal!', gift: 'Unwrapped a present!' }[o.kind], 'Slowed down', false);
+  showTrick({ rock: 'Smashed a rock!', crystal: 'Shattered a crystal!', gift: 'Unwrapped a present!', pumpkin: 'Smashed a pumpkin!', grave: 'Toppled a gravestone!' }[o.kind], 'Slowed down', false);
 }
 function crash(reason) {
   if (p.crashed) return;
@@ -4346,7 +4533,7 @@ function enterWorld(w) {
   scene.fog.near = W.fog[0]; scene.fog.far = W.fog[1];
   fadeScreen(W.fade); p.speed += 6;
   showTrick(W.name, 'Double points!', true);
-  W.tune.forEach((f, i) => Sfx.tone(f, w === 'xmas' ? 0.5 : 1.8, w === 'xmas' ? 'triangle' : 'sine', 0.16, null, i * (w === 'xmas' ? 0.16 : 0.14))); Sfx.perfect();
+  W.tune.forEach((f, i) => Sfx.tone(f, w === 'xmas' ? 0.5 : 1.8, w === 'xmas' ? 'triangle' : w === 'halloween' ? 'sawtooth' : 'sine', w === 'halloween' ? 0.07 : 0.16, null, i * (w === 'xmas' ? 0.16 : 0.14))); Sfx.perfect();
 }
 function exitWorld() {
   // ~3 s of open snow (with a coin trail down the middle) so you're not thrown straight into a hazard while the screen flashes
@@ -4887,10 +5074,9 @@ function show(id, on) { $(id).classList.toggle('hidden', !on); }
 function startRun(m = mode) {
   leaveFreeride();
   mode = m; demo = false; Sfx.quiet = false; clearTouch(); Music.play('mountain');
-  Quality.cap = Infinity; Quality.apply();
   if (mode === 'level') level.def = LEVELS[level.n], level.idx = 0;
   const LV = mode === 'level' ? level.def : null;
-  zone = LV?.zone || 'normal'; portal = null; islandDone = false; nextCaveD = LV || CG.build ? Infinity : 900 + rand(0, 400); nextWorld = Math.random() < 0.5 ? 'agartha' : 'xmas';
+  zone = LV?.zone || 'normal'; portal = null; islandDone = false; nextCaveD = LV || CG.build ? Infinity : 900 + rand(0, 400); nextWorld = spooky() ? 'halloween' : WORLD_ORDER[(Math.random() * WORLD_ORDER.length) | 0];
   setSlope(mode === 'race' ? SLOPES.race : LV?.zone ? WORLDS[LV.zone].slope : SLOPES.endless);
   if (LV?.zone) Music.play(LV.zone);
   SkiTracks.clear(); Debris.clear(); fixRider();
@@ -4994,11 +5180,12 @@ async function restartWithAd() {
   overlayBusy = true;
   try { await Platform.midgameAd(); } catch {}   // an ad problem must never block the next run
   finally { overlayBusy = false; }
+  if (state === 'ride') { show('over', false); hud.race.classList.add('hidden'); ride.restart(); return; }
   startRun(mode);
 }
 
 function toMenu() {
-  leaveFreeride();
+  leaveFreeride(); for (const r of Object.values(RIDES)) r.close(); ride = null; document.body.classList.remove('riding');
   zone = 'normal'; portal = null; setSlope(SLOPES.race);
   SkiTracks.clear(); Debris.clear(); fixRider();
   lesson.active = false;
@@ -5021,7 +5208,6 @@ function menuStill() {
 const bot = { trick: null, hopT: 2, wipeouts: 0 };
 function startDemo() {
   demo = true; Music.play('mountain');
-  Quality.cap = 1; Quality.apply();   // the menu backdrop doesn't need full resolution
   zone = 'normal'; portal = null; nextCaveD = Infinity;
   setSlope(SLOPES.endless);
   SkiTracks.clear(); Debris.clear(); fixRider();
@@ -5116,6 +5302,13 @@ function demoStep(dt) {
 
 function togglePause(force) {
   if (state === 'freeride') return toMenu();   // leaving the mountain
+  if (state === 'ride') {
+    if (!$('over').classList.contains('hidden')) return;
+    paused = force === true ? true : force === false ? false : !paused;
+    show('pause', paused); ride.release();
+    if (paused) Platform.gameplayStop(); else { Platform.gameplayStart(); last = performance.now(); }
+    return;
+  }
   if (state !== 'play') return;
   paused = force === true ? true : !paused;
   show('pause', paused);
@@ -5136,7 +5329,7 @@ $('muteBtn').onclick = () => { Sfx.init(); Sfx.toggle(); };
 $('musicBtn').onclick = () => { Sfx.init(); Music.toggle(); updateMuteBtn(); };
 addEventListener('keydown', e => {
   // Enter restarts only from the results card itself (not during the record screen, and not in its first moment)
-  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Enter' && state === 'over' && !e.repeat && !typing(e) && !$('lbReveal') && !$('over').classList.contains('hidden') && !$('over').classList.contains('arming')) restartWithAd();
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'Enter' && (state === 'over' || state === 'ride') && !e.repeat && !typing(e) && !$('lbReveal') && !$('over').classList.contains('hidden') && !$('over').classList.contains('arming')) restartWithAd();
 });
 
 // ---------- main loop ----------
@@ -5147,6 +5340,8 @@ function frame(now) {
   requestAnimationFrame(frame);
   const rawMs = now - last; last = now;
   if (paused || document.hidden) { simulationClock.reset(); lastRendered = now; return; }
+  // Surf steps with the real frame time, so the camera glides at any refresh rate
+  if (state === 'ride') { simulationClock.reset(); time += rawMs / 1000; ride.update(Math.min(rawMs, 100) / 1000); ride.render(); return; }
   let advanced = false;
   simulationClock.advance(rawMs / 1000, fixedDt => {
     advanced = true;
@@ -5155,8 +5350,7 @@ function frame(now) {
   });
   // Physics runs at 60 Hz. Extra display callbacks have no new scene to draw.
   if (!advanced) return;
-  const renderMs = now - lastRendered; lastRendered = now;
-  if (state === 'play' || state === 'crash' || (state === 'menu' && demo)) Quality.sample(renderMs);
+  lastRendered = now;
   if (state === 'cabin' || state === 'island') return;
   for (const pl of allPools) pl.flush();
   renderer.render(scene, camera);
@@ -5223,7 +5417,7 @@ function simulate(dt) {
   updateSkyWhite();
   if (portal) portal.disc.material.opacity = 0.25 + 0.15 * Math.sin(time * 4);
   if (zone === 'xmas') bulbMats.forEach((m, i) => m.color.setHSL([0, 0.36, 0.13, 0.55][i], 1, Math.sin(time * 5 - i * 1.6) > 0 ? 0.6 : 0.25));
-  sleigh.update(time); agarthaSky.update(time); updateYetis();
+  sleigh.update(time); witch.update(time); updateSpirits(time); agarthaSky.update(time); updateYetis();
   if (p.boostT > 0) {
     p.boostT = Math.max(0, p.boostT - dt * 0.9);
     if (state === 'play') Particles.emit(p.x + rand(-0.4, 0.4), p.y + rand(0.2, 1.4), p.z + 0.8, 2, 0.3, 0.2, Math.random() < 0.5 ? 0x22d3ee : 0x9bf6ff, 14);
@@ -5247,7 +5441,7 @@ initUI({
   onCosmetics: () => applyCosmetics(), raceLength: RACE_LEN, ads: Ads,
   closet: on => setCloset(on), preview: tryOn => applyCosmetics(tryOn), thumb: key => Thumbs.get(key),
   music: Music, soundUI: () => updateMuteBtn(),
-  levels: levelInfo(), onLevel: n => startLevel(n), onFreeride: () => startFreeride(),
+  levels: levelInfo(), onLevel: n => startLevel(n), onFreeride: () => startFreeride(), onRide: id => startRide(id), busy: () => overlayBusy,
 });
 toMenu();
 requestAnimationFrame(frame);
@@ -5271,4 +5465,4 @@ const platformReady = Platform.init().then(() => {
 (CG.build ? platformReady : Promise.resolve()).then(() => Cloud.init(progressReplaced));
 
 // debug handle for testing
-window.__game = { LOW, p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, LITE, get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRampMap() { return frRampMap; }, get frChunks() { return frChunks; }, frToTop: () => frToTop(), frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };
+window.__game = { p, race, bot, camera, renderer, get quality() { return Quality.ratio; }, rides: RIDES, startRide: id => startRide(id), get raceScore() { return totalScore() + race.gates * 500; }, get gates() { return gates; }, get coins() { return coins; }, get state() { return state; }, get ramps() { return ramps; }, get rails() { return rails; }, get obstacles() { return obstacles; }, get crevasses() { return crevasses; }, get shapes() { return shapes; }, laneX: z => laneX(z), startRun, finishRace, applyCosmetics, crash, addBear, addCrevasse, addRock, enterWorld, exitWorld, get pads() { return pads; }, get zone() { return zone; }, get caves() { return caves; }, enterCabin, enterIsland, startFreeride, get fr() { return fr; }, get frRampMap() { return frRampMap; }, get frChunks() { return frChunks; }, frToTop: () => frToTop(), frGround: (x, z) => frGround(x, z), startLevel, get level() { return level; }, forceFeature(k) { forcedFeature = k; }, get secretCabin() { return secretCabin; }, get chase() { return chase; }, caveSoon(w) { nextCaveD = -p.z + 20; if (w) nextWorld = w; } };

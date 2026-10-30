@@ -119,8 +119,33 @@ export function initChat({ openPanel, nameForm }) {
     } finally { loading = false; }
   }
 
+  // Neutral age screen before chat (COPPA): asks for a birth year, keeps only "13+" or "under 13" on the device,
+  // and doesn't ask again, so a younger player can't just pick another year.
+  function ageCheck() {
+    if (save.chatAge === 'under13') {
+      openPanel('Global chat', '<div class="chatIntro">Chat is for players aged 13 and over. You can still ride, race and climb the leaderboards.</div>');
+      return false;
+    }
+    if (save.chatAge === '13+') return true;
+    const now = new Date().getFullYear();
+    const years = Array.from({ length: 100 }, (_, i) => now - i).map(y => `<option value="${y}">${y}</option>`).join('');
+    openPanel('Global chat', `<div class="chatIntro">What year were you born?</div>
+      <form id="chatAgeForm" style="display:flex;flex-direction:column;gap:10px;align-items:center;margin-top:12px">
+        <select id="chatYear" aria-label="Birth year" required style="font:600 16px system-ui,sans-serif;padding:10px 16px;border-radius:99px;border:0;background:rgba(0,0,0,.25);color:#fff;box-shadow:inset 0 0 0 1px rgba(190,228,255,.18)"><option value="">Year</option>${years}</select>
+        <button class="btn primary" type="submit">Continue</button></form>`);
+    $('chatAgeForm').onsubmit = e => {
+      e.preventDefault();
+      const year = Number($('chatYear').value); if (!year) return;
+      // only a year is known, so anyone who might still be 12 counts as under 13
+      save.chatAge = now - year > 13 ? '13+' : 'under13'; persist();
+      openChat();
+    };
+    return false;
+  }
+
   function openChat() {
     if (CG.chatOff) return;
+    if (!ageCheck()) return;
     generation++;
     openPanel('Global chat', `<div class="chatIntro">Chat with riders across Peak Flip. Keep it friendly and don’t share personal information.</div>
       <div id="chatName"></div><div id="chatMessages" role="log" aria-label="Global messages" aria-live="polite"><div class="chatEmpty">Connecting…</div></div>

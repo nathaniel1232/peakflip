@@ -23,6 +23,7 @@ Turn it on once in Vercel → your project → **Analytics** → **Enable**. It 
 ## Global leaderboards (Supabase)
 1. Open your Supabase project → **SQL Editor** → paste `supabase/schema.sql` → **Run**. Run it again whenever the file changes.
    Then run `supabase/points-and-chat.sql` for the score-based races, period leaderboards, and global chat.
+   Then run `supabase/surf.sql` for the Surf leaderboard.
    Then run `supabase/coins.sql` for the Coins leaderboard (most coins right now, read from the cloud saves; not in the CrazyGames version).
    Then run `supabase/names.sql`: any name allowed (shared names, accents, emoji), renames any time, and scores
    from players the database hasn't seen yet are accepted. Finally run `supabase/score-cap.sql` to upgrade the
@@ -88,6 +89,19 @@ or simply publish on CrazyGames/Poki and let them handle ads.
 `npm run zip:crazygames` → upload `peak-flip-crazygames.zip`.
 Before uploading, set `ADS_ENABLED = true` in `game.js` (it's off for testing). CrazyGames doesn't allow third-party ads, and online leaderboards there should use their SDK instead.
 
+## Peak Surf (Surf on the home screen)
+Ski and Surf sit side by side on the home screen (← → to choose, Space to ride). Surf lives in `ride.js` (physics,
+camera, flow) and `surf.js` (the beach, waves, creatures and rider); `game.js` hands it the renderer, the synth and the
+mountain's own HUD, pause screen and results card, so both modes look and play the same.
+You ride downhill on a beach break: sand on the left, open ocean on the right, waves rolling up the slope at you.
+Riding into a wave launches you; ← → steers, and in the air ↑ ↓ flips, ← → spins and holding Space grabs. Rocks, sharks,
+buoys and paddling surfers wipe you out; jellyfish, turtles, the sand and deep water slow you. Now and then a whale
+surfaces in the lane (ride up its back for a bonus) or breaches out at sea.
+**Whirlpool:** every 1,000 to 1,400 m a whirlpool opens in the lane. Ride into it and it pulls you under and out into a
+glowing lagoon worth double points for 650 m, like the special worlds on the mountain.
+Coins go into the normal wallet. Scores go to their own board, `surf`, with All time and Daily tabs (run
+`supabase/surf.sql` once to add it; test with `supabase/tests/surf.sql`). Until then surf scores wait in the local queue.
+
 ## Roblox version
 `roblox/` is a Roblox port of Endless mode (same physics, tricks and course), with DataStore saves and
 global leaderboards. See `roblox/README.md` to open it in Roblox Studio and publish it.
@@ -96,6 +110,8 @@ global leaderboards. See `roblox/README.md` to open it in Roblox Studio and publ
 - `game.js` — rendering, physics, controls, world generation, sky themes, 3D closet, race mode
 - `landscape.js` — alpine heightfield and world-space tree groves
 - `meta.js` — save data, cosmetics catalog (incl. themed sets & Fits), daily item shop rotation & prices, daily gift, missions
+- `ride.js` — the Surf engine: physics, camera, combos, the whirlpool bonus zone
+- `surf.js` — Peak Surf: the beach, waves, sea creatures, whirlpool and surfer
 - `ui.js` — menus, item shop (daily rotation + 3D try-on), locker (owned items), profile, leaderboards, results
 - `cloud.js` — automatic cloud saves, domain hand-off · `net.js` — Supabase RPC helper
 - `chat.js` — shared chat, reconnect/polling, mute and report controls
