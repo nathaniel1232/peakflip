@@ -46,14 +46,21 @@ export function knee(a, b, len, bend, out) {
   return out.addVectors(a, b).multiplyScalar(0.5).addScaledVector(bend, h);
 }
 const fmt = n => Math.round(n).toLocaleString('en-US');
+// When the player lets go of a rotation, finish it to the nearest landable angle (the same rule as game.js).
+function settle(angle, vel, step, rate, dt) {
+  const tgt = Math.round(angle / step) * step, err = tgt - angle;
+  if (Math.abs(err) < 1.0) return damp(vel, err * 8, 14, dt);
+  const dir = Math.sign(vel) || Math.sign(err);
+  return damp(vel, dir * rate * 0.7, 8, dt);
+}
 
 const PITCH_OK = 0.6, PITCH_MAX = 1.15, YAW_OK = 0.6, YAW_MAX = 1.25;   // how far off straight (rad) a landing can be: clean, sketchy
 const COMBO_WINDOW = 3.2, COMBO_MAX = 10;   // seconds to land the next trick and keep the combo; the highest multiplier
 
 export function createRideMode(host, kit) {
   const { renderer, Sfx, isTouch } = host;
-  const T = { SPEED0: 20, SPEED_MAX: 38, SPEED_GAIN: 0.005, SLOPE: 0.2, LAT: 11, G: 30, JUMP: 7.5, VY_MAX: 17, FLIP: 7, SPIN: 8.5, ...kit.tune };
-  const { SPEED0, SPEED_MAX, SPEED_GAIN, SLOPE, LAT, G, JUMP, VY_MAX, FLIP, SPIN } = T;
+  const T = { SPEED0: 20, SPEED_MAX: 48, SPEED_GAIN: 0.004, SCORE_SPEED: 14, SLOPE: 0.2, LAT: 11, G: 30, JUMP: 8.5, VY_MAX: 17, FLIP: 7, SPIN: 8.5, ...kit.tune };
+  const { SPEED0, SPEED_MAX, SPEED_GAIN, SCORE_SPEED, SLOPE, LAT, G, JUMP, VY_MAX, FLIP, SPIN } = T;
   const YAW_UNIT = kit.yawUnit || Math.PI;   // a board can land backwards after a 180; a bike needs the full 360
   const S = { open: false, state: 'off', mult: 1, bonus: null, t: 0, runT: 0, wipeT: 0, theme: 0, shake: 0, resT: 0, hintI: 0, prompt: '' };
   const laneX = kit.laneX, laneHW = kit.laneHW, base = z => z * SLOPE;
@@ -138,6 +145,9 @@ export function createRideMode(host, kit) {
   const coinMesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.42, 0.42, 0.1, 16).rotateX(Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x8a5a00 }), COIN_N);
   coinMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); coinMesh.frustumCulled = false; coinMesh.renderOrder = 2; scene.add(coinMesh);
   const GOLD = new THREE.Color(0xffcc33);
+  const RING_N = 24;
+  const ringMesh = new THREE.InstancedMesh(new THREE.TorusGeometry(1.35, 0.13, 8, 28), new THREE.MeshBasicMaterial({ color: 0xffe27a }), RING_N);
+  ringMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage); ringMesh.frustumCulled = false; ringMesh.renderOrder = 2; ringMesh.count = 0; scene.add(ringMesh);
   for (let i = 0; i < COIN_N; i++) coinMesh.setColorAt(i, GOLD);
 
   // ---------- ramps: they rise out of the lane, some roll up the slope at you ----------
@@ -176,12 +186,14 @@ export function createRideMode(host, kit) {
   const mat4 = new THREE.Matrix4(), qGround = new THREE.Quaternion(), qSlope = new THREE.Quaternion(), qAir = new THREE.Quaternion();
   const camPos = V(), camLook = V(), camTmp = V(), lookTmp = V();
   const wipeGear = { p: V(), v: V(), r: V() }, wipeBody = { p: V(), v: V(), r: V() };
-  const speedAt = d => Math.min(SPEED_MAX, SPEED0 + d * SPEED_GAIN);
+  // faster the further you go, and faster again the more you score: up to +14 m/s from points alone
+  const scoreSpeed = () => SCORE_SPEED * (1 - Math.exp(-(P.score || 0) / 20000));
+  const speedAt = d => Math.min(SPEED_MAX, SPEED0 + d * SPEED_GAIN + scoreSpeed());
   function resetPlayer() {
     Object.assign(P, {
       z: 0, z0: 0, u: 0, lat: 0, v: SPEED0, slow: 0, y: 0, vy: -SPEED0 * SLOPE, air: false, yaw: 0, pitch: 0, grab: false, grabT: 0, airT: 0, launchVy: 0,
       wx: 0, wy: 0, wz: 0, landT: 9, score: 0, coins: 0, combo: 0, comboT: 9, bestCombo: 0, bestTrick: null, launches: 0, steer: 0, flip: 0,
-      tricks: 0, edge: null, spinLatch: false, onRamp: null, comboTotal: 0,
+      tricks: 0, edge: null, onRamp: null, comboTotal: 0, fakie: false,
     });
   }
   const dist = () => P.z0 - P.z;
@@ -210,9 +222,10 @@ export function createRideMode(host, kit) {
     r.zm = zm;
     ramps.push(r); kit.rampOn?.(r);
     const hw = laneHW(zm);
-    if (o.coins !== false && Math.random() < 0.55) {   // half the ramps carry a line of coins along the flight off their crest
+    if (o.coins !== false && (o.ring || Math.random() < 0.55)) {   // half the ramps carry a line of coins along the flight off their crest
       const cu = clamp(rand(Math.max(-hw + 4, r.ua + 2), Math.min(hw - 4, r.ub - 2)), -hw + 3, hw - 3);
-      for (let i = 0; i < 7; i++) coins.push({ r, tau: 0.18 + i * 0.13, u: cu });
+      for (let i = 0; i < 7; i++) if (!o.ring || i !== 3) coins.push({ r, tau: 0.18 + i * 0.13, u: cu });
+      if (o.ring) coins.push({ r, tau: 0.57, u: cu, ring: true });   // a ring at the top of the arc
     }
     const v = speedAt(P.z0 - zm);
     return airTime(r.h, v, r) * v + 10;
@@ -336,8 +349,7 @@ export function createRideMode(host, kit) {
     return null;
   }
   function takeoff(bot) {
-    P.air = true; P.airT = 0; P.yaw = 0; P.pitch = 0; P.grabT = 0; P.launchVy = P.vy;
-    P.spinLatch = P.steer !== 0;   // an arrow you were steering with doesn't spin you until you press it again
+    P.air = true; P.airT = 0; P.yaw = 0; P.pitch = 0; P.yawV = 0; P.pitchV = 0; P.grabT = 0; P.launchVy = P.vy;
     qAir.copy(rider.root.quaternion);
     const r = P.vy > 5 ? rampUnder() : null;
     if (r) {
@@ -369,21 +381,20 @@ export function createRideMode(host, kit) {
     P.v = top * (1 - P.slow);
     const z0 = P.z;
     P.z -= P.v * dt;
-    if (!bot) { P.score += (z0 - P.z) * S.mult; P.comboT += dt; }
+    if (!bot) { P.score += (z0 - P.z) * S.mult; if (!P.air) P.comboT += dt; }   // the combo clock stops while you're in the air, like on skis
     const g = surfaceH(P.u, P.z);
     if (P.air) {
       P.airT += dt; P.vy -= G * dt; P.y += P.vy * dt;
-      if (!x) P.spinLatch = false;
-      const sx = P.spinLatch ? 0 : x, fx = bot ? (P.botFlip && Math.abs(P.pitch) < TAU - 0.5 ? P.botFlip : 0) : fl;
-      P.yaw -= sx * SPIN * dt;
-      P.pitch += fx * FLIP * dt;
+      let sx = x, fx = bot ? (P.botFlip && Math.abs(P.pitch) < TAU - 0.5 ? P.botFlip : 0) : fl;
+      // just before touchdown the rider commits to the nearest landing, like on skis
+      if (P.vy < 0 && (P.y - g) / -P.vy < 0.2) sx = fx = 0;
       P.grab = !bot && jumpHeld() && P.airT > 0.15;
       if (P.grab) P.grabT += dt;
-      // coming down with nothing held: ease round to straight
-      if (P.vy < 0) {
-        if (!sx) { const e = Math.round(P.yaw / YAW_UNIT) * YAW_UNIT - P.yaw; if (Math.abs(e) < 1.1) P.yaw += clamp(e, -3.5 * dt, 3.5 * dt); }
-        if (!fx) { const e = Math.round(P.pitch / TAU) * TAU - P.pitch; if (Math.abs(e) < 1.1) P.pitch += clamp(e, -3.5 * dt, 3.5 * dt); }
-      }
+      // spins and flips build up speed; let go and they carry on round to the nearest landable angle
+      const mul = P.grab ? 0.65 : 1;
+      P.yawV = sx ? damp(P.yawV, -sx * SPIN * mul, 10, dt) : settle(P.yaw, P.yawV, YAW_UNIT, SPIN, dt);
+      P.pitchV = fx ? damp(P.pitchV, fx * FLIP * mul, 10, dt) : settle(P.pitch, P.pitchV, TAU, FLIP, dt);
+      P.yaw += P.yawV * dt; P.pitch += P.pitchV * dt;
       if (P.y <= g) { P.y = g; land(bot); }
     } else {
       // stay on the ground unless it drops away faster than you fall: that's a launch off a crest
@@ -402,10 +413,12 @@ export function createRideMode(host, kit) {
     const kP = Math.round(P.pitch / TAU), eP = Math.abs(P.pitch - kP * TAU);
     const kY = Math.round(P.yaw / YAW_UNIT), eY = Math.abs(P.yaw - kY * YAW_UNIT);
     const tn = trickName(P.pitch, P.yaw, P.grabT), air = P.airT;
-    P.pitch = 0; P.yaw = 0;
-    if (bot || air < 0.3) return;
+    P.pitch = 0; P.yaw = 0; P.pitchV = 0; P.yawV = 0;
+    if (bot || (air < 0.3 && !tn.turns && !tn.flips)) return;   // a hop 180 counts too
     if (eP > PITCH_MAX) return wipe(Math.abs(eP - Math.PI) < 1 ? 'Landed on your head' : 'Landed nose first', 'Let go of ↑ ↓ before you land so you level out');
     if (eY > YAW_MAX) return wipe('Landed sideways', 'Let go of ← → before you land so you straighten out');
+    // an odd number of half turns and you ride on backwards (fakie), the way skis ride switch
+    if (YAW_UNIT < 4 && Math.abs(kY) % 2 === 1) P.fakie = !P.fakie;
     if (eP > PITCH_OK || eY > YAW_OK) { P.slow = Math.max(P.slow, 0.35); pop('Sketchy!', 0, 'warn'); Sfx.land?.(true); P.comboT = COMBO_WINDOW; S.shake = 0.15; return; }
     Sfx.land?.(air > 1);
     if (tn.name) {
@@ -433,6 +446,13 @@ export function createRideMode(host, kit) {
     for (let i = coins.length - 1; i >= 0; i--) {
       const c = coins[i];
       coinPos(c, pos);
+      if (c.ring) {
+        if (Math.abs(pos.z - P.z) < 1.4 && Math.abs(c.u - P.u) < 1.5 && Math.abs(pos.y - (P.y + 0.8)) < 1.6) {
+          coins.splice(i, 1); trick('Ring', 300, 'big'); Sfx.perfect?.();
+          burst(pos.x, pos.y, pos.z, 30, 4, 3, 0.12, 0.7, 0xffe27a, 0);
+        }
+        continue;
+      }
       if (Math.abs(pos.z - P.z) < 1.3 && Math.abs(c.u - P.u) < 1.1 && Math.abs(pos.y - (P.y + 0.7)) < 1.3) {
         coins.splice(i, 1); P.coins++; P.score += 25; Sfx.coin?.();
         burst(pos.x, pos.y, pos.z, 8, 2, 2, 0.1, 0.5, 0xffd23f, 0);
@@ -492,16 +512,24 @@ export function createRideMode(host, kit) {
       o.g.rotation.set(-Math.atan(sl / 1.2), 0, 0);
       Kd.anim?.(o, S.t, dt, api);
     }
-    let n = 0;
+    let n = 0, nr = 0;
     for (let i = coins.length - 1; i >= 0; i--) {
       const c = coins[i];
       if (c.r ? !ramps.includes(c.r) : c.z > camera.position.z + 10) { coins.splice(i, 1); continue; }
+      if (c.ring) {
+        if (nr >= RING_N) continue;
+        coinPos(c, dummy.position); dummy.position.y += 0.1;
+        dummy.rotation.set(0, 0, S.t * 1.5); dummy.scale.setScalar(1 + 0.06 * Math.sin(S.t * 6)); dummy.updateMatrix();
+        ringMesh.setMatrixAt(nr++, dummy.matrix);
+        continue;
+      }
       if (n >= COIN_N) continue;
       coinPos(c, dummy.position);
       dummy.rotation.set(0, S.t * 3 + c.u + (c.z || c.tau * 9), 0);
       dummy.scale.setScalar(1.1); dummy.updateMatrix();
       coinMesh.setMatrixAt(n, dummy.matrix); coinMesh.setColorAt(n, GOLD); n++;
     }
+    ringMesh.count = nr; ringMesh.instanceMatrix.needsUpdate = true;
     coinMesh.count = n; coinMesh.instanceMatrix.needsUpdate = true; if (coinMesh.instanceColor) coinMesh.instanceColor.needsUpdate = true;
   }
 
@@ -527,6 +555,7 @@ export function createRideMode(host, kit) {
       fwd.set(P.lat * 0.03, 0, -1); fwd.addScaledVector(nrm, -fwd.dot(nrm)).normalize();
       side.crossVectors(fwd, nrm);
       qGround.setFromRotationMatrix(mat4.makeBasis(fwd, nrm, side));
+      if (P.fakie) qGround.multiply(_q2.setFromAxisAngle(_Y, Math.PI));
       rider.root.quaternion.slerp(qGround, 1 - Math.exp(-18 * dt));
     }
     rider.root.position.copy(pos);
@@ -645,7 +674,7 @@ export function createRideMode(host, kit) {
     release(); endBonus(true);
     scene.remove(rider.root); rider = kit.makeRider(); rider.root.renderOrder = 2; scene.add(rider.root);
     setTheme(kit.pickTheme());
-    S.t = 0; S.runT = 0; S.hintI = 0; S.learning = (save[kit.saveKey]?.runs || 0) < 3;
+    S.t = 0; S.runT = 0; S.hintI = 0; S.speedStep = Math.floor(SPEED0 * 3.6 / 10); S.learning = (save[kit.saveKey]?.runs || 0) < 3;
     hudScore = hudCoins = hudCombo = hudSpeed = -1; shownScore = 0; setPrompt('');
     el.under.style.opacity = 0;
     setState('ride');
@@ -762,7 +791,9 @@ export function createRideMode(host, kit) {
       S.runT += dt;
       while (nextZ > P.z - 170) nextZ -= kit.spawn(nextZ, P.z0 - nextZ, false, E);
       const d = dist();
-      if (!S.bonus && Math.floor(d / 500) > Math.floor((d - P.v * dt) / 500) && d > 10) { banner('Faster', `${fmt(Math.floor(d / 500) * 500)} m`); Sfx.tone(330, 0.5, 'triangle', 0.12, 494); }
+      // every 10 km/h more top speed (from distance or points) gets called out
+      const step = Math.floor(speedAt(d) * 3.6 / 10);
+      if (step > S.speedStep) { S.speedStep = step; banner('Faster', `${step * 10} km/h`); Sfx.tone(330, 0.5, 'triangle', 0.12, 494); }
       // a big one gets a heads-up
       for (const r of ramps) if (r.warn && !r.warned && r.z - P.z > -(P.v + r.wv) * 2.2 && r.z < P.z) { r.warned = true; banner(...r.warn); Sfx.tone(220, 0.6, 'triangle', 0.1, 330); }
       ride(dt, false);
