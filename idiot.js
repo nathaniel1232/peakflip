@@ -154,7 +154,32 @@ style.textContent = `
 #idiot .pile .cd.new { animation: iqIn .25s ease-out; }
 /* a played card slides in from the player who played it (the translate property, so the card keeps its tilt) */
 #idiot .pile .cd.fly { animation: iqFly .42s cubic-bezier(.2,.8,.25,1) both; }
-@keyframes iqFly { from { translate: var(--fx) var(--fy); scale: .85; opacity: .2; } to { translate: 0 0; scale: 1; opacity: 1; } }
+@keyframes iqFly { from { translate: var(--pX, 0) var(--pY, 240px); scale: .85; opacity: .2; } to { translate: 0 0; scale: 1; opacity: 1; } }
+/* the pile measures where the deck and the player who just moved sit (aim()), and these read it:
+   a card turned over from the deck flips up there and then slides onto the pile */
+#idiot .pile .cd.flyDeck { animation: iqFromDeck .7s cubic-bezier(.2,.8,.25,1) both; }
+@keyframes iqFromDeck { 0% { translate: var(--deckX) var(--deckY); scale: 0 1; } 35% { translate: var(--deckX) var(--deckY); scale: 1 1; } 100% { translate: 0 0; scale: 1; } }
+/* copies of cards that just left the pile: burned (lift, glow, fade) or picked up (slide to the player) */
+#idiot .pile .ghost { position: absolute; top: 5px; pointer-events: none; z-index: 2; }
+#idiot .ghost.burnG { animation: iqBurnOut .8s ease-in var(--d, 0ms) forwards; }
+#idiot .ghost.playBurn { animation: iqFly .4s cubic-bezier(.2,.8,.25,1) both, iqBurnOut .8s ease-in .5s forwards; }
+#idiot .ghost.deckBurn { animation: iqFromDeck .7s cubic-bezier(.2,.8,.25,1) both, iqBurnOut .8s ease-in .8s forwards; }
+@keyframes iqBurnOut {
+  0% { opacity: 1; }
+  40% { translate: 0 -10px; scale: 1.06; filter: brightness(1.2) sepia(.7) saturate(3) hue-rotate(-15deg); }
+  100% { translate: 0 -70px; scale: 1.25; opacity: 0; filter: brightness(1.8) sepia(1) saturate(6) hue-rotate(-25deg); } }
+#idiot .ghost.takeG { animation: iqTake .6s cubic-bezier(.5,0,.75,0) var(--d, 0ms) forwards; }
+@keyframes iqTake { to { translate: var(--pX) var(--pY); scale: .55; opacity: 0; } }
+#idiot .ghost.missDeck { animation: iqMissDeck 1.25s ease-in-out forwards; }
+@keyframes iqMissDeck { 0% { translate: var(--deckX) var(--deckY); scale: 0 1; } 22% { translate: var(--deckX) var(--deckY); scale: 1 1; }
+  45%, 62% { translate: 0 0; scale: 1; opacity: 1; } 100% { translate: var(--pX) var(--pY); scale: .55; opacity: 0; } }
+#idiot .ghost.missBlind { animation: iqMissBlind 1.25s ease-in-out forwards; }
+@keyframes iqMissBlind { 0% { translate: var(--pX) var(--pY); scale: 0 1; } 35%, 62% { translate: 0 0; scale: 1; opacity: 1; } 100% { translate: var(--pX) var(--pY); scale: .55; opacity: 0; } }
+/* cards arriving in your hand drop in; a seat that just picked up flashes */
+#idiot .hand .cd.drawn { animation: iqDraw .45s ease-out var(--d, 0ms) both; }
+@keyframes iqDraw { from { translate: 0 -40px; opacity: 0; } }
+#idiot .opp.took { animation: iqTook 1s ease-out; }
+@keyframes iqTook { 0%, 30% { background: rgba(255,201,60,.38); } 100% { background: rgba(0,0,0,.2); } }
 /* the end of a game: the winner's name, then cards drifting down */
 #idiot .party { position: fixed; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; display: grid; place-items: center; animation: iqParty 3.2s ease-in forwards; }
 @keyframes iqParty { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
@@ -167,7 +192,9 @@ style.textContent = `
   font: 400 18px/1 system-ui, sans-serif; box-shadow: 0 3px 8px rgba(0,0,0,.3); animation: iqFall linear forwards; }
 #idiot .party .bit.red { color: #c62a2f; }
 @keyframes iqFall { to { translate: var(--dx) 115vh; rotate: var(--rot); } }
-@media (prefers-reduced-motion: reduce) { #idiot .pile .cd.fly, #idiot .party .bit { animation: none; } #idiot .party .bit { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  #idiot .pile .cd.fly, #idiot .pile .cd.flyDeck, #idiot .hand .cd.drawn, #idiot .opp.took, #idiot .party .bit { animation: none; }
+  #idiot .pile .ghost, #idiot .party .bit { display: none; } }
 @keyframes iqIn { from { opacity: 0; } to { opacity: 1; } }
 #idiot .lbl { font: 700 12px system-ui, sans-serif; color: #cfe9db; text-align: center; white-space: nowrap; background: rgba(0,0,0,.25); border-radius: 99px; padding: 4px 10px; }
 #idiot .lbl b { color: #fff; }
@@ -272,6 +299,7 @@ const lobbies = new Map();                         // code -> what its host last
 let chat = [], chatOpen = false, unread = 0;
 const said = new Map();                            // player id -> { t, at }: the bubble over their seat
 let sel = new Set(), swapPick = null, lastEvN = 0, lastTurnMine = false, leaveArmed = 0;
+let pileBefore = [], handBefore = null;   // what the last drawing showed, so the next one can animate the change
 
 const isOpen = () => !!root;
 const game = () => S?.room?.game;
@@ -316,7 +344,7 @@ function endSession() {
   if (S.ch) { S.ch.send('bye', { id: myId }); S.ch.close(); }
   if (S.host && S.code) dir?.send('lobby', { code: S.code, closed: true });
   clearInterval(S.tick);
-  S = null; sel = new Set(); swapPick = null;
+  S = null; sel = new Set(); swapPick = null; pileBefore = []; handBefore = null;
   chat = []; unread = 0; chatOpen = false; said.clear();
   if (root) setPath('/idiot');
   drawChat();
@@ -816,6 +844,7 @@ function render() {
   drawLobbies();
   drawChat();
   fitHand();
+  aim();
   showClock();
 }
 
@@ -1030,7 +1059,8 @@ function tableView() {
     const status = p.place ? `<span class="place">${p.place === n ? 'IDIOT' : ordinal(p.place)}</span>`
       : g.phase === 'swap' ? `<span class="count">${p.ready ? 'Ready' : 'Swapping'}</span>` : `<span class="count">${p.hand.length} in hand</span>`;
     const bubble = said.get(p.id), talk = bubble && Date.now() - bubble.at < 5000 ? `<div class="say">${esc(bubble.t)}</div>` : '';
-    return `<div class="opp ${g.turn === i ? 'turn' : ''}">${talk}
+    const took = isNew && g.ev.p === i && /^(pickup|chanceMiss|blindMiss)$/.test(g.ev.k);
+    return `<div class="opp ${g.turn === i ? 'turn' : ''} ${took ? 'took' : ''}" data-opp="${i}">${talk}
       <div class="who"><div class="ava" style="background:${hue(p.name)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
         <div class="nm">${esc(p.name)}<small>${p.bot ? 'Bot' : s?.away ? 'Away, a bot plays' : g.turn === i ? 'Playing…' : '&nbsp;'}</small></div></div>
       <div class="mini"><div class="stacks">${slots(p).map(k => stack(p, k)).join('')}</div></div>
@@ -1048,10 +1078,23 @@ function tableView() {
   // the pile: the top few cards, fanned
   const top = g.pile.slice(-4);
   // cards that just landed fly in from where the player sits: you at the bottom, the others along the top
-  const landed = isNew && /^(play|blind|chance)$/.test(g.ev.k) ? new Set(g.ev.cards) : new Set();
-  const flyFrom = g.ev?.p === mi ? [0, 260] : [(opps.indexOf(g.ev?.p) - (opps.length - 1) / 2) * 130, -230];
-  const pileCards = top.map((c, k) => cardEl(c, landed.has(c) ? 'fly' : k === top.length - 1 && isNew ? 'new' : '',
-    `style="left:${k * 12}px;transform:rotate(${((c * 37) % 11) - 5}deg);--fx:${flyFrom[0]}px;--fy:${flyFrom[1]}px;animation-delay:${landed.has(c) ? [...landed].indexOf(c) * 70 : 0}ms"`)).join('');
+  const ev = isNew ? g.ev : null;
+  const landed = ev && /^(play|blind|chance)$/.test(ev.k) && !ev.burn ? new Set(ev.cards) : new Set();
+  const tilt = (c, k) => `left:${k * 12}px;transform:rotate(${((c * 37) % 11) - 5}deg)`;
+  const pileCards = top.map((c, k) => cardEl(c, landed.has(c) ? (ev.k === 'chance' ? 'flyDeck' : 'fly') : k === top.length - 1 && isNew ? 'new' : '',
+    `style="${tilt(c, k)};animation-delay:${landed.has(c) ? [...landed].indexOf(c) * 70 : 0}ms"`)).join('');
+  // what just left the pile, drawn as copies that animate away
+  let ghosts = '';
+  if (ev?.burn) {
+    const old = pileBefore.slice(-4);
+    ghosts = old.map((c, k) => cardEl(c, 'ghost burnG', `style="${tilt(c, k)};--d:${450 + k * 60}ms"`)).join('')
+      + ev.cards.slice(-3).map((c, k) => cardEl(c, `ghost ${ev.k === 'chance' ? 'deckBurn' : 'playBurn'}`, `style="${tilt(c, old.length + k)}"`)).join('');
+  } else if (ev && /^(pickup|chanceMiss|blindMiss)$/.test(ev.k)) {
+    const miss = ev.k !== 'pickup', old = pileBefore.slice(-4), wait = miss ? 760 : 0;
+    ghosts = old.map((c, k) => cardEl(c, 'ghost takeG', `style="${tilt(c, k)};--d:${wait + k * 50}ms"`)).join('')
+      + (miss ? cardEl(ev.cards[0], `ghost ${ev.k === 'chanceMiss' ? 'missDeck' : 'missBlind'}`, `style="${tilt(ev.cards[0], old.length)}"`) : '');
+  }
+  pileBefore = g.pile.slice(-4);
   if (isNew && g.phase === 'over') setTimeout(() => celebrate(g, mi), 450);
   const needR = need(g.pile);
   const pileLbl = g.pile.length ? `${g.pile.length} in pile · ${needR ? `beat <b>${rn(needR)}</b>` : '<b>anything goes</b>'}` : 'Empty pile';
@@ -1074,10 +1117,13 @@ function tableView() {
     : myTurn && from === 'down' && g.pile.length ? `<button class="btn" data-a="pickup" ${canAct ? '' : 'disabled'}>Pick up instead</button>` : '';
 
   const handTap = (g.phase === 'swap' && !me.ready) || (g.phase === 'play' && from === 'hand');
+  let drop = 0;
   const hand = me.hand.map(c => {
-    const cls = sel.has(c) ? 'sel' : swapPick?.h === c ? 'pick' : myTurn && from === 'hand' && !canPlay(g, c) ? 'dim' : '';
-    return cardEl(c, cls, handTap ? `data-a="hand" data-c="${c}"` : '', handTap ? 'button' : 'div');
+    const fresh = handBefore && !handBefore.has(c);
+    const cls = (sel.has(c) ? 'sel' : swapPick?.h === c ? 'pick' : myTurn && from === 'hand' && !canPlay(g, c) ? 'dim' : '') + (fresh ? ' drawn' : '');
+    return cardEl(c, cls, `${handTap ? `data-a="hand" data-c="${c}"` : ''} ${fresh ? `style="--d:${(ev && /Miss|pickup/.test(ev.k) ? 650 : 0) + drop++ * 45}ms"` : ''}`, handTap ? 'button' : 'div');
   }).join('');
+  handBefore = new Set(me.hand);
 
   const leaving = leaveArmed && Date.now() - leaveArmed < 2500;
   return `
@@ -1092,7 +1138,7 @@ function tableView() {
   <div class="center">
     <div class="pileBox deck"><div class="stack" style="height:calc(var(--ch) + 10px)">${g.deck.length ? backEl('', 'style="top:5px"') : '<div class="cd slot" style="top:5px"></div>'}</div>
       <div class="lbl">${g.deck.length ? `Deck <b>${g.deck.length}</b>` : 'Deck empty'}</div></div>
-    <div class="pileBox"><div class="pile">${pileCards || '<div class="cd slot"></div>'}${isNew && g.ev.burn && !g.pile.length ? '<div class="burn">BURN</div>' : ''}</div>
+    <div class="pileBox"><div class="pile" data-p="${g.ev?.p ?? -1}">${pileCards || (ghosts ? '' : '<div class="cd slot"></div>')}${ghosts}${isNew && g.ev.burn && !g.pile.length ? '<div class="burn">BURN</div>' : ''}</div>
       <div class="lbl">${pileLbl}</div></div>
   </div>
   <div class="ev">${evText(g, g.ev, mi)}</div>
@@ -1141,6 +1187,24 @@ function overView(g, mi) {
 
 const canPlay = (g, c) => playable(rank(c), g.pile);
 const slots = p => [...Array(Math.max(p.down.length, p.up.length)).keys()];
+
+// where the deck and the player who just moved sit, relative to the pile, for the pile's animations
+function aim() {
+  const pile = root?.querySelector('.pile');
+  if (!pile) return;
+  const p = pile.getBoundingClientRect(), card = root.querySelector('.deck .cd');
+  const w = card?.offsetWidth || 56, h = card?.offsetHeight || 80;
+  const at = (el, name) => {
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    pile.style.setProperty(`--${name}X`, `${Math.round(r.left + r.width / 2 - p.left - w / 2)}px`);
+    pile.style.setProperty(`--${name}Y`, `${Math.round(r.top + r.height / 2 - p.top - h / 2 - 5)}px`);
+  };
+  at(root.querySelector('.deck .stack'), 'deck');
+  const i = +pile.dataset.p, g = game(), mine = i === meIdx();
+  const me = mine && g ? g.players[i] : null;
+  at(i < 0 ? null : mine ? root.querySelector(me && !me.hand.length ? '.mine .stacks' : '.mine .hand') || root.querySelector('.over, .result') : root.querySelector(`[data-opp="${i}"]`), 'p');
+}
 
 // overlap the hand so it always fits on one row
 function fitHand() {
