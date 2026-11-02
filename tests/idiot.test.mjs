@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { deal, act, botMove, rank, live, need, source } from '../idiot-rules.js';
+import { deal, act, botMove, rank, live, need, source, fits, JOKER } from '../idiot-rules.js';
 
-const C = (r, s = 0, copy = 0) => copy * 52 + (r - 2) * 4 + s;
+const C = (r, s = 0) => (r - 2) * 4 + s;
 const seats = n => Array.from({ length: n }, (_, i) => ({ id: 'p' + i, name: 'P' + i, bot: true }));
 function seeded(seed) { return () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32; }
 const count = s => s.deck.length + s.pile.length + s.burned + s.players.reduce((n, p) => n + p.hand.length + live(p.up).length + live(p.down).length, 0);
@@ -11,16 +11,40 @@ const count = s => s.deck.length + s.pile.length + s.burned + s.players.reduce((
 function table(hands, { pile = [], deck = [] } = {}) {
   const s = deal(seats(hands.length));
   s.phase = 'play'; s.turn = 0; s.deck = deck; s.pile = pile; s.burned = 0;
-  s.players.forEach((p, i) => { p.hand = hands[i]; p.up = [C(5, 1, 1), C(6, 1, 1), C(7, 1, 1)]; p.down = [C(8, 1, 1), C(9, 1, 1), C(11, 1, 1)]; });
+  s.players.forEach((p, i) => { p.hand = hands[i]; p.up = [C(5, 3), C(6, 3), C(12, 3)]; p.down = [C(8, 3), C(9, 3), C(11, 3)]; });
   return s;
 }
 
-test('deals 3 down, 3 up and 3 in hand; six players share two decks', () => {
+test('deals 3 down, 3 up and 3 in hand from one deck of 52', () => {
   const s = deal(seats(4));
   for (const p of s.players) assert.deepEqual([p.down.length, p.up.length, p.hand.length], [3, 3, 3]);
   assert.equal(count(s), 52);
-  assert.equal(count(deal(seats(6))), 104);
   assert.equal(new Set(deal(seats(5)).deck).size, 52 - 45);
+  assert.throws(() => deal(seats(6)));                                       // 54 cards don't come from 52
+  assert.equal(count(deal(seats(6), Math.random, { down: 3, up: 3, hand: 3, jokers: true })), 54);
+  const t = deal(seats(6), Math.random, { down: 2, up: 2, hand: 3 });
+  assert.deepEqual([t.players[0].down.length, t.players[0].up.length], [2, 2]);
+  assert.equal(count(t), 52);
+  assert.ok(fits(6, { down: 2, up: 2, hand: 4, jokers: false }) && !fits(6, { down: 3, up: 3, hand: 3, jokers: false }));
+});
+
+test('a joker goes on anything and the next player beats the card under it', () => {
+  const s = table([[52, C(4)], [C(8), C(9)]], { pile: [C(9, 1)] });
+  assert.equal(act(s, 0, { t: 'play', cards: [52] }), null);
+  assert.equal(need(s.pile), 9);
+  assert.equal(act(s, 1, { t: 'play', cards: [C(8)] }), 'low');
+  assert.equal(act(s, 1, { t: 'play', cards: [C(9)] }), null);
+});
+
+test('jokers between cards of a rank still make four in a row', () => {
+  const s = table([[C(7, 0), C(7, 1), C(3)], [53, C(7, 2), C(7, 3)]], { pile: [] });
+  act(s, 0, { t: 'play', cards: [C(7, 0), C(7, 1)] });
+  act(s, 1, { t: 'play', cards: [53] });
+  assert.equal(s.turn, 0);
+  s.turn = 1;
+  act(s, 1, { t: 'play', cards: [C(7, 2), C(7, 3)] });
+  assert.deepEqual(s.pile, []);
+  assert.equal(rank(53), JOKER);
 });
 
 test('play must match or beat the top card; 2 resets it and 10 goes on anything', () => {
@@ -56,7 +80,7 @@ test('mixed ranks and cards you do not hold are refused', () => {
   const s = table([[C(5), C(6)], [C(3)]]);
   assert.equal(act(s, 0, { t: 'play', cards: [C(5), C(6)] }), 'rank');
   assert.equal(act(s, 0, { t: 'play', cards: [C(9, 2)] }), 'bad');
-  assert.equal(act(s, 0, { t: 'play', cards: [C(5, 1, 1)] }), 'bad');   // face-up while the hand has cards
+  assert.equal(act(s, 0, { t: 'play', cards: [C(5, 3)] }), 'bad');   // face-up while the hand has cards
 });
 
 test('picking up takes the whole pile and passes the turn', () => {
@@ -89,7 +113,7 @@ test('face-up cards come after the hand, face-down ones blind after that', () =>
   const s = table([[], [C(3)]], { pile: [C(6)] });
   assert.equal(source(s.players[0]), 'up');
   assert.equal(act(s, 0, { t: 'blind', i: 0 }), 'bad');
-  assert.equal(act(s, 0, { t: 'play', cards: [C(7, 1, 1)] }), null);
+  assert.equal(act(s, 0, { t: 'play', cards: [C(12, 3)] }), null);
   s.players[0].up = [null, null, null]; s.turn = 0; s.pile = [C(13)];
   assert.equal(source(s.players[0]), 'down');
   assert.equal(act(s, 0, { t: 'blind', i: 0 }), null);   // an 8 on a king: picked up with the pile
@@ -150,7 +174,9 @@ test('swapping before play, and the lowest card starts', () => {
 test('bots finish thousands of games with every card accounted for and one Idiot', () => {
   for (let g = 0; g < 3000; g++) {
     const rnd = seeded(g + 1), n = 2 + (g % 5);
-    const s = deal(seats(n), rnd), total = count(s);
+    const rules = { down: 1 + (g % 4), up: 1 + ((g >> 2) % 4), hand: 2 + (g % 3), jokers: g % 2 === 0 };
+    if (!fits(n, rules)) { rules.down = rules.up = 2; rules.hand = 3; rules.jokers = true; }
+    const s = deal(seats(n), rnd, rules), total = count(s);
     let moves = 0;
     while (s.phase !== 'over') {
       const i = s.phase === 'swap' ? s.players.findIndex(p => !p.ready) : s.turn;

@@ -115,6 +115,77 @@ begin
   return json_build_object('ok', found);
 end $$;
 
+-- Several payouts per game, by place: 1st wins from last, 2nd from 2nd last, 3rd from 3rd last, each with its
+-- own amount in kr. p_pays: [{ "w": pid, "l": pid, "kr": amount }], p_players as above.
+alter table public.idiot_games add column if not exists pays jsonb;
+
+create or replace function public.idiot_owe(p_debtor text, p_creditor text, p_kr integer)
+returns void language plpgsql security definer set search_path = public as $$
+declare v_back integer;
+begin
+  select amount into v_back from idiot_debts where debtor = p_creditor and creditor = p_debtor for update;
+  if v_back is not null then
+    if v_back > p_kr then
+      update idiot_debts set amount = amount - p_kr, updated_at = now() where debtor = p_creditor and creditor = p_debtor;
+      return;
+    end if;
+    delete from idiot_debts where debtor = p_creditor and creditor = p_debtor;
+    p_kr := p_kr - v_back;
+  end if;
+  if p_kr > 0 then
+    insert into idiot_debts as d (debtor, creditor, amount) values (p_debtor, p_creditor, p_kr)
+    on conflict (debtor, creditor) do update set amount = d.amount + excluded.amount, updated_at = now();
+  end if;
+end $$;
+
+create or replace function public.idiot_results(p_game text, p_pays jsonb, p_players jsonb)
+returns json language plpgsql security definer set search_path = public as $$
+declare
+  v_p jsonb;
+  v_pid text;
+  v_name text;
+  v_first jsonb;
+  v_total integer;
+begin
+  if p_game is null or p_game !~ '^[A-Za-z0-9_-]{8,64}$' then raise exception 'bad game'; end if;
+  if jsonb_typeof(p_players) is distinct from 'array' or jsonb_array_length(p_players) not between 2 and 6 then raise exception 'bad players'; end if;
+  if jsonb_typeof(p_pays) is distinct from 'array' or jsonb_array_length(p_pays) not between 1 and 3 then raise exception 'bad pays'; end if;
+  for v_p in select * from jsonb_array_elements(p_pays) loop
+    if jsonb_typeof(v_p -> 'kr') is distinct from 'number' or (v_p ->> 'kr')::numeric not between 1 and 1000
+       or (v_p ->> 'kr')::numeric <> floor((v_p ->> 'kr')::numeric) or v_p ->> 'w' = v_p ->> 'l'
+       or not exists(select 1 from jsonb_array_elements(p_players) e where e ->> 'pid' = v_p ->> 'w')
+       or not exists(select 1 from jsonb_array_elements(p_players) e where e ->> 'pid' = v_p ->> 'l') then raise exception 'bad pays'; end if;
+  end loop;
+  if (select count(*) from jsonb_array_elements(p_pays) e) <> (select count(distinct e ->> 'w') from jsonb_array_elements(p_pays) e)
+     or (select count(*) from jsonb_array_elements(p_pays) e) <> (select count(distinct e ->> 'l') from jsonb_array_elements(p_pays) e) then raise exception 'bad pays'; end if;
+
+  v_first := p_pays -> 0;
+  select sum((e ->> 'kr')::int) into v_total from jsonb_array_elements(p_pays) e;
+  insert into idiot_games (id, stake, winner, loser, pays) values (p_game, v_total, v_first ->> 'w', v_first ->> 'l', p_pays) on conflict (id) do nothing;
+  if not found then return json_build_object('ok', true, 'repeat', true); end if;
+
+  for v_p in select * from jsonb_array_elements(p_players) loop
+    v_pid := v_p ->> 'pid';
+    v_name := clean_name(v_p ->> 'name');
+    if v_pid is null or v_pid !~ '^[0-9a-f]{16}$' or length(v_name) < 1 then raise exception 'bad players'; end if;
+    insert into idiot_players as ip (pid, name, points, games, wins, losses)
+    values (v_pid, v_name,
+      coalesce((select sum((e ->> 'kr')::int) from jsonb_array_elements(p_pays) e where e ->> 'w' = v_pid), 0)
+        - coalesce((select sum((e ->> 'kr')::int) from jsonb_array_elements(p_pays) e where e ->> 'l' = v_pid), 0),
+      1, (v_pid = v_first ->> 'w')::int, (v_pid = v_first ->> 'l')::int)
+    on conflict (pid) do update set
+      name = excluded.name, points = ip.points + excluded.points, games = ip.games + 1,
+      wins = ip.wins + excluded.wins, losses = ip.losses + excluded.losses, updated_at = now();
+  end loop;
+  for v_p in select * from jsonb_array_elements(p_pays) loop
+    perform idiot_owe(v_p ->> 'l', v_p ->> 'w', (v_p ->> 'kr')::int);
+  end loop;
+  return json_build_object('ok', true);
+end $$;
+
+revoke all on function public.idiot_owe(text, text, integer) from public, anon, authenticated;
+revoke all on function public.idiot_results(text, jsonb, jsonb) from public;
+grant execute on function public.idiot_results(text, jsonb, jsonb) to anon, authenticated;
 revoke all on function public.idiot_result(text, integer, text, text, jsonb) from public;
 revoke all on function public.idiot_board(text) from public;
 revoke all on function public.idiot_paid(text, bigint) from public;

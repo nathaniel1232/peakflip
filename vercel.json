@@ -23,14 +23,15 @@
   ],
   "redirects": [
     {
-      "source": "/idiot",
-      "destination": "/?idiot",
-      "permanent": false
-    },
-    {
       "source": "/idiot/:code",
-      "destination": "/?idiot=:code",
+      "destination": "/idiot?join=:code",
       "permanent": false
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/idiot",
+      "destination": "/"
     }
   ]
 }

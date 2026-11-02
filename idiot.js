@@ -11,19 +11,26 @@
 import { save, persist } from './meta.js';
 import { rpc } from './net.js';
 import { CG } from './crazy.js';
-import { deal, act, botMove, rank, suit, live, need, source, withUp } from './idiot-rules.js';
+import { deal, act, botMove, rank, suit, live, need, source, withUp, playable, JOKER, RULES, cleanRules, fits, deckSize } from './idiot-rules.js';
 
 const SB = window.PEAKFLIP_CONFIG || {};
 const ONLINE = !!(SB.supabaseUrl && SB.supabaseKey);
 const STAKES = [0, 5, 10, 20, 50, 100];
+// who pays whom, by place: 1st wins from last, 2nd from 2nd last, 3rd from 3rd last (each needs enough people)
+const PAIRS = ['1st wins from last', '2nd wins from 2nd last', '3rd wins from 3rd last'];
+const kr = n => `${n} kr`;
+const paying = r => (r.pay || []).some(v => v > 0);
+// what everyone agrees to: the payouts and the table rules
+// (a fixed order, not JSON of the object: the realtime server re-sorts object keys on the way through)
+const terms = r => { const o = cleanRules(r.rules || RULES); return [...(r.pay || []), o.down, o.up, o.hand, +o.jokers].join(','); };
 const MAX = 6, TURN_MS = 30000, SWAP_MS = 45000, AWAY_MS = 10000;
 const BOT_NAMES = ['Kari', 'Ola', 'Nora', 'Emil', 'Ingrid', 'Jakob', 'Sofie', 'Lars', 'Maja', 'Henrik'];
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const RN = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' }, RW = { 11: 'jack', 12: 'queen', 13: 'king', 14: 'ace' };
+const RN = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 15: 'Joker' }, RW = { 11: 'jack', 12: 'queen', 13: 'king', 14: 'ace', 15: 'joker' };
 const SU = ['♣', '♦', '♥', '♠'].map(s => s + '︎');
 const rn = r => RN[r] || String(r);
 const plural = r => (RW[r] || String(r)) + 's';
-const cardName = c => rn(rank(c)) + SU[suit(c)];
+const cardName = c => rank(c) === JOKER ? 'a joker' : rn(rank(c)) + SU[suit(c)];
 const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
@@ -145,6 +152,22 @@ style.textContent = `
 #idiot .pile { position: relative; width: calc(var(--cw) + 36px); height: calc(var(--ch) + 10px); }
 #idiot .pile .cd { position: absolute; top: 5px; }
 #idiot .pile .cd.new { animation: iqIn .25s ease-out; }
+/* a played card slides in from the player who played it (the translate property, so the card keeps its tilt) */
+#idiot .pile .cd.fly { animation: iqFly .42s cubic-bezier(.2,.8,.25,1) both; }
+@keyframes iqFly { from { translate: var(--fx) var(--fy); scale: .85; opacity: .2; } to { translate: 0 0; scale: 1; opacity: 1; } }
+/* the end of a game: the winner's name, then cards drifting down */
+#idiot .party { position: fixed; inset: 0; z-index: 4; pointer-events: none; overflow: hidden; display: grid; place-items: center; animation: iqParty 3.2s ease-in forwards; }
+@keyframes iqParty { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }
+#idiot .party .win { text-align: center; padding: 22px 34px; border-radius: 28px; background: rgba(10,47,33,.92); box-shadow: 0 20px 50px rgba(0,0,0,.5), inset 0 0 0 3px var(--gold);
+  animation: iqPop .5s cubic-bezier(.2,1.4,.4,1) both; }
+#idiot .party .win b { display: block; font: 400 clamp(34px, 8vw, 56px)/1.05 'Lilita One', system-ui, sans-serif; color: var(--gold); }
+#idiot .party .win span { display: block; margin-top: 6px; font-weight: 700; color: #e4f5ec; }
+@keyframes iqPop { from { scale: .6; opacity: 0; } to { scale: 1; opacity: 1; } }
+#idiot .party .bit { position: absolute; top: -60px; width: 30px; height: 42px; border-radius: 4px; background: #fffdf7; color: #1d2230; display: grid; place-items: center;
+  font: 400 18px/1 system-ui, sans-serif; box-shadow: 0 3px 8px rgba(0,0,0,.3); animation: iqFall linear forwards; }
+#idiot .party .bit.red { color: #c62a2f; }
+@keyframes iqFall { to { translate: var(--dx) 115vh; rotate: var(--rot); } }
+@media (prefers-reduced-motion: reduce) { #idiot .pile .cd.fly, #idiot .party .bit { animation: none; } #idiot .party .bit { display: none; } }
 @keyframes iqIn { from { opacity: 0; } to { opacity: 1; } }
 #idiot .lbl { font: 700 12px system-ui, sans-serif; color: #cfe9db; text-align: center; white-space: nowrap; background: rgba(0,0,0,.25); border-radius: 99px; padding: 4px 10px; }
 #idiot .lbl b { color: #fff; }
@@ -244,6 +267,8 @@ function channel(code, onMsg, onStatus) {
 // S.room is the shared table: { code, host, v, seats: [{ id, name, bot, away }], game, acks: { id: last action key } }
 let S = null, root = null, view = 'menu', menuErr = '', botCount = 3, showRules = false;
 let board = null, boardBack = 'menu';
+let soloRules = { ...RULES };
+try { soloRules = cleanRules(JSON.parse(localStorage.getItem('peakflip_idiot_rules') || 'null') || RULES); } catch {}
 let dir = null, dirSweep = null;                   // the open-lobbies channel, while Idiot is open
 const lobbies = new Map();                         // code -> what its host last announced
 let chat = [], chatOpen = false, unread = 0;
@@ -257,8 +282,16 @@ const seatOf = id => S.room.seats.find(s => s.id === id);
 // a seat the host plays for: a bot, or someone who has gone quiet
 const auto = i => { const p = game().players[i], s = seatOf(p.id); return p.bot || !s || !!s.away; };
 
+// the address bar follows Idiot on the game's own site: /idiot, and /idiot/CODE at a table
+const OWN_SITE = !SB.platform && !/^(localhost|127\.)/.test(location.hostname);
+function setPath(path) {
+  if (!OWN_SITE || location.pathname + location.search === path) return;
+  try { history.replaceState(null, '', path); } catch {}
+}
+
 function open(code) {
   if (root) return;
+  setPath('/idiot');
   root = document.createElement('div');
   root.id = 'idiot';
   root.innerHTML = `<div id="iqMain"></div><div id="iqChat"><button class="chatBtn hidden" data-a="chat">Chat <i class="hidden"></i></button>
@@ -277,6 +310,7 @@ function close() {
   endSession();
   dir?.close(); dir = null; clearInterval(dirSweep); lobbies.clear();
   root?.remove(); root = null;
+  setPath('/');
 }
 
 function endSession() {
@@ -286,6 +320,7 @@ function endSession() {
   clearInterval(S.tick);
   S = null; sel = new Set(); swapPick = null;
   chat = []; unread = 0; chatOpen = false; said.clear();
+  if (root) setPath('/idiot');
   drawChat();
 }
 
@@ -295,7 +330,7 @@ function openDir() {
   dir = channel('lobbies', (ev, p) => {
     if (ev !== 'lobby' || typeof p.code !== 'string' || !/^[A-Z0-9]{5}$/.test(p.code)) return;
     if (p.closed) lobbies.delete(p.code);
-    else lobbies.set(p.code, { code: p.code, host: String(p.host || '').slice(0, 16), n: +p.n || 1, stake: +p.stake || 0, playing: !!p.playing, at: Date.now() });
+    else lobbies.set(p.code, { code: p.code, host: String(p.host || '').slice(0, 16), n: +p.n || 1, stake: Math.max(0, Math.min(1000, +p.stake || 0)), playing: !!p.playing, at: Date.now() });
     drawLobbies();
   }, () => {});
   clearInterval(dirSweep);
@@ -309,7 +344,7 @@ function openDir() {
 function announce() {
   const r = S.room;
   if (!dir || !r.open) return;
-  dir.send('lobby', { code: r.code, host: seatOf(myId)?.name || myName(), n: r.seats.length, stake: r.stake || 0, playing: !!r.game && r.game.phase !== 'over' });
+  dir.send('lobby', { code: r.code, host: seatOf(myId)?.name || myName(), n: r.seats.length, stake: (r.pay || [])[0] || 0, playing: !!r.game && r.game.phase !== 'over' });
 }
 
 function drawLobbies() {
@@ -317,7 +352,7 @@ function drawLobbies() {
   if (!el) return;
   const list = [...lobbies.values()].filter(l => l.code !== S?.code).sort((a, b) => a.playing - b.playing || b.n - a.n);
   el.innerHTML = list.length ? list.map(l => `<div class="lobbyRow"><div class="ava" style="background:${hue(l.host)}">${esc(l.host.slice(0, 1).toUpperCase() || '?')}</div>
-    <div class="grow"><b>${esc(l.host)}'s table</b><small>${l.n}/${MAX} players · ${l.stake ? `${l.stake} points` : 'for fun'}${l.playing ? ' · playing' : ''}</small></div>
+    <div class="grow"><b>${esc(l.host)}'s table</b><small>${l.n}/${MAX} players · ${l.stake ? `for ${kr(l.stake)}` : 'for fun'}${l.playing ? ' · playing' : ''}</small></div>
     <button class="btn small ${l.playing || l.n >= MAX ? '' : 'primary'}" data-a="joinCode" data-code="${l.code}">${l.playing ? 'Wait' : l.n >= MAX ? 'Full' : 'Join'}</button></div>`).join('')
     : '<p class="note">No open tables right now. Create one and it shows up here for everyone.</p>';
 }
@@ -368,15 +403,17 @@ const hue = name => HUES[[...String(name)].reduce((h, ch) => (h * 31 + ch.charCo
 
 function startSession(kind, code, host) {
   endSession();
+  if (code) setPath(`/idiot?join=${code}`);   // not /idiot/CODE: relative asset paths must keep resolving from /
   S = { kind, code, host, room: null, ch: null, seen: new Map(), lastHost: Date.now(), pending: null, lastK: 0,
     deadline: 0, dlKey: '', botDue: 0, swapDue: {}, lastBeat: 0, lastPing: 0, seated: false, joinedAt: Date.now(), status: 'connecting' };
   S.tick = setInterval(tick, 200);
 }
 
 function playBots() {
+  if (!fits(botCount + 1, soloRules)) { menuErr = `${botCount + 1} players need more cards than the deck has. Change the table rules or play with fewer bots.`; return render(); }
   startSession('solo', null, true);
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-  S.room = { code: '', host: myId, v: 1, acks: {}, game: null,
+  S.room = { code: '', host: myId, v: 1, acks: {}, game: null, rules: { ...soloRules },
     seats: [{ id: myId, name: myName(), pid: myPid }, ...names.slice(0, botCount).map(n => ({ id: uid(), name: n, bot: true }))] };
   S.seated = true;
   startGame();
@@ -385,7 +422,7 @@ function playBots() {
 function createLobby() {
   const code = Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
   startSession('online', code, true);
-  S.room = { code, host: myId, v: 1, acks: {}, game: null, stake: 0, open: true, chat: [], seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
+  S.room = { code, host: myId, v: 1, acks: {}, game: null, pay: [0, 0, 0], rules: { ...soloRules }, open: true, chat: [], seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
   S.seated = true;
   S.ch = channel(code, onMsg, up => { S.status = up ? 'online' : 'offline'; if (up) broadcast(); render(); });
   view = 'lobby'; render();
@@ -406,9 +443,9 @@ function hello() { S?.ch?.send('hi', { id: myId, name: myName(), pid: myPid }); 
 function startGame() {
   const r = S.room;
   r.seats = r.seats.filter(s => s.bot || !s.gone);
-  r.game = deal(r.seats.map(s => ({ id: s.id, name: s.name, bot: !!s.bot })));
+  r.game = deal(r.seats.map(s => ({ id: s.id, name: s.name, bot: !!s.bot })), Math.random, r.rules || RULES);
   r.game.gid = (uid() + uid()).replace(/[^a-z0-9]/g, '');
-  r.game.stake = S.kind === 'online' ? r.stake || 0 : 0;
+  r.game.pay = S.kind === 'online' ? [...(r.pay || [])] : [];
   S.swapDue = {};
   commit();
   view = 'table'; render();
@@ -428,14 +465,18 @@ function commit() {
   render();
 }
 
-// the stake: the first human out wins it from the last human out (the Idiot, unless a bot came last)
+// the money, by place among the people (bots don't count): 1st wins from last, 2nd from 2nd last, 3rd from
+// 3rd last, each only when there are enough people for the pair
 function settle(g) {
   const humans = g.players.filter(p => !p.bot && PID.test(seatOf(p.id)?.pid || '')).sort((a, b) => a.place - b.place);
-  if (!g.stake || humans.length < 2) { g.result = { stake: 0 }; return; }
-  const w = humans[0], l = humans[humans.length - 1], pid = p => seatOf(p.id).pid;
-  g.result = { stake: g.stake, winner: w.name, loser: l.name };
-  const args = { p_game: g.gid, p_stake: g.stake, p_winner: pid(w), p_loser: pid(l), p_players: humans.map(p => ({ pid: pid(p), name: p.name })) };
-  const report = (tries = 0) => rpc('idiot_result', args).catch(() => { if (tries < 5) setTimeout(() => report(tries + 1), 3000 * (tries + 1)); });
+  const pid = p => seatOf(p.id).pid, pays = [];
+  (g.pay || []).forEach((v, k) => {
+    if (v > 0 && humans.length >= 2 * (k + 1)) pays.push({ w: humans[k], l: humans[humans.length - 1 - k], kr: v });
+  });
+  g.result = { pays: pays.map(x => ({ w: x.w.name, wid: x.w.id, l: x.l.name, lid: x.l.id, kr: x.kr })) };
+  if (!pays.length) return;
+  const args = { p_game: g.gid, p_pays: pays.map(x => ({ w: pid(x.w), l: pid(x.l), kr: x.kr })), p_players: humans.map(p => ({ pid: pid(p), name: p.name })) };
+  const report = (tries = 0) => rpc('idiot_results', args).catch(() => { if (tries < 5) setTimeout(() => report(tries + 1), 3000 * (tries + 1)); });
   report();
 }
 
@@ -522,7 +563,7 @@ function onMsg(ev, p) {
   }
   if (ev === 'ok' && typeof p.id === 'string') {
     const s = seatOf(p.id);
-    if (s && !s.bot) { s.ok = !!p.ok && p.stake === r.stake; commit(); }
+    if (s && !s.bot) { s.ok = !!p.ok && p.terms === terms(r); commit(); }
     return;
   }
   if (ev === 'act' && typeof p.id === 'string' && p.a && typeof p.a.k === 'number') {
@@ -596,7 +637,13 @@ function showClock() {
 }
 
 // ---------- input ----------
+let notesTimer = 0;
 function onInput(e) {
+  if (e.target.id === 'iqNotes') {
+    save.idiotNotes = e.target.value.slice(0, 2000);
+    clearTimeout(notesTimer);
+    notesTimer = setTimeout(() => { persist(); const n = root?.querySelector('#iqNotesSaved'); if (n) n.textContent = 'Saved.'; }, 600);
+  }
   if (e.target.id === 'iqName') { try { localStorage.setItem(NAME_KEY, e.target.value.trim().slice(0, 16)); } catch {} }
   if (e.target.id === 'iqCode') e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
 }
@@ -630,14 +677,28 @@ function onClick(e) {
     return;
   }
   if (a === 'stake' && S?.host && !game()) {
-    S.room.stake = +b.dataset.v;
+    const pay = [...(S.room.pay || [0, 0, 0])];
+    pay[+b.dataset.k] = +b.dataset.v;
+    S.room.pay = pay;
     for (const s of S.room.seats) s.ok = s.id === myId;
     return commit();
+  }
+  if (a === 'rule') {
+    const online = S?.host && !game(), cur = online ? S.room.rules || RULES : soloRules;
+    if (S && !online) return;
+    const k = b.dataset.k, next = { ...cur };
+    if (k === 'jokers') next.jokers = !cur.jokers; else next[k] = cur[k] + +b.dataset.d;
+    const clean = cleanRules(next);
+    if (k !== 'jokers' && clean[k] !== next[k]) return;
+    if (online) { S.room.rules = clean; for (const s of S.room.seats) s.ok = s.id === myId; return commit(); }
+    soloRules = clean;
+    try { localStorage.setItem('peakflip_idiot_rules', JSON.stringify(soloRules)); } catch {}
+    menuErr = ''; return render();
   }
   if (a === 'agree' && S && !S.host && S.room && !game()) {
     const s = seatOf(myId), ok = !s?.ok;
     if (s) s.ok = ok;
-    S.ch.send('ok', { id: myId, ok, stake: S.room.stake });
+    S.ch.send('ok', { id: myId, ok, terms: terms(S.room) });
     return render();
   }
   if (a === 'leave') {
@@ -708,7 +769,7 @@ function playPool(g, p) {
 
 function canStart() {
   const r = S.room;
-  return r.seats.length >= 2 && (!r.stake || r.seats.every(s => s.bot || s.ok));
+  return r.seats.length >= 2 && fits(r.seats.length, r.rules || RULES) && (!paying(r) || r.seats.every(s => s.bot || s.ok));
 }
 
 async function loadBoard() {
@@ -740,6 +801,8 @@ addEventListener('keydown', e => {
 // ---------- drawing ----------
 const cardEl = (c, cls = '', attrs = '', tag = 'div') => {
   const r = rank(c), su = SU[suit(c)], ix = `<b>${rn(r)}</b><i>${su}</i>`;
+  if (r === JOKER) return `<${tag} class="cd ${c === 53 ? 'red' : ''} ${cls}" ${attrs} aria-label="Joker"><span class="ix"><b>J</b><i>★\uFE0E</i></span>`
+    + `<span class="pip court" style="font-size:calc(var(--cw) * .24);letter-spacing:.02em">JOKER</span><span class="ix br"><b>J</b><i>★\uFE0E</i></span></${tag}>`;
   return `<${tag} class="cd ${suit(c) === 1 || suit(c) === 2 ? 'red' : ''} ${cls}" ${attrs} aria-label="${rn(r)} of ${['clubs', 'diamonds', 'hearts', 'spades'][suit(c)]}">`
     + `<span class="ix">${ix}</span><span class="pip ${r > 10 && r < 14 ? 'court' : ''}">${r > 10 && r < 14 ? rn(r) : su}</span><span class="ix br">${ix}</span></${tag}>`;
 };
@@ -767,7 +830,7 @@ function menuView() {
   <div class="panel">
     <h3>Your name</h3>
     <input id="iqName" maxlength="16" value="${esc(myName())}" placeholder="Choose a name" autocomplete="off" spellcheck="false">
-    <p class="note">Shown at the table and on the points board.</p>
+    <p class="note">Shown at the table and on the kr board.</p>
   </div>
   <div class="panel">
     <h3>Play with bots</h3>
@@ -776,6 +839,7 @@ function menuView() {
       <button class="btn primary grow" data-a="solo">Deal</button>
     </div>
   </div>
+  ${rulesPanel(soloRules, true, botCount + 1).replace('<h3>Table rules</h3>', '<h3>Table rules for bot games</h3>')}
   <div class="panel">
     <h3>Play with friends</h3>
     ${ONLINE ? `
@@ -785,7 +849,7 @@ function menuView() {
     <div class="err">${esc(menuErr)}</div>
   </div>
   ${ONLINE ? `<div class="panel"><h3>Open tables</h3><div id="iqLobbies" style="display:flex;flex-direction:column;gap:8px"></div></div>` : ''}
-  ${ONLINE ? '<button class="btn" data-a="board">Points board</button>' : ''}
+  ${ONLINE ? '<button class="btn" data-a="board">Kr board and notes</button>' : ''}
   <div class="panel">
     <button class="btn small" data-a="rules" style="align-self:flex-start">${showRules ? 'Hide rules' : 'How to play'}</button>
     ${showRules ? rulesList() : ''}
@@ -801,7 +865,8 @@ const rulesList = () => `<ul class="rules">
   <li>When the deck is empty and your hand only holds one rank, you can play those cards together with your face-up cards of the same rank.</li>
   <li>When your hand is gone, play your face-up cards, then your face-down cards blind. If a blind card doesn't fit, you pick up the pile with it.</li>
   <li>The last player holding cards is the <b>Idiot</b>.</li>
-  <li>Playing for points: the lobby agrees on a stake. The first person out wins it, the last person out loses it and owes it to the winner. Everyone else is even. Bots don't count.</li>
+  <li>Table rules: the host picks how many cards go face down, face up and in hand, and whether the two jokers are in. Always one deck. A <b>joker</b> goes on anything, and the next player has to beat the card under it.</li>
+  <li>Playing for kr: the lobby agrees on amounts. 1st wins from last, and with enough people 2nd wins from 2nd last and 3rd from 3rd last. Everyone in the middle is even. Bots don't count. Losers owe the winners on the kr board.</li>
 </ul>`;
 
 function lobbyView() {
@@ -829,25 +894,51 @@ function lobbyView() {
   <div class="panel">
     <h3>Players ${r.seats.length}/${MAX}</h3>
     ${r.seats.map(s => `<div class="seat"><span class="grow">${esc(s.name)}${s.id === myId ? ' (you)' : ''}</span>
-      ${r.stake && !s.bot ? `<span class="tag" style="${s.ok ? 'background:#3ddc84;color:#06301a' : ''}">${s.ok ? 'AGREED' : 'NOT YET'}</span>` : ''}
+      ${!s.bot && paying(r) ? `<span class="tag" style="${s.ok ? 'background:#3ddc84;color:#06301a' : ''}">${s.ok ? 'AGREED' : 'NOT YET'}</span>` : ''}
       ${s.bot ? '<span class="tag">BOT</span>' : ''}${s.id === r.host ? '<span class="tag host">HOST</span>' : ''}
       ${host && s.id !== myId ? `<button class="x" data-a="kick" data-id="${esc(s.id)}" aria-label="Remove ${esc(s.name)}">×</button>` : ''}</div>`).join('')}
     ${host ? `<div class="row">
       <button class="btn" data-a="addbot" ${r.seats.length >= MAX ? 'disabled' : ''}>Add a bot</button>
       <button class="btn primary grow" data-a="start" ${canStart() ? '' : 'disabled'}>Start game</button></div>
-      ${r.seats.length < 2 ? '<p class="note">Wait for a friend or add a bot.</p>' : !canStart() ? '<p class="note">Everyone has to agree to the stake.</p>' : ''}`
+      ${r.seats.length < 2 ? '<p class="note">Wait for a friend or add a bot.</p>'
+        : !fits(r.seats.length, r.rules || RULES) ? `<p class="err">${r.seats.length} players need more than ${deckSize(r.rules || RULES)} cards. Use fewer table cards or add the jokers.</p>`
+        : !canStart() ? '<p class="note">Everyone has to agree to the money and the table rules.</p>' : ''}`
       : '<p class="note">Waiting for the host to start.</p>'}
   </div>`;
 }
 
 function stakePanel(r) {
-  const me = seatOf(myId), humans = r.seats.filter(s => !s.bot).length;
+  const me = seatOf(myId), humans = r.seats.filter(s => !s.bot).length, pay = r.pay || [0, 0, 0];
+  const rows = PAIRS.map((label, k) => {
+    const need = 2 * (k + 1), on = pay[k] > 0;
+    if (!S.host && !on) return '';
+    return `<div style="display:flex;flex-direction:column;gap:6px">
+      <div class="row" style="justify-content:space-between"><b>${label}</b><small class="note">${humans >= need ? (on ? kr(pay[k]) : 'off') : `needs ${need} people`}</small></div>
+      ${S.host ? `<div class="row" style="gap:6px;flex-wrap:nowrap">${STAKES.map(v => `<button class="btn small" data-a="stake" data-k="${k}" data-v="${v}"
+        style="flex:1;min-width:0;padding:8px 0;${pay[k] === v ? 'background:#fff;color:#0f4a33' : ''}">${v ? v : 'Off'}</button>`).join('')}</div>` : ''}</div>`;
+  }).join('');
   return `<div class="panel">
-    <h3>Playing for points</h3>
-    ${S.host ? `<div class="row" style="gap:6px;flex-wrap:nowrap">${STAKES.map(v => `<button class="btn small" data-a="stake" data-v="${v}" style="flex:1;min-width:0;padding:8px 0;${r.stake === v ? 'background:#fff;color:#0f4a33' : ''}">${v || 'Fun'}</button>`).join('')}</div>`
-      : `<b style="font-size:20px">${r.stake ? `${r.stake} points` : 'Fun, no points'}</b>`}
-    ${r.stake ? `<p class="note">The winner gets ${r.stake} points from the Idiot. Everyone else is even.${humans < 2 ? ' Points only count with at least 2 people.' : ''}</p>
-      ${!S.host ? `<button class="btn ${me?.ok ? '' : 'primary'}" data-a="agree">${me?.ok ? 'Agreed. Tap to take it back' : `Agree to ${r.stake} points`}</button>` : ''}` : ''}
+    <h3>Playing for kr</h3>
+    ${rows || '<b style="font-size:18px">For fun, no money</b>'}
+    <p class="note">${paying(r) ? 'Places count among people only. Everyone in the middle is even.' : 'Set an amount to play for kr. Losers owe the winners, shown on the kr board.'}</p>
+    ${!S.host && paying(r) ? `<button class="btn ${me?.ok ? '' : 'primary'}" data-a="agree">${me?.ok ? 'Agreed. Tap to take it back' : 'Agree to the money and rules'}</button>` : ''}
+  </div>
+  ${rulesPanel(r.rules || RULES, S.host, r.seats.length)}`;
+}
+
+// the table rules: cards face down, face up, in hand, and the jokers
+function rulesPanel(o, edit, players) {
+  const step = (k, label, lo, hi) => `<div class="row" style="justify-content:space-between"><span>${label}</span>
+    ${edit ? `<div class="stepper"><button data-a="rule" data-k="${k}" data-d="-1" ${o[k] <= lo ? 'disabled' : ''} aria-label="Fewer">−</button><b>${o[k]}</b><button data-a="rule" data-k="${k}" data-d="1" ${o[k] >= hi ? 'disabled' : ''} aria-label="More">+</button></div>` : `<b>${o[k]}</b>`}</div>`;
+  const used = players * (o.down + o.up + o.hand), size = deckSize(o);
+  return `<div class="panel">
+    <h3>Table rules</h3>
+    ${step('down', 'Face-down cards', 0, 4)}
+    ${step('up', 'Face-up cards', 1, 4)}
+    ${step('hand', 'Cards in hand', 1, 5)}
+    <div class="row" style="justify-content:space-between"><span>Jokers</span>
+      ${edit ? `<button class="btn small" data-a="rule" data-k="jokers" style="width:auto;min-width:96px;${o.jokers ? 'background:#fff;color:#0f4a33' : ''}">${o.jokers ? 'In' : 'Out'}</button>` : `<b>${o.jokers ? 'In' : 'Out'}</b>`}</div>
+    <p class="note">One deck, ${size} cards. ${players} player${players > 1 ? 's' : ''} use ${used} to deal${used > size ? '. Too many: lower a number or add the jokers.' : `, ${size - used} left in the deck.`}${o.jokers ? ' A joker goes on anything; the next player beats the card under it.' : ''}</p>
   </div>`;
 }
 
@@ -856,24 +947,50 @@ function boardView() {
   const sign = n => n > 0 ? `+${n}` : String(n);
   const players = b.players || [], debts = b.debts || [];
   return `
-  <div class="top"><button class="btn small" data-a="back">Back</button><span class="title">Points</span></div>
+  <div class="top"><button class="btn small" data-a="back">Back</button><span class="title">Kr board</span></div>
   ${b.loading && !b.players ? '<div class="panel"><p>Loading…</p></div>' : b.error ? '<div class="panel"><p class="err">Could not load the board. Check your connection.</p></div>' : `
   <div class="panel">
-    <h3>Points board</h3>
+    <h3>Everyone, in kr</h3>
     ${players.length ? players.map((p, k) => `<div class="seat" style="${p.me ? 'box-shadow:inset 0 0 0 2px #ffc93c' : ''}">
       <span class="place" style="min-width:28px">${k + 1}</span>
       <span class="grow">${esc(p.name)}${p.me ? ' (you)' : ''}<br><small class="note">${p.wins} won · ${p.losses} lost · ${p.games} game${p.games === 1 ? '' : 's'}</small></span>
-      <b style="font-size:18px;color:${p.points > 0 ? '#3ddc84' : p.points < 0 ? '#ffb4a0' : '#fff'}">${sign(p.points)}</b></div>`).join('')
-      : '<p class="note">No games for points yet. Agree on a stake in a lobby to get on the board.</p>'}
+      <b style="font-size:18px;color:${p.points > 0 ? '#3ddc84' : p.points < 0 ? '#ffb4a0' : '#fff'}">${sign(p.points)} kr</b></div>`).join('')
+      : '<p class="note">No games for kr yet. Agree on an amount in a lobby to get on the board.</p>'}
   </div>
   <div class="panel">
     <h3>Who owes whom</h3>
     ${debts.length ? debts.map(d => `<div class="seat" style="${d.mine || d.owe ? 'box-shadow:inset 0 0 0 2px #ffc93c' : ''}">
-      <span class="grow">${d.owe ? 'You owe' : `${esc(d.debtor)} owes`} ${d.mine ? 'you' : esc(d.creditor)}</span><b>${d.amount}</b>
+      <span class="grow">${d.owe ? 'You owe' : `${esc(d.debtor)} owes`} ${d.mine ? 'you' : esc(d.creditor)}</span><b>${kr(d.amount)}</b>
       ${d.mine ? `<button class="btn small" data-a="paid" data-id="${+d.id}">Paid</button>` : ''}</div>`).join('')
       : '<p class="note">Nobody owes anybody.</p>'}
     <p class="note">Only the person who is owed can mark a debt as paid.</p>
-  </div>`}`;
+  </div>`}
+  ${notesPanel()}`;
+}
+
+// notes: your own text, saved as you type, and a line added by itself after every game you play for kr
+function notesPanel() {
+  const log = save.idiotLog || [];
+  return `<div class="panel">
+    <h3>My notes</h3>
+    <textarea id="iqNotes" rows="4" maxlength="2000" placeholder="Anything to remember, like who paid by Vipps" style="font:600 15px/1.4 system-ui,sans-serif;color:#fff;background:rgba(0,0,0,.28);border:2px solid transparent;border-radius:16px;padding:12px 14px;outline:none;resize:vertical;user-select:text;-webkit-user-select:text">${esc(save.idiotNotes || '')}</textarea>
+    <p class="note" id="iqNotesSaved">Saves by itself, also to your cloud save.</p>
+    ${log.length ? `<div style="display:flex;flex-direction:column;gap:6px">${log.slice().reverse().slice(0, 40).map(e => `<div class="seat" style="font-weight:600"><small class="note" style="min-width:74px">${esc(e.d)}</small><span class="grow" style="white-space:normal">${esc(e.t)}</span></div>`).join('')}</div>` : '<p class="note">Games you play for kr get a line here, like "Ola owes you 10 kr".</p>'}
+  </div>`;
+}
+
+// after a game for kr, each player's own notes get what it meant for them
+function logResult(g) {
+  if (!g.result?.pays?.length || !g.gid) return;
+  save.idiotLog = save.idiotLog || [];
+  if (save.idiotLog.some(e => e.gid === g.gid)) return;
+  const lines = g.result.pays.filter(x => x.wid === myId || x.lid === myId)
+    .map(x => x.wid === myId ? `${x.l} owes you ${kr(x.kr)}` : `You owe ${x.w} ${kr(x.kr)}`);
+  if (!lines.length) return;
+  const d = new Date();
+  save.idiotLog.push({ gid: g.gid, d: `${d.getDate()}.${d.getMonth() + 1}. ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`, t: lines.join('. ') });
+  save.idiotLog = save.idiotLog.slice(-100);
+  persist();
 }
 
 function evText(g, ev, mi) {
@@ -920,11 +1037,11 @@ function tableView() {
     return `<div class="opp ${g.turn === i ? 'turn' : ''}">${talk}
       <div class="who"><div class="ava" style="background:${hue(p.name)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
         <div class="nm">${esc(p.name)}<small>${p.bot ? 'Bot' : s?.away ? 'Away, a bot plays' : g.turn === i ? 'Playing…' : '&nbsp;'}</small></div></div>
-      <div class="mini"><div class="stacks">${[0, 1, 2].map(k => stack(p, k)).join('')}</div></div>
+      <div class="mini"><div class="stacks">${slots(p).map(k => stack(p, k)).join('')}</div></div>
       <div class="meta">${status}${timer(i)}</div></div>`;
   };
   const stack = (p, k, mineStack) => {
-    const d = p.down[k], u = p.up[k];
+    const d = p.down[k] ?? null, u = p.up[k] ?? null;
     if (d == null && u == null) return `<div class="stack"><div class="cd slot"></div></div>`;
     const downAttrs = mineStack && myTurn && from === 'down' && d != null ? `data-a="down" data-slot="${k}"` : '';
     const upTap = mineStack && u != null && ((g.phase === 'swap' && !me.ready) || (g.phase === 'play' && pool.includes(u)));
@@ -934,7 +1051,12 @@ function tableView() {
 
   // the pile: the top few cards, fanned
   const top = g.pile.slice(-4);
-  const pileCards = top.map((c, k) => cardEl(c, k === top.length - 1 && isNew ? 'new' : '', `style="left:${k * 12}px;transform:rotate(${((c * 37) % 11) - 5}deg)"`)).join('');
+  // cards that just landed fly in from where the player sits: you at the bottom, the others along the top
+  const landed = isNew && /^(play|blind|chance)$/.test(g.ev.k) ? new Set(g.ev.cards) : new Set();
+  const flyFrom = g.ev?.p === mi ? [0, 260] : [(opps.indexOf(g.ev?.p) - (opps.length - 1) / 2) * 130, -230];
+  const pileCards = top.map((c, k) => cardEl(c, landed.has(c) ? 'fly' : k === top.length - 1 && isNew ? 'new' : '',
+    `style="left:${k * 12}px;transform:rotate(${((c * 37) % 11) - 5}deg);--fx:${flyFrom[0]}px;--fy:${flyFrom[1]}px;animation-delay:${landed.has(c) ? [...landed].indexOf(c) * 70 : 0}ms"`)).join('');
+  if (isNew && g.phase === 'over') setTimeout(() => celebrate(g, mi), 450);
   const needR = need(g.pile);
   const pileLbl = g.pile.length ? `${g.pile.length} in pile · ${needR ? `beat <b>${rn(needR)}</b>` : '<b>anything goes</b>'}` : 'Empty pile';
 
@@ -943,7 +1065,7 @@ function tableView() {
   else if (g.phase === 'over') status = '';
   else if (me.place) status = `You're out. ${ordinal(me.place)} place!`;
   else if (myTurn) status = from === 'down' ? 'Your turn. Turn over a face-down card.'
-    : !g.pile.length || !needR ? 'Your turn. Play anything.' : `Your turn. Play ${rn(needR)} or higher, a 2 or a 10.`;
+    : !g.pile.length || !needR ? 'Your turn. Play anything.' : `Your turn. Play ${rn(needR)} or higher, a 2${g.rules?.jokers ? ', a 10 or a joker' : ' or a 10'}.`;
   else status = `${esc(g.players[g.turn].name)}'s turn`;
 
   const selCards = [...sel], selOk = selCards.length && canPlay(g, selCards[0]);
@@ -982,19 +1104,37 @@ function tableView() {
   ${g.phase === 'over' ? overView(g, mi) : `
   <div class="mine ${myTurn ? 'turn' : ''}">
     <div class="status">${status} ${myTurn ? '<span class="timer" data-timer></span>' : ''}</div>
-    <div class="cards"><div class="stacks">${[0, 1, 2].map(k => stack(me, k, true)).join('')}</div>
+    <div class="cards"><div class="stacks">${slots(me).map(k => stack(me, k, true)).join('')}</div>
     <div class="hand">${hand}</div></div>
     <div class="actions">${actions}</div>
   </div>`}`;
 }
 
+function celebrate(g, mi) {
+  if (!root || view !== 'table') return;
+  root.querySelector('.party')?.remove();
+  const n = g.players.length, first = g.players.findIndex(p => p.place === 1), idiot = g.players.findIndex(p => p.place === n);
+  const name = i => i === mi ? 'You' : esc(g.players[i].name);
+  const bits = Array.from({ length: 26 }, () => {
+    const s = Math.floor(Math.random() * 4);
+    return `<div class="bit ${s === 1 || s === 2 ? 'red' : ''}" style="left:${Math.random() * 100}%;--dx:${Math.round(Math.random() * 160 - 80)}px;--rot:${Math.round(Math.random() * 720 - 360)}deg;animation-duration:${1.8 + Math.random() * 1.4}s;animation-delay:${Math.random() * .9}s">${SU[s]}</div>`;
+  }).join('');
+  const el = document.createElement('div');
+  el.className = 'party';
+  el.innerHTML = `${bits}<div class="win"><b>${first === mi ? 'You win!' : `${name(first)} wins!`}</b><span>${idiot === mi ? 'You are the Idiot' : `${name(idiot)} is the Idiot`}</span></div>`;
+  root.appendChild(el);
+  tone(660, 0.12, 0.05); setTimeout(() => tone(880, 0.12, 0.05), 140); setTimeout(() => tone(1100, 0.2, 0.05), 280);
+  setTimeout(() => el.remove(), 3300);
+}
+
 function overView(g, mi) {
+  logResult(g);
   const n = g.players.length, order = g.players.map((p, i) => ({ p, i })).sort((a, b) => a.p.place - b.p.place);
   const idiot = order[n - 1];
   return `<div class="panel">
     <div class="bigName">${idiot.i === mi ? 'You are the Idiot' : `${esc(idiot.p.name)} is the Idiot`}</div>
-    ${g.result?.stake ? `<p style="text-align:center"><b>${esc(g.result.winner)}</b> wins ${g.result.stake} points. <b>${esc(g.result.loser)}</b> owes ${esc(g.result.winner)} ${g.result.stake}.</p>
-      <button class="btn small" data-a="board" style="align-self:center">Points board</button>` : ''}
+    ${g.result?.pays?.length ? `${g.result.pays.map(x => `<p style="text-align:center"><b>${esc(x.l)}</b> owes <b>${esc(x.w)}</b> ${kr(x.kr)}</p>`).join('')}
+      <button class="btn small" data-a="board" style="align-self:center">Kr board and notes</button>` : ''}
     <div class="result">${order.map(({ p, i }) => `<div class="seat ${p.place === n ? 'idiot' : ''}"><span class="place" style="${p.place === n ? 'color:inherit' : ''}">${p.place === n ? 'IDIOT' : ordinal(p.place)}</span>
       <span class="grow">${esc(p.name)}${i === mi ? ' (you)' : ''}</span>${p.bot ? '<span class="tag">BOT</span>' : ''}</div>`).join('')}</div>
     ${S.host ? `<div class="row"><button class="btn primary grow" data-a="again">Play again</button>
@@ -1003,7 +1143,8 @@ function overView(g, mi) {
   </div>`;
 }
 
-const canPlay = (g, c) => { const r = rank(c); return r === 2 || r === 10 || r >= need(g.pile); };
+const canPlay = (g, c) => playable(rank(c), g.pile);
+const slots = p => [...Array(Math.max(p.down.length, p.up.length)).keys()];
 
 // overlap the hand so it always fits on one row
 function fitHand() {
@@ -1037,12 +1178,11 @@ if (bestChip) {
     if (taps >= 5 && onHome()) { taps = 0; open(); }
   });
 }
-// links: peakflip.io/idiot opens it, peakflip.io/idiot/CODE joins a lobby (vercel.json redirects both to ?idiot)
-const invited = new URLSearchParams(location.search).get('idiot');
-if (invited != null) {
-  try { const u = new URL(location.href); u.searchParams.delete('idiot'); history.replaceState(null, '', u); } catch {}
-  setTimeout(() => open(invited || undefined), 400);
-}
+// links: peakflip.io/idiot opens it and stays the address while Idiot is open (vercel.json serves the game
+// there); peakflip.io/idiot/CODE redirects to /idiot?join=CODE and joins that table. ?idiot=CODE still works.
+const query = new URLSearchParams(location.search);
+const invited = query.get('join') || query.get('idiot');
+if (location.pathname.replace(/\/+$/, '') === '/idiot' || query.has('idiot')) setTimeout(() => open(invited || undefined), 400);
 addEventListener('pagehide', () => { if (S?.ch) S.ch.send('bye', { id: myId }); });
 
 addEventListener('idiot:open', () => open());   // the Idiot button on the home screen
