@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('..', import.meta.url)), out = join(root, 'dist/crazygames'), zip = join(root, 'peak-flip-crazygames.zip');
 const FILES = ['game.js', 'crazygames.css', 'game-clock.js', 'landscape.js', 'meta.js', 'ui.js', 'chat.js', 'icons.js', 'ads.js', 'config.js', 'net.js', 'cloud.js',
-  'mp.js', 'live.js', 'crazy.js', 'clean.js', 'ride.js', 'surf.js', 'privacy.html', 'lib', 'secret'];
+  'mp.js', 'live.js', 'idiot.js', 'idiot-rules.js', 'crazy.js', 'clean.js', 'ride.js', 'surf.js', 'privacy.html', 'lib', 'secret'];
 
 rmSync(out, { recursive: true, force: true }); rmSync(zip, { force: true });
 mkdirSync(out, { recursive: true });
