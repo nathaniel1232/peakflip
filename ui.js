@@ -221,7 +221,7 @@ export function showMenuUI() {
 }
 
 // ---------- the two modes, side by side on the home screen ----------
-const MODES = ['ski', 'surf'];
+const MODES = ['ski', 'idiot'];   // surf is paused for now
 let modeSel = 0;
 function drawModes() {
   const best = { ski: save.best, surf: save.surf?.best };
@@ -234,6 +234,7 @@ function drawModes() {
 function goMode(m) {
   cfg.sfx.init();
   if (m === 'ski') { save.lastMode = 'ski'; persist(); cfg.onPlay('endless'); }
+  else if (m === 'idiot') dispatchEvent(new Event('idiot:open'));   // idiot.js
   else cfg.onRide(m);
 }
 

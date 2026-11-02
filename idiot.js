@@ -10,6 +10,7 @@
 // ============================================================
 import { save, persist } from './meta.js';
 import { rpc } from './net.js';
+import { CG } from './crazy.js';
 import { deal, act, botMove, rank, suit, live, need, source, withUp } from './idiot-rules.js';
 
 const SB = window.PEAKFLIP_CONFIG || {};
@@ -47,11 +48,11 @@ const PID = /^[0-9a-f]{16}$/;
 // ---------- styles ----------
 const style = document.createElement('style');
 style.textContent = `
-#idiot { position: fixed; inset: 0; z-index: 80; background: #0f4a33; color: #fff; overflow-y: auto; overflow-x: hidden;
+#idiot { position: fixed; inset: 0; z-index: 80; background: #0a2f21; color: #fff; overflow-y: auto; overflow-x: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; user-select: none; -webkit-user-select: none;
-  --cw: 62px; --ch: 88px; padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); }
+  --cw: clamp(50px, 8.2vh, 72px); --ch: calc(var(--cw) * 1.42); --gold: #ffc93c; padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); }
 #idiot * { box-sizing: border-box; }
-#idiot .wrap { max-width: 760px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+#idiot .wrap { max-width: 780px; min-height: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; padding-bottom: 72px; }
 #idiot h2 { margin: 0; font: 400 44px/1 'Lilita One', system-ui, sans-serif; letter-spacing: .01em; }
 #idiot h3 { margin: 0; font: 800 13px system-ui, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: #a9d9c0; }
 #idiot p { margin: 0; color: #cfe9db; line-height: 1.45; }
@@ -61,7 +62,7 @@ style.textContent = `
 #idiot .btn.primary:hover { background: var(--accent-2, #e5551a); }
 #idiot .btn.small { padding: 8px 14px; font-size: 14px; }
 #idiot .btn:disabled { opacity: .4; cursor: default; }
-#idiot .panel { background: rgba(0,0,0,.22); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+#idiot .panel { background: rgba(255,255,255,.05); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
 #idiot .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 #idiot .row > .grow { flex: 1; min-width: 0; }
 #idiot input { font: 700 16px system-ui, sans-serif; color: #fff; background: rgba(0,0,0,.28); border: 2px solid transparent; border-radius: 99px;
@@ -75,79 +76,118 @@ style.textContent = `
 #idiot .stepper b { min-width: 74px; text-align: center; font-size: 15px; }
 #idiot .top { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 #idiot .top .title { flex: 1; font: 400 26px/1 'Lilita One', system-ui, sans-serif; }
-#idiot .codeChip { font: 800 15px system-ui, sans-serif; letter-spacing: .14em; background: rgba(0,0,0,.25); border-radius: 99px; padding: 8px 14px; }
+#idiot .codeChip { font: 800 14px system-ui, sans-serif; letter-spacing: .14em; background: rgba(0,0,0,.25); border-radius: 99px; padding: 8px 14px; }
 #idiot ul.rules { margin: 0; padding-left: 20px; color: #cfe9db; line-height: 1.5; font-size: 15px; display: flex; flex-direction: column; gap: 4px; }
 #idiot ul.rules b { color: #fff; }
 #idiot .seat { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,.2); border-radius: 14px; padding: 10px 12px; font-weight: 700; }
 #idiot .seat .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #idiot .tag { font: 800 10px system-ui, sans-serif; letter-spacing: .08em; background: rgba(255,255,255,.16); color: #dff3e8; border-radius: 6px; padding: 3px 6px; vertical-align: 2px; }
-#idiot .tag.host { background: #ffc93c; color: #3a2a00; }
+#idiot .tag.host { background: var(--gold); color: #3a2a00; }
 #idiot .x { width: 32px; height: 32px; border-radius: 50%; background: rgba(255,255,255,.1); font-size: 18px; line-height: 1; }
+#idiot .ava { width: 34px; height: 34px; border-radius: 50%; flex: none; display: grid; place-items: center; font: 400 17px/1 'Lilita One', system-ui, sans-serif;
+  color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.18); }
+#idiot .lobbyRow { display: flex; align-items: center; gap: 10px; background: rgba(0,0,0,.2); border-radius: 14px; padding: 8px 8px 8px 12px; }
+#idiot .lobbyRow .grow { flex: 1; min-width: 0; }
+#idiot .lobbyRow b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#idiot .lobbyRow small { color: #a9d9c0; font-size: 13px; }
 
-/* cards */
-#idiot .cd { position: relative; width: var(--cw); height: var(--ch); border-radius: 8px; flex: none; display: block; padding: 0;
-  background: #fbfaf6; color: #1b1f27; box-shadow: 0 1px 0 rgba(0,0,0,.25), 0 3px 8px rgba(0,0,0,.22); transition: transform .12s, opacity .12s; font-variant-emoji: text; }
-#idiot .cd.red { color: #c8262b; }
-#idiot .cd b { position: absolute; left: 6px; top: 4px; font: 800 calc(var(--cw) * .3)/1 system-ui, sans-serif; letter-spacing: -.04em; }
-#idiot .cd i { position: absolute; left: 6px; top: calc(var(--cw) * .34); font: 400 calc(var(--cw) * .24)/1 system-ui, sans-serif; font-style: normal; }
-#idiot .cd em { position: absolute; right: 6px; bottom: 4px; font: 400 calc(var(--cw) * .5)/1 system-ui, sans-serif; font-style: normal; }
-#idiot .cd.back { background: #1f4e8c; border: 3px solid #fbfaf6;
-  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.13) 0 4px, transparent 4px 9px); }
-#idiot .cd.slot { background: rgba(0,0,0,.18); box-shadow: inset 0 0 0 2px rgba(255,255,255,.12); }
+/* cards: a corner index top left and bottom right, a big pip (or the letter for court cards) in the middle */
+#idiot .cd { position: relative; width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .11); flex: none; display: block; padding: 0; overflow: hidden;
+  background: #fffdf7; color: #1d2230; border: 1px solid #ddd6c6; box-shadow: 0 2px 0 rgba(0,0,0,.18), 0 6px 14px rgba(0,0,0,.28);
+  transition: transform .14s, opacity .14s, box-shadow .14s; font-variant-emoji: text; }
+#idiot .cd.red { color: #c62a2f; }
+#idiot .cd .ix { position: absolute; left: calc(var(--cw) * .07); top: calc(var(--cw) * .06); display: flex; flex-direction: column; align-items: center;
+  font: 800 calc(var(--cw) * .25)/.95 system-ui, sans-serif; letter-spacing: -.05em; }
+#idiot .cd .ix i { font: 400 calc(var(--cw) * .2)/1 system-ui, sans-serif; font-style: normal; letter-spacing: 0; }
+#idiot .cd .ix.br { left: auto; top: auto; right: calc(var(--cw) * .07); bottom: calc(var(--cw) * .06); transform: rotate(180deg); }
+#idiot .cd .pip { position: absolute; inset: 0; display: grid; place-items: center; font: 400 calc(var(--cw) * .52)/1 system-ui, sans-serif; }
+#idiot .cd .pip.court { font: 400 calc(var(--cw) * .5)/1 'Lilita One', system-ui, sans-serif; }
+#idiot .cd.back { border: calc(var(--cw) * .05) solid #fffdf7; background-color: #1c3f74;
+  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.12) 0 2px, transparent 2px 8px), repeating-linear-gradient(-45deg, rgba(255,255,255,.12) 0 2px, transparent 2px 8px); }
+#idiot .cd.slot { background: rgba(0,0,0,.16); border: 2px dashed rgba(255,255,255,.14); box-shadow: none; }
 #idiot button.cd { cursor: pointer; }
-#idiot .cd.sel { transform: translateY(-14px); box-shadow: 0 0 0 3px #ffc93c, 0 6px 14px rgba(0,0,0,.35); }
-#idiot .cd.dim { opacity: .5; }
-#idiot .cd.pick { box-shadow: 0 0 0 3px #ffc93c, 0 3px 8px rgba(0,0,0,.22); }
-#idiot .cd.tap { box-shadow: 0 0 0 3px #ffc93c, 0 3px 8px rgba(0,0,0,.22); }
-#idiot .mini { --cw: 24px; --ch: 34px; }
-#idiot .mini .cd { border-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,.3); }
-#idiot .mini .cd b { left: 3px; top: 3px; font-size: 11px; }
-#idiot .mini .cd i { display: none; }
-#idiot .mini .cd em { right: 3px; bottom: 2px; font-size: 12px; }
-#idiot .mini .cd.back { border-width: 2px; }
+#idiot button.cd:hover:not(.sel) { transform: translateY(-4px); }
+#idiot .cd.sel { transform: translateY(-16px); box-shadow: 0 0 0 3px var(--gold), 0 10px 18px rgba(0,0,0,.35); }
+#idiot .cd.dim { filter: brightness(.62); }
+#idiot .cd.pick, #idiot .cd.tap { box-shadow: 0 0 0 3px var(--gold), 0 6px 14px rgba(0,0,0,.28); }
+#idiot .mini { --cw: 26px; --ch: 37px; }
+#idiot .mini .cd { box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+#idiot .mini .cd .ix { font-size: 11px; left: 2px; top: 2px; }
+#idiot .mini .cd .ix i { font-size: 10px; }
+#idiot .mini .cd .ix.br, #idiot .mini .cd .pip { display: none; }
 #idiot .stack { position: relative; width: var(--cw); height: calc(var(--ch) + 8px); flex: none; }
 #idiot .stack > .cd { position: absolute; left: 0; top: 8px; }
 #idiot .stack > .cd + .cd { top: 0; left: 0; }
-#idiot .stacks { display: flex; gap: 8px; justify-content: center; }
+#idiot .stacks { display: flex; gap: 10px; justify-content: center; }
 #idiot .mini .stacks { gap: 3px; }
 
-/* table */
-#idiot .opps { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
-#idiot .opp { background: rgba(0,0,0,.2); border-radius: 14px; padding: 8px 10px; min-width: 108px; display: flex; flex-direction: column; gap: 6px; align-items: center;
+/* the table: green baize inside a wooden rail */
+#idiot .felt { position: relative; background: #13603f; border-radius: 40px; padding: 18px 14px 14px;
+  box-shadow: inset 0 0 0 10px #6b4426, inset 0 0 0 12px #4e3019, inset 0 0 70px rgba(0,0,0,.35), 0 10px 30px rgba(0,0,0,.35);
+  display: flex; flex-direction: column; gap: 10px; }
+#idiot .opps { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 0 6px; }
+#idiot .opp { position: relative; background: rgba(0,0,0,.2); border-radius: 16px; padding: 8px 10px; min-width: 112px; display: flex; flex-direction: column; gap: 6px; align-items: center;
   box-shadow: inset 0 0 0 2px transparent; transition: box-shadow .2s; }
-#idiot .opp.turn { box-shadow: inset 0 0 0 2px #ffc93c; }
-#idiot .opp .nm { font-weight: 800; font-size: 13px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#idiot .opp .meta { display: flex; gap: 8px; align-items: center; }
+#idiot .opp.turn { box-shadow: inset 0 0 0 2px var(--gold); }
+#idiot .opp.turn .ava { box-shadow: 0 0 0 3px var(--gold); }
+#idiot .opp .who { display: flex; align-items: center; gap: 7px; max-width: 150px; }
+#idiot .opp .nm { font-weight: 800; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.15; }
+#idiot .opp .nm small { display: block; font: 700 11px system-ui, sans-serif; color: #a9d9c0; }
+#idiot .opp .ava { width: 28px; height: 28px; font-size: 14px; }
+#idiot .opp .say { position: absolute; left: 50%; top: -6px; transform: translate(-50%, -100%); max-width: 180px; background: #fffdf7; color: #1d2230;
+  font: 700 13px/1.3 system-ui, sans-serif; padding: 6px 10px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.3); z-index: 2; overflow-wrap: anywhere; animation: iqIn .2s; }
 #idiot .count { font: 800 12px system-ui, sans-serif; background: rgba(0,0,0,.3); border-radius: 99px; padding: 3px 8px; white-space: nowrap; }
-#idiot .place { font: 400 15px 'Lilita One', system-ui, sans-serif; color: #ffc93c; }
-#idiot .timer { font: 800 12px system-ui, sans-serif; color: #ffc93c; font-variant-numeric: tabular-nums; }
-#idiot .center { display: flex; justify-content: center; align-items: flex-end; gap: 28px; padding: 6px 0; }
-#idiot .pileBox { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#idiot .place { font: 400 15px 'Lilita One', system-ui, sans-serif; color: var(--gold); }
+#idiot .timer { font: 800 12px system-ui, sans-serif; color: var(--gold); font-variant-numeric: tabular-nums; }
+#idiot .center { display: flex; justify-content: center; align-items: flex-end; gap: 34px; padding: 10px 0 2px; }
+#idiot .pileBox { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#idiot .deck .cd { box-shadow: 1px 1px 0 #e9e2d2, 2px 2px 0 #c9c1b0, 3px 3px 0 #e9e2d2, 4px 4px 0 #b7ae9c, 0 8px 16px rgba(0,0,0,.3); }
 #idiot .pile { position: relative; width: calc(var(--cw) + 36px); height: calc(var(--ch) + 10px); }
 #idiot .pile .cd { position: absolute; top: 5px; }
 #idiot .pile .cd.new { animation: iqIn .25s ease-out; }
 @keyframes iqIn { from { opacity: 0; } to { opacity: 1; } }
-#idiot .lbl { font: 700 12px system-ui, sans-serif; color: #a9d9c0; text-align: center; white-space: nowrap; }
+#idiot .lbl { font: 700 12px system-ui, sans-serif; color: #cfe9db; text-align: center; white-space: nowrap; background: rgba(0,0,0,.25); border-radius: 99px; padding: 4px 10px; }
 #idiot .lbl b { color: #fff; }
-#idiot .burn { position: absolute; inset: 0; display: grid; place-items: center; font: 400 26px 'Lilita One', system-ui, sans-serif; color: #ffc93c; animation: iqBurn 1.4s ease-out forwards; pointer-events: none; }
+#idiot .burn { position: absolute; inset: 0; display: grid; place-items: center; font: 400 28px 'Lilita One', system-ui, sans-serif; color: var(--gold); animation: iqBurn 1.4s ease-out forwards; pointer-events: none; }
 @keyframes iqBurn { 0% { opacity: 0; } 15% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
-#idiot .ev { text-align: center; font-size: 14px; color: #dff3e8; min-height: 20px; }
-#idiot .status { text-align: center; font-weight: 800; font-size: 16px; min-height: 22px; }
-#idiot .mine { display: flex; flex-direction: column; gap: 10px; align-items: center; background: rgba(0,0,0,.14); border-radius: 18px; padding: 12px 10px 14px; }
-#idiot .mine.turn { box-shadow: inset 0 0 0 2px #ffc93c; }
-#idiot .hand { display: flex; justify-content: center; width: 100%; padding-top: 14px; min-height: calc(var(--ch) + 14px); }
+#idiot .ev { text-align: center; font-size: 14px; color: #e4f5ec; min-height: 20px; }
+#idiot .status { align-self: center; text-align: center; font-weight: 800; font-size: 15px; min-height: 22px; padding: 7px 16px; border-radius: 99px; background: rgba(255,255,255,.07); }
+#idiot .mine.turn .status { background: var(--gold); color: #3a2a00; }
+#idiot .mine.turn .status .timer { color: #3a2a00; }
+#idiot .mine { display: flex; flex-direction: column; gap: 12px; align-items: center; padding: 4px 0 8px; }
+#idiot .mine .cards { display: flex; gap: 22px; align-items: flex-end; justify-content: center; width: 100%; }
+#idiot .hand { display: flex; justify-content: center; flex: 0 1 auto; min-width: 0; padding-top: 16px; min-height: calc(var(--ch) + 16px); }
+#idiot .mine .cards .stacks { flex: none; }
+@media (max-width: 620px) { #idiot .mine .cards { flex-direction: column; align-items: center; gap: 10px; } #idiot .hand { width: 100%; flex: none; } }
 #idiot .hand .cd + .cd { margin-left: var(--ov, 6px); }
 #idiot .actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-#idiot .actions .btn { min-width: 120px; }
+#idiot .actions .btn { min-width: 130px; }
 #idiot .result { display: flex; flex-direction: column; gap: 8px; }
-#idiot .result .seat.idiot { background: #ffc93c; color: #3a2a00; }
-#idiot .bigName { font: 400 34px/1.05 'Lilita One', system-ui, sans-serif; color: #ffc93c; text-align: center; overflow-wrap: anywhere; }
+#idiot .result .seat.idiot { background: var(--gold); color: #3a2a00; }
+#idiot .bigName { font: 400 34px/1.05 'Lilita One', system-ui, sans-serif; color: var(--gold); text-align: center; overflow-wrap: anywhere; }
+
+/* chat: a button bottom right and a sheet above it; kept outside the redrawn page so typing survives updates */
+#idiot .chatBtn { position: fixed; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); z-index: 3; border-radius: 99px; padding: 12px 18px;
+  background: #fffdf7; color: #0a2f21; font: 800 15px system-ui, sans-serif; box-shadow: 0 6px 18px rgba(0,0,0,.35); display: flex; gap: 8px; align-items: center; }
+#idiot .chatBtn i { font-style: normal; min-width: 20px; height: 20px; border-radius: 99px; background: var(--accent, #ff6b2c); color: #fff; font-size: 12px; display: grid; place-items: center; padding: 0 6px; }
+#idiot .sheet { position: fixed; right: 16px; bottom: calc(max(16px, env(safe-area-inset-bottom)) + 58px); z-index: 3; width: min(380px, calc(100vw - 32px)); height: min(440px, 60vh);
+  background: #0f3a2a; border-radius: 20px; box-shadow: 0 16px 40px rgba(0,0,0,.45), inset 0 0 0 1px rgba(255,255,255,.08); display: flex; flex-direction: column; overflow: hidden; }
+#idiot .sheet .msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 8px; user-select: text; -webkit-user-select: text; }
+#idiot .sheet .msg { max-width: 85%; align-self: flex-start; background: rgba(255,255,255,.09); border-radius: 14px; padding: 7px 11px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+#idiot .sheet .msg b { display: block; font-size: 12px; color: #a9d9c0; }
+#idiot .sheet .msg.me { align-self: flex-end; background: #fffdf7; color: #1d2230; }
+#idiot .sheet .msg.me b { display: none; }
+#idiot .sheet form { display: flex; gap: 8px; padding: 10px; border-top: 1px solid rgba(255,255,255,.08); margin: 0; }
+#idiot .sheet .empty { color: #a9d9c0; font-size: 14px; text-align: center; margin: auto 0; }
+
 @media (max-width: 520px) {
-  #idiot { --cw: 54px; --ch: 77px; }
+  #idiot { --cw: 56px; }
   #idiot h2 { font-size: 38px; }
-  #idiot .center { gap: 18px; }
+  #idiot .felt { border-radius: 28px; padding: 16px 8px 12px; }
+  #idiot .center { gap: 22px; }
   #idiot .opp { min-width: 100px; padding: 7px 8px; }
   #idiot .actions .btn { min-width: 0; flex: 1; padding: 13px 10px; }
+  #idiot .sheet { height: 46vh; }
 }
 `;
 document.head.appendChild(style);
@@ -204,6 +244,10 @@ function channel(code, onMsg, onStatus) {
 // S.room is the shared table: { code, host, v, seats: [{ id, name, bot, away }], game, acks: { id: last action key } }
 let S = null, root = null, view = 'menu', menuErr = '', botCount = 3, showRules = false;
 let board = null, boardBack = 'menu';
+let dir = null, dirSweep = null;                   // the open-lobbies channel, while Idiot is open
+const lobbies = new Map();                         // code -> what its host last announced
+let chat = [], chatOpen = false, unread = 0;
+const said = new Map();                            // player id -> { t, at }: the bubble over their seat
 let sel = new Set(), swapPick = null, lastEvN = 0, lastTurnMine = false, leaveArmed = 0;
 
 const isOpen = () => !!root;
@@ -217,7 +261,12 @@ function open(code) {
   if (root) return;
   root = document.createElement('div');
   root.id = 'idiot';
+  root.innerHTML = `<div id="iqMain"></div><div id="iqChat"><button class="chatBtn hidden" data-a="chat">Chat <i class="hidden"></i></button>
+    <div class="sheet hidden"><div class="msgs"></div><form data-chat><input id="iqSay" maxlength="140" placeholder="Say something" autocomplete="off">
+    <button class="btn primary small" type="submit">Send</button></form></div></div>`;
+  root.querySelector('form[data-chat]').addEventListener('submit', e => { e.preventDefault(); say(); });
   document.body.appendChild(root);
+  openDir();
   root.addEventListener('click', onClick);
   root.addEventListener('input', onInput);
   view = 'menu'; menuErr = '';
@@ -226,15 +275,96 @@ function open(code) {
 
 function close() {
   endSession();
+  dir?.close(); dir = null; clearInterval(dirSweep); lobbies.clear();
   root?.remove(); root = null;
 }
 
 function endSession() {
   if (!S) return;
   if (S.ch) { S.ch.send('bye', { id: myId }); S.ch.close(); }
+  if (S.host && S.code) dir?.send('lobby', { code: S.code, closed: true });
   clearInterval(S.tick);
   S = null; sel = new Set(); swapPick = null;
+  chat = []; unread = 0; chatOpen = false; said.clear();
+  drawChat();
 }
+
+// ---------- open lobbies: hosts of open lobbies announce them every few seconds on a shared channel ----------
+function openDir() {
+  if (dir || !ONLINE) return;
+  dir = channel('lobbies', (ev, p) => {
+    if (ev !== 'lobby' || typeof p.code !== 'string' || !/^[A-Z0-9]{5}$/.test(p.code)) return;
+    if (p.closed) lobbies.delete(p.code);
+    else lobbies.set(p.code, { code: p.code, host: String(p.host || '').slice(0, 16), n: +p.n || 1, stake: +p.stake || 0, playing: !!p.playing, at: Date.now() });
+    drawLobbies();
+  }, () => {});
+  clearInterval(dirSweep);
+  dirSweep = setInterval(() => {
+    let gone = false;
+    for (const [k, l] of lobbies) if (Date.now() - l.at > 9000) { lobbies.delete(k); gone = true; }
+    if (gone) drawLobbies();
+  }, 2000);
+}
+
+function announce() {
+  const r = S.room;
+  if (!dir || !r.open) return;
+  dir.send('lobby', { code: r.code, host: seatOf(myId)?.name || myName(), n: r.seats.length, stake: r.stake || 0, playing: !!r.game && r.game.phase !== 'over' });
+}
+
+function drawLobbies() {
+  const el = root?.querySelector('#iqLobbies');
+  if (!el) return;
+  const list = [...lobbies.values()].filter(l => l.code !== S?.code).sort((a, b) => a.playing - b.playing || b.n - a.n);
+  el.innerHTML = list.length ? list.map(l => `<div class="lobbyRow"><div class="ava" style="background:${hue(l.host)}">${esc(l.host.slice(0, 1).toUpperCase() || '?')}</div>
+    <div class="grow"><b>${esc(l.host)}'s table</b><small>${l.n}/${MAX} players · ${l.stake ? `${l.stake} points` : 'for fun'}${l.playing ? ' · playing' : ''}</small></div>
+    <button class="btn small ${l.playing || l.n >= MAX ? '' : 'primary'}" data-a="joinCode" data-code="${l.code}">${l.playing ? 'Wait' : l.n >= MAX ? 'Full' : 'Join'}</button></div>`).join('')
+    : '<p class="note">No open tables right now. Create one and it shows up here for everyone.</p>';
+}
+
+// ---------- chat: broadcast to the table; the host keeps the last few in the room so late joiners see them ----------
+function say() {
+  const input = root?.querySelector('#iqSay'), t = (input?.value || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  if (!t || !S?.ch || !S.ch.online) return;
+  const m = { mid: uid(), id: myId, name: myName(), t };
+  S.ch.send('chat', m);
+  input.value = '';
+  addChat(m);
+}
+
+function addChat(m, quiet) {
+  if (!m || typeof m.mid !== 'string' || typeof m.t !== 'string' || chat.some(x => x.mid === m.mid)) return;
+  const msg = { mid: m.mid, id: String(m.id), name: String(m.name || 'Player').slice(0, 16), t: m.t.slice(0, 140) };
+  chat.push(msg); if (chat.length > 80) chat.shift();
+  if (S?.host && S.room) { S.room.chat = [...(S.room.chat || []), msg].slice(-30); }
+  if (quiet) return drawChat();
+  if (msg.id !== myId) { if (!chatOpen) unread++; tone(990, 0.05, 0.03); }
+  said.set(msg.id, { t: msg.t, at: Date.now() });
+  setTimeout(() => { if (view === 'table') render(); }, 5100);
+  drawChat();
+  if (view === 'table') render();
+}
+
+function drawChat() {
+  const box = root?.querySelector('#iqChat');
+  if (!box) return;
+  const on = !!S && S.kind === 'online' && !!S.room && !CG.chatOff && (view === 'lobby' || view === 'table');
+  const btn = box.querySelector('.chatBtn'), sheet = box.querySelector('.sheet'), badge = btn.querySelector('i');
+  btn.classList.toggle('hidden', !on);
+  sheet.classList.toggle('hidden', !on || !chatOpen);
+  if (chatOpen) unread = 0;
+  badge.textContent = unread > 9 ? '9+' : unread;
+  badge.classList.toggle('hidden', !unread);
+  btn.firstChild.textContent = chatOpen ? 'Close ' : 'Chat ';
+  const msgs = sheet.querySelector('.msgs'), atEnd = msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 30;
+  msgs.innerHTML = chat.length ? chat.map(m => `<div class="msg ${m.id === myId ? 'me' : ''}"><b>${esc(m.name)}</b>${esc(m.t)}</div>`).join('')
+    : '<p class="empty">Say hi to the table.</p>';
+  if (atEnd || chatOpen) msgs.scrollTop = msgs.scrollHeight;
+}
+
+// a steady colour per name for the round avatars
+const HUES = ['#e8594f', '#f29b38', '#3aa776', '#3b82c4', '#8a63d2', '#d0538f', '#2aa6a6', '#b08a2e'];
+const hue = name => HUES[[...String(name)].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % HUES.length];
 
 function startSession(kind, code, host) {
   endSession();
@@ -255,7 +385,7 @@ function playBots() {
 function createLobby() {
   const code = Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
   startSession('online', code, true);
-  S.room = { code, host: myId, v: 1, acks: {}, game: null, stake: 0, seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
+  S.room = { code, host: myId, v: 1, acks: {}, game: null, stake: 0, open: true, chat: [], seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
   S.seated = true;
   S.ch = channel(code, onMsg, up => { S.status = up ? 'online' : 'offline'; if (up) broadcast(); render(); });
   view = 'lobby'; render();
@@ -337,7 +467,7 @@ function hostTick(now) {
       else if (!!s.away !== gone) { s.away = gone; changed = true; }
     }
     if (changed) return commit();
-    if (now - S.lastBeat > 2000) broadcast();
+    if (now - S.lastBeat > 2000) { broadcast(); if (now - (S.lastAnnounce || 0) > 3000) { S.lastAnnounce = now; announce(); } }
   }
   if (!g) return;
   if (g.phase === 'swap') {
@@ -367,6 +497,7 @@ function onMsg(ev, p) {
   if (!S || typeof p !== 'object') return;
   const now = Date.now();
   if (typeof p.id === 'string') S.seen.set(p.id, now);
+  if (ev === 'chat') return addChat(p);
   if (ev === 'st') return onState(p);
   if (ev === 'bye') {
     if (p.id === S.room?.host) { S.lastHost = 0; return; }   // the host left: someone takes over at once
@@ -403,6 +534,7 @@ function onMsg(ev, p) {
 
 function onState(p) {
   if (!p || !Array.isArray(p.seats) || typeof p.v !== 'number') return;
+  if (Array.isArray(p.chat) && p.code === S.code) for (const m of p.chat) addChat(m, true);
   const r = S.room;
   if (r && p.v <= r.v && !(p.host !== r.host && p.v === r.v)) { if (p.host === r.host) S.lastHost = Date.now(); return; }
   if (p.code !== S.code) return;
@@ -475,6 +607,12 @@ function onClick(e) {
   const a = b.dataset.a;
   tone(660, 0.04, 0.03);
   if (a === 'close') return close();
+  if (a === 'chat') { chatOpen = !chatOpen; drawChat(); if (chatOpen) root.querySelector('#iqSay')?.focus(); return; }
+  if (a === 'joinCode') {
+    if (!myName()) { menuErr = 'Choose a name first.'; render(); root.querySelector('#iqName')?.focus(); return; }
+    return join(b.dataset.code);
+  }
+  if (a === 'open' && S?.host) { S.room.open = !S.room.open; if (!S.room.open) dir?.send('lobby', { code: S.code, closed: true }); else announce(); return commit(); }
   if (a === 'rules') { showRules = !showRules; return render(); }
   if (a === 'bots-') { botCount = Math.max(1, botCount - 1); return render(); }
   if (a === 'bots+') { botCount = Math.min(MAX - 1, botCount + 1); return render(); }
@@ -594,22 +732,29 @@ async function invite(b) {
 addEventListener('keydown', e => {
   if (!root) return;
   e.stopImmediatePropagation();
+  if (e.key === 'Escape' && chatOpen) { chatOpen = false; return drawChat(); }
   if (e.key === 'Escape' && view === 'menu') close();
   if (e.key === 'Enter' && e.target?.id === 'iqCode') join(e.target.value);
 }, true);
 
 // ---------- drawing ----------
-const cardEl = (c, cls = '', attrs = '', tag = 'div') =>
-  `<${tag} class="cd ${suit(c) === 1 || suit(c) === 2 ? 'red' : ''} ${cls}" ${attrs} aria-label="${rn(rank(c))} of ${['clubs', 'diamonds', 'hearts', 'spades'][suit(c)]}"><b>${rn(rank(c))}</b><i>${SU[suit(c)]}</i><em>${SU[suit(c)]}</em></${tag}>`;
+const cardEl = (c, cls = '', attrs = '', tag = 'div') => {
+  const r = rank(c), su = SU[suit(c)], ix = `<b>${rn(r)}</b><i>${su}</i>`;
+  return `<${tag} class="cd ${suit(c) === 1 || suit(c) === 2 ? 'red' : ''} ${cls}" ${attrs} aria-label="${rn(r)} of ${['clubs', 'diamonds', 'hearts', 'spades'][suit(c)]}">`
+    + `<span class="ix">${ix}</span><span class="pip ${r > 10 && r < 14 ? 'court' : ''}">${r > 10 && r < 14 ? rn(r) : su}</span><span class="ix br">${ix}</span></${tag}>`;
+};
 const backEl = (cls = '', attrs = '', tag = 'div') => `<${tag} class="cd back ${cls}" ${attrs}></${tag}>`;
 const ordinal = n => n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
 
 function render() {
   if (!root) return;
-  if (view === 'board') root.innerHTML = `<div class="wrap">${boardView()}</div>`;
-  else if (view === 'menu' || !S) root.innerHTML = `<div class="wrap">${menuView()}</div>`;
-  else if (view === 'lobby') root.innerHTML = `<div class="wrap">${lobbyView()}</div>`;
-  else root.innerHTML = `<div class="wrap">${tableView()}</div>`;
+  const main = root.querySelector('#iqMain');
+  if (view === 'board') main.innerHTML = `<div class="wrap">${boardView()}</div>`;
+  else if (view === 'menu' || !S) main.innerHTML = `<div class="wrap">${menuView()}</div>`;
+  else if (view === 'lobby') main.innerHTML = `<div class="wrap">${lobbyView()}</div>`;
+  else main.innerHTML = `<div class="wrap">${tableView()}</div>`;
+  drawLobbies();
+  drawChat();
   fitHand();
   showClock();
 }
@@ -639,6 +784,7 @@ function menuView() {
     ` : '<p class="note">Online play is not available in this version.</p>'}
     <div class="err">${esc(menuErr)}</div>
   </div>
+  ${ONLINE ? `<div class="panel"><h3>Open tables</h3><div id="iqLobbies" style="display:flex;flex-direction:column;gap:8px"></div></div>` : ''}
   ${ONLINE ? '<button class="btn" data-a="board">Points board</button>' : ''}
   <div class="panel">
     <button class="btn small" data-a="rules" style="align-self:flex-start">${showRules ? 'Hide rules' : 'How to play'}</button>
@@ -675,6 +821,8 @@ function lobbyView() {
     <div class="row"><b style="font:400 40px/1 'Lilita One',system-ui,sans-serif;letter-spacing:.12em" class="grow">${esc(r.code)}</b>
     <button class="btn small" data-a="invite">${SB.platform === 'crazygames' ? 'Copy code' : 'Copy invite link'}</button></div>
     <p class="note">Friends open Idiot and type this code, or open the link.</p>
+    ${S.host ? `<button class="btn small" data-a="open" style="align-self:flex-start">${r.open ? 'Open table: anyone can find it. Make private' : 'Private: code only. Make open'}</button>`
+      : ''}
     ${S.status !== 'online' ? '<p class="err">Connection lost. Reconnecting…</p>' : ''}
   </div>
   ${stakePanel(r)}
@@ -768,8 +916,10 @@ function tableView() {
     const p = g.players[i], s = seatOf(p.id);
     const status = p.place ? `<span class="place">${p.place === n ? 'IDIOT' : ordinal(p.place)}</span>`
       : g.phase === 'swap' ? `<span class="count">${p.ready ? 'Ready' : 'Swapping'}</span>` : `<span class="count">${p.hand.length} in hand</span>`;
-    return `<div class="opp ${g.turn === i ? 'turn' : ''}">
-      <div class="nm">${esc(p.name)} ${p.bot ? '<span class="tag">BOT</span>' : s?.away ? '<span class="tag">AWAY</span>' : ''}</div>
+    const bubble = said.get(p.id), talk = bubble && Date.now() - bubble.at < 5000 ? `<div class="say">${esc(bubble.t)}</div>` : '';
+    return `<div class="opp ${g.turn === i ? 'turn' : ''}">${talk}
+      <div class="who"><div class="ava" style="background:${hue(p.name)}">${esc(p.name.slice(0, 1).toUpperCase())}</div>
+        <div class="nm">${esc(p.name)}<small>${p.bot ? 'Bot' : s?.away ? 'Away, a bot plays' : g.turn === i ? 'Playing…' : '&nbsp;'}</small></div></div>
       <div class="mini"><div class="stacks">${[0, 1, 2].map(k => stack(p, k)).join('')}</div></div>
       <div class="meta">${status}${timer(i)}</div></div>`;
   };
@@ -819,19 +969,21 @@ function tableView() {
     ${S.kind === 'online' ? `<span class="codeChip">${esc(S.code)}</span>` : ''}
   </div>
   ${S.kind === 'online' && S.status !== 'online' ? '<p class="err" style="text-align:center">Connection lost. Reconnecting…</p>' : ''}
+  <div class="felt">
   <div class="opps">${opps.map(oppEl).join('')}</div>
   <div class="center">
-    <div class="pileBox"><div class="stack" style="height:calc(var(--ch) + 10px)">${g.deck.length ? backEl('', 'style="top:5px"') : '<div class="cd slot" style="top:5px"></div>'}</div>
+    <div class="pileBox deck"><div class="stack" style="height:calc(var(--ch) + 10px)">${g.deck.length ? backEl('', 'style="top:5px"') : '<div class="cd slot" style="top:5px"></div>'}</div>
       <div class="lbl">${g.deck.length ? `Deck <b>${g.deck.length}</b>` : 'Deck empty'}</div></div>
     <div class="pileBox"><div class="pile">${pileCards || '<div class="cd slot"></div>'}${isNew && g.ev.burn && !g.pile.length ? '<div class="burn">BURN</div>' : ''}</div>
       <div class="lbl">${pileLbl}</div></div>
   </div>
   <div class="ev">${evText(g, g.ev, mi)}</div>
+  </div>
   ${g.phase === 'over' ? overView(g, mi) : `
   <div class="mine ${myTurn ? 'turn' : ''}">
     <div class="status">${status} ${myTurn ? '<span class="timer" data-timer></span>' : ''}</div>
-    <div class="stacks">${[0, 1, 2].map(k => stack(me, k, true)).join('')}</div>
-    <div class="hand">${hand}</div>
+    <div class="cards"><div class="stacks">${[0, 1, 2].map(k => stack(me, k, true)).join('')}</div>
+    <div class="hand">${hand}</div></div>
     <div class="actions">${actions}</div>
   </div>`}`;
 }
@@ -892,5 +1044,7 @@ if (invited != null) {
   setTimeout(() => open(invited || undefined), 400);
 }
 addEventListener('pagehide', () => { if (S?.ch) S.ch.send('bye', { id: myId }); });
+
+addEventListener('idiot:open', () => open());   // the Idiot button on the home screen
 
 export const Idiot = { open, close };

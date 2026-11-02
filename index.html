@@ -639,7 +639,8 @@
       <nav class="homeNav">
         <div class="playRow">
           <button id="playSki" class="hl play main" data-mode="ski"><span class="snowy" data-text="ski">ski</span><small>The endless mountain</small><em></em></button>
-          <button id="playSurf" class="hl play main" data-mode="surf"><span class="snowy surf" data-text="surf">surf</span><small>The waves are the jumps</small><em></em></button>
+          <!-- Surf is paused for now; Idiot takes its place (bring back: data-mode="surf" and MODES in ui.js) -->
+          <button id="playIdiot" class="hl play main" data-mode="idiot"><span class="snowy" data-text="idiot">idiot</span><small>The card game</small><em></em></button>
         </div>
         <div class="homeRow">
           <button id="lockerBtn" class="hl"><span id="icSkis"></span><span class="snowy" data-text="locker">locker</span><small id="lockerSub"></small></button>
@@ -662,7 +663,7 @@
     <section class="homeRight">
       <button id="lbBtn" class="lbHead"><span id="icTrophy"></span><span class="snowy" data-text="leaderboard">leaderboard</span></button>
       <div class="lbTabs">
-        <div class="tabs mini lbBoards"><button class="tab on" data-ml-board="endless">Ski</button><button class="tab" data-ml-board="surf">Surf</button></div>
+        <div class="tabs mini lbBoards hidden"><button class="tab on" data-ml-board="endless">Ski</button><button class="tab" data-ml-board="surf">Surf</button></div>
         <div class="tabs mini lbPeriods miniPeriod"><button class="tab on" data-ml-period="all">All time</button><button class="tab" data-ml-period="weekly">Weekly</button><button class="tab" data-ml-period="daily">Daily</button></div>
       </div>
       <div id="miniLb" class="list"><div class="note">Loading…</div></div>
@@ -672,7 +673,7 @@
       </div>
     </section>
   </div>
-  <div class="spaceHint"><kbd>←</kbd> <kbd>→</kbd> ski or surf · <kbd>Space</kbd> to ride</div>
+  <div class="spaceHint"><kbd>←</kbd> <kbd>→</kbd> ski or idiot · <kbd>Space</kbd> to play</div>
 </div>
 
 <div id="over" class="screen hidden"></div>
