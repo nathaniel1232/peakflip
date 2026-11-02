@@ -30,7 +30,7 @@ for (const f of FILES.filter(f => f.endsWith('.js'))) {
 // index.html without the AdSense tag (CrazyGames allows no other ad network)
 const html = readFileSync(join(root, 'index.html'), 'utf8');
 let cleanHtml = html.split('\n').filter(l =>
-  !l.includes('pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=') && !l.includes('<!-- Google AdSense')
+  !l.includes('pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=') && !l.includes('<!-- Google AdSense') && !l.includes('google-adsense-account')
 ).join('\n');
 const adBootstrap = /<script>\s*\/\/ Optional side ads[\s\S]*?<\/script>/;
 if (!adBootstrap.test(cleanHtml)) throw new Error('index.html: the optional AdSense loader moved; update build-crazygames.mjs');
