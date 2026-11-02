@@ -267,8 +267,6 @@ function channel(code, onMsg, onStatus) {
 // S.room is the shared table: { code, host, v, seats: [{ id, name, bot, away }], game, acks: { id: last action key } }
 let S = null, root = null, view = 'menu', menuErr = '', botCount = 3, showRules = false;
 let board = null, boardBack = 'menu';
-let soloRules = { ...RULES };
-try { soloRules = cleanRules(JSON.parse(localStorage.getItem('peakflip_idiot_rules') || 'null') || RULES); } catch {}
 let dir = null, dirSweep = null;                   // the open-lobbies channel, while Idiot is open
 const lobbies = new Map();                         // code -> what its host last announced
 let chat = [], chatOpen = false, unread = 0;
@@ -410,10 +408,9 @@ function startSession(kind, code, host) {
 }
 
 function playBots() {
-  if (!fits(botCount + 1, soloRules)) { menuErr = `${botCount + 1} players need more cards than the deck has. Change the table rules or play with fewer bots.`; return render(); }
   startSession('solo', null, true);
   const names = [...BOT_NAMES].sort(() => Math.random() - 0.5);
-  S.room = { code: '', host: myId, v: 1, acks: {}, game: null, rules: { ...soloRules },
+  S.room = { code: '', host: myId, v: 1, acks: {}, game: null, rules: { ...RULES },
     seats: [{ id: myId, name: myName(), pid: myPid }, ...names.slice(0, botCount).map(n => ({ id: uid(), name: n, bot: true }))] };
   S.seated = true;
   startGame();
@@ -422,7 +419,7 @@ function playBots() {
 function createLobby() {
   const code = Array.from({ length: 5 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
   startSession('online', code, true);
-  S.room = { code, host: myId, v: 1, acks: {}, game: null, pay: [0, 0, 0], rules: { ...soloRules }, open: true, chat: [], seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
+  S.room = { code, host: myId, v: 1, acks: {}, game: null, pay: [0, 0, 0], rules: { ...RULES }, open: true, chat: [], seats: [{ id: myId, name: myName(), pid: myPid, ok: true }] };
   S.seated = true;
   S.ch = channel(code, onMsg, up => { S.status = up ? 'online' : 'offline'; if (up) broadcast(); render(); });
   view = 'lobby'; render();
@@ -662,7 +659,7 @@ function onClick(e) {
   if (a === 'open' && S?.host) { S.room.open = !S.room.open; if (!S.room.open) dir?.send('lobby', { code: S.code, closed: true }); else announce(); return commit(); }
   if (a === 'rules') { showRules = !showRules; return render(); }
   if (a === 'bots-') { botCount = Math.max(1, botCount - 1); return render(); }
-  if (a === 'bots+') { botCount = Math.min(MAX - 1, botCount + 1); return render(); }
+  if (a === 'bots+') { botCount = Math.min(4, botCount + 1); return render(); }
   if ((a === 'solo' || a === 'create' || a === 'join') && !myName()) {
     menuErr = 'Choose a name first.'; render(); root.querySelector('#iqName')?.focus(); return;
   }
@@ -684,16 +681,16 @@ function onClick(e) {
     return commit();
   }
   if (a === 'rule') {
-    const online = S?.host && !game(), cur = online ? S.room.rules || RULES : soloRules;
-    if (S && !online) return;
+    // table rules live in the lobby: only its host changes them, before the deal
+    if (!S?.host || S.kind !== 'online' || game()) return;
+    const cur = S.room.rules || RULES;
     const k = b.dataset.k, next = { ...cur };
     if (k === 'jokers') next.jokers = !cur.jokers; else next[k] = cur[k] + +b.dataset.d;
     const clean = cleanRules(next);
     if (k !== 'jokers' && clean[k] !== next[k]) return;
-    if (online) { S.room.rules = clean; for (const s of S.room.seats) s.ok = s.id === myId; return commit(); }
-    soloRules = clean;
-    try { localStorage.setItem('peakflip_idiot_rules', JSON.stringify(soloRules)); } catch {}
-    menuErr = ''; return render();
+    S.room.rules = clean;
+    for (const s of S.room.seats) s.ok = s.id === myId;
+    return commit();
   }
   if (a === 'agree' && S && !S.host && S.room && !game()) {
     const s = seatOf(myId), ok = !s?.ok;
@@ -839,7 +836,6 @@ function menuView() {
       <button class="btn primary grow" data-a="solo">Deal</button>
     </div>
   </div>
-  ${rulesPanel(soloRules, true, botCount + 1).replace('<h3>Table rules</h3>', '<h3>Table rules for bot games</h3>')}
   <div class="panel">
     <h3>Play with friends</h3>
     ${ONLINE ? `
